@@ -1,0 +1,4 @@
+/.idea/
+/logs/
+/apps/ygflow-orchestrator-ui/dist/
+/apps/ygflow-orchestrator-ui/node_modules/

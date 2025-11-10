@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="org.yglue.flow.orch.persistence.mapper.StatEventMapper">
+
+    <resultMap id="StatEventResultMap" type="org.yglue.flow.orch.domain.StatEvent">
+        <id property="id" column="id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="flowId" column="flow_id"/>
+        <result property="eventType" column="event_type"/>
+        <result property="eventTs" column="event_ts"/>
+        <result property="source" column="source"/>
+        <result property="payloadJson" column="payload_json"/>
+        <result property="createTime" column="create_time"/>
+        <result property="createBy" column="create_by"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="updateBy" column="update_by"/>
+        <result property="delFlag" column="del_flag"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="org.yglue.flow.orch.domain.StatEvent" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO yglue_stat_event (project_id, flow_id, event_type, event_ts, source, payload_json, create_by, update_by)
+        VALUES (#{projectId}, #{flowId}, #{eventType}, #{eventTs}, #{source}, #{payloadJson}, #{createBy}, #{updateBy})
+    </insert>
+
+    <select id="selectByProject" resultMap="StatEventResultMap">
+        SELECT id, project_id, flow_id, event_type, event_ts, source, payload_json,
+               create_time, create_by, update_time, update_by, del_flag
+        FROM yglue_stat_event
+        WHERE project_id = #{projectId}
+          AND del_flag = 0
+        ORDER BY event_ts DESC
+    </select>
+
+</mapper>

@@ -1,0 +1,15 @@
+{
+  "id": "sample_math_flow",
+  "vars": {
+    "note": "demo start"
+  },
+  "steps": [
+    { "log": "Start: #{#ctx['note']}" },
+    { "call": "org.yg.ygflow.sample.api.MathService.add", "args": ["#{#ctx['a']}", "#{#ctx['b']}"], "as": "sum" },
+    { "log": "Sum is #{#sum}" },
+    { "if": "#{#sum >= 10}",
+      "then": [ { "set": "flag", "value": true }, { "log": "sum >= 10" } ],
+      "else": [ { "set": "flag", "value": false }, { "log": "sum < 10" } ]
+    }
+  ]
+}

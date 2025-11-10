@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="org.yglue.flow.orch.persistence.mapper.PluginInstanceMapper">
+
+    <resultMap id="PluginInstanceResultMap" type="org.yglue.flow.orch.domain.PluginInstance">
+        <id property="id" column="id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="instanceKey" column="instance_key"/>
+        <result property="ideType" column="ide_type"/>
+        <result property="ideVersion" column="ide_version"/>
+        <result property="status" column="status"/>
+        <result property="lastHeartbeat" column="last_heartbeat"/>
+        <result property="lastIp" column="last_ip"/>
+        <result property="extraInfo" column="extra_info"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="delFlag" column="del_flag"/>
+        <result property="createBy" column="create_by"/>
+        <result property="updateBy" column="update_by"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="org.yglue.flow.orch.domain.PluginInstance" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO yglue_plugin_instance
+        (project_id, instance_key, ide_type, ide_version, status, last_heartbeat, last_ip, extra_info, create_by, update_by)
+        VALUES (#{projectId}, #{instanceKey}, #{ideType}, #{ideVersion}, #{status}, #{lastHeartbeat}, #{lastIp}, #{extraInfo},
+                #{createBy}, #{updateBy})
+    </insert>
+
+    <update id="update" parameterType="org.yglue.flow.orch.domain.PluginInstance">
+        UPDATE yglue_plugin_instance
+        SET ide_type = #{ideType},
+            ide_version = #{ideVersion},
+            status = #{status},
+            last_heartbeat = #{lastHeartbeat},
+            last_ip = #{lastIp},
+            extra_info = #{extraInfo},
+            update_by = #{updateBy}
+        WHERE id = #{id}
+    </update>
+
+    <select id="selectByProjectAndInstance" resultMap="PluginInstanceResultMap">
+        SELECT *
+        FROM yglue_plugin_instance
+        WHERE project_id = #{projectId}
+          AND instance_key = #{instanceKey}
+          AND del_flag = 0
+    </select>
+
+    <select id="selectByProject" resultMap="PluginInstanceResultMap">
+        SELECT *
+        FROM yglue_plugin_instance
+        WHERE project_id = #{projectId}
+          AND del_flag = 0
+        ORDER BY last_heartbeat DESC
+    </select>
+
+</mapper>

@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="org.yglue.flow.orch.persistence.mapper.FlowMapper">
+
+    <resultMap id="FlowResultMap" type="org.yglue.flow.orch.domain.Flow">
+        <id property="id" column="id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="code" column="code"/>
+        <result property="name" column="name"/>
+        <result property="latestVersionId" column="latest_version_id"/>
+        <result property="publishedVersionId" column="published_version_id"/>
+        <result property="createTime" column="create_time"/>
+        <result property="createBy" column="create_by"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="updateBy" column="update_by"/>
+        <result property="delFlag" column="del_flag"/>
+    </resultMap>
+
+    <sql id="FlowColumns">
+        id, project_id, code, name, latest_version_id, published_version_id, create_time, create_by, update_time, update_by, del_flag
+    </sql>
+
+    <insert id="insert" parameterType="org.yglue.flow.orch.domain.Flow" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO yglue_flow (project_id, code, name, latest_version_id, create_by, update_by)
+        VALUES (#{projectId}, #{code}, #{name}, #{latestVersionId}, #{createBy}, #{updateBy})
+    </insert>
+
+    <update id="update" parameterType="org.yglue.flow.orch.domain.Flow">
+        UPDATE yglue_flow
+        <set>
+            name = #{name},
+            <if test="updateBy != null">
+                update_by = #{updateBy},
+            </if>
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <update id="updateLatestVersion">
+        UPDATE yglue_flow
+        SET latest_version_id = #{latestVersionId}
+        WHERE id = #{flowId}
+    </update>
+
+    <update id="updatePublishedVersion">
+        UPDATE yglue_flow
+        <set>
+            published_version_id = #{publishedVersionId},
+            <if test="updateBy != null">
+                update_by = #{updateBy},
+            </if>
+        </set>
+        WHERE id = #{flowId}
+    </update>
+
+    <select id="selectById" resultMap="FlowResultMap">
+        SELECT <include refid="FlowColumns"/>
+        FROM yglue_flow
+        WHERE id = #{id}
+          AND del_flag = 0
+    </select>
+
+    <select id="selectByProjectAndCode" resultMap="FlowResultMap">
+        SELECT <include refid="FlowColumns"/>
+        FROM yglue_flow
+        WHERE project_id = #{projectId}
+          AND code = #{code}
+          AND del_flag = 0
+    </select>
+
+    <select id="selectByProject" resultMap="FlowResultMap">
+        SELECT <include refid="FlowColumns"/>
+        FROM yglue_flow
+        WHERE project_id = #{projectId}
+          AND del_flag = 0
+        ORDER BY create_time DESC
+    </select>
+
+</mapper>

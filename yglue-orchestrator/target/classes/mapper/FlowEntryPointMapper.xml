@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="org.yglue.flow.orch.persistence.mapper.FlowEntryPointMapper">
+
+    <resultMap id="FlowEntryPointResultMap" type="org.yglue.flow.orch.domain.FlowEntryPoint">
+        <id property="id" column="id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="flowCode" column="flow_code"/>
+        <result property="httpMethod" column="http_method"/>
+        <result property="path" column="path"/>
+        <result property="replaceResponse" column="replace_response"/>
+        <result property="enabled" column="enabled"/>
+        <result property="createTime" column="create_time"/>
+        <result property="createBy" column="create_by"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="updateBy" column="update_by"/>
+        <result property="delFlag" column="del_flag"/>
+    </resultMap>
+
+    <sql id="FlowEntryPointColumns">
+        id, project_id, flow_code, http_method, path, replace_response, enabled,
+        create_time, create_by, update_time, update_by, del_flag
+    </sql>
+
+    <insert id="insert" parameterType="org.yglue.flow.orch.domain.FlowEntryPoint" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO yglue_flow_entrypoint
+        (project_id, flow_code, http_method, path, replace_response, enabled, create_by, update_by)
+        VALUES
+        (#{projectId}, #{flowCode}, #{httpMethod}, #{path}, #{replaceResponse}, #{enabled}, #{createBy}, #{updateBy})
+    </insert>
+
+    <update id="deleteByProjectAndFlow">
+        UPDATE yglue_flow_entrypoint
+        SET del_flag = 1,
+            update_by = #{updateBy},
+            update_time = NOW()
+        WHERE project_id = #{projectId}
+          AND flow_code = #{flowCode}
+          AND del_flag = 0
+    </update>
+
+    <select id="selectByProject" resultMap="FlowEntryPointResultMap">
+        SELECT <include refid="FlowEntryPointColumns"/>
+        FROM yglue_flow_entrypoint
+        WHERE project_id = #{projectId}
+          AND del_flag = 0
+        ORDER BY path ASC, http_method ASC
+    </select>
+
+    <select id="selectById" resultMap="FlowEntryPointResultMap">
+        SELECT <include refid="FlowEntryPointColumns"/>
+        FROM yglue_flow_entrypoint
+        WHERE id = #{id}
+        LIMIT 1
+    </select>
+
+    <select id="selectByProjectAndFlow" resultMap="FlowEntryPointResultMap">
+        SELECT <include refid="FlowEntryPointColumns"/>
+        FROM yglue_flow_entrypoint
+        WHERE project_id = #{projectId}
+          AND flow_code = #{flowCode}
+        LIMIT 1
+    </select>
+
+    <update id="update" parameterType="org.yglue.flow.orch.domain.FlowEntryPoint">
+        UPDATE yglue_flow_entrypoint
+        SET http_method = #{httpMethod},
+            path = #{path},
+            replace_response = #{replaceResponse},
+            enabled = #{enabled},
+            del_flag = #{delFlag},
+            update_by = #{updateBy},
+            update_time = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <update id="updateEnabled">
+        UPDATE yglue_flow_entrypoint
+        SET enabled = #{enabled},
+            update_by = #{updateBy},
+            update_time = NOW()
+        WHERE id = #{id}
+          AND del_flag = 0
+    </update>
+</mapper>

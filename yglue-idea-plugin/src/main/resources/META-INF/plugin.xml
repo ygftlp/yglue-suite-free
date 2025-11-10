@@ -1,0 +1,35 @@
+<idea-plugin>
+  <id>org.yglue.flow.idea</id>
+  <name>yglue</name>
+  <vendor email="noreply@example.com">org.yglue</vendor>
+  <description>Scan @FlowApi / @FlowOperation annotations and export metadata JSON.</description>
+  <depends>com.intellij.modules.platform</depends>
+  <depends>com.intellij.modules.java</depends>
+
+  <extensions defaultExtensionNs="com.intellij">
+    <applicationConfigurable id="org.yglue.flow.idea.settings"
+                             displayName="yglue"
+                             instance="org.yglue.flow.idea.settings.YgflowSettingsConfigurable"/>
+    <postStartupActivity implementation="org.yglue.flow.idea.MetadataAutoUploadStartupActivity"/>
+  </extensions>
+
+  <actions>
+    <group id="org.yglue.flow.actions" text="yglue" description="yglue Tools" popup="true">
+      <add-to-group group-id="ToolsMenu" anchor="last"/>
+      <action id="org.yglue.flow.ExportAction"
+              class="org.yglue.flow.idea.ExportMetadataAction"
+              text="Export Metadata"
+              description="Export yglue metadata to .ygflow/export.json"/>
+    
+      <action id="org.yglue.flow.UploadAction"
+              class="org.yglue.flow.idea.UploadMetadataAction"
+              text="Upload Metadata"
+              description="Upload .ygflow/export.json to Orchestrator"/>
+    
+      <action id="org.yglue.flow.SyncRulesAction"
+              class="org.yglue.flow.idea.sync.SyncRulesAction"
+              text="Sync Rules"
+              description="Sync orchestration rules from the orchestrator to the local project"/>
+    </group>
+  </actions>
+</idea-plugin>

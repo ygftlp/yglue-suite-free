@@ -1,0 +1,14 @@
+    private static String trimTrailingSlash(String value) {
+        String v = value;
+        while (v.endsWith("/")) {
+            v = v.substring(0, v.length() - 1);
+        }
+        return v;
+    }
+
+    private static String defaultBaseUrl(String configured) {
+        if (configured != null && !configured.isBlank()) {
+            return configured.trim();
+        }
+        return "http://localhost:8090";
+    }

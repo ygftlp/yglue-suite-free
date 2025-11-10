@@ -1,0 +1,742 @@
+<script setup lang="ts">
+import { computed } from "vue"
+import ParamResolverEditor from "./ParamResolverEditor.vue"
+import ConverterEditor from "./ConverterEditor.vue"
+import { modelOptions } from "../data/models"
+
+type IOType = "inputs"
+
+const props = defineProps<{
+  selectedNode: any | null
+  selectedEdge: any | null
+}>()
+
+const emit = defineEmits<{
+  (e: "update-node", node: any): void
+  (e: "update-edge", edge: any): void
+}>()
+
+const isBranchNode = computed(() => props.selectedNode?.type === "branch" || props.selectedNode?.data?.branch)
+const transactionVariant = computed(() => props.selectedNode?.data?.transaction as "begin" | "end" | undefined)
+const isTransactionNode = computed(() => Boolean(transactionVariant.value))
+const allowCustomIO = computed(() => !props.selectedNode?.data?.comp)
+const hasSelection = computed(() => Boolean(props.selectedNode || props.selectedEdge))
+const outputInfo = computed(() => props.selectedNode?.data?.output || null)
+
+type ExpressionGroup = { id: string; operator: "AND" | "OR"; conditions: string[] }
+
+const edgeGroups = computed<ExpressionGroup[]>(() => props.selectedEdge?.data?.expressionGroups || [])
+const groupJoiner = computed(() => props.selectedEdge?.data?.groupJoiner || "OR")
+
+function cloneNode() {
+  return JSON.parse(JSON.stringify(props.selectedNode))
+}
+
+function cloneEdge() {
+  return JSON.parse(JSON.stringify(props.selectedEdge))
+}
+
+function ensureArray(next: any, key: IOType) {
+  next.data ||= {}
+  next.data[key] ||= []
+}
+
+function ensureEdgeGroups(next: any) {
+  next.data ||= {}
+  next.data.expressionGroups ||= [createGroup()]
+  next.data.groupJoiner ||= "OR"
+}
+
+function createGroup(): ExpressionGroup {
+  return { id: `${Date.now()}-${Math.random().toString(16).slice(2, 6)}`, operator: "AND", conditions: [""] }
+}
+
+function buildExpression(groups: ExpressionGroup[], joiner: "AND" | "OR") {
+  const parts = groups
+    .map((group) => {
+      const conds = (group.conditions || []).filter((c) => c && c.trim().length > 0)
+      if (!conds.length) return ""
+      return `(${conds.join(` ${group.operator || "AND"} `)})`
+    })
+    .filter(Boolean)
+  return parts.join(` ${joiner} `)
+}
+
+function mutateNode(updater: (next: any) => void) {
+  if (!props.selectedNode) return
+  const next = cloneNode()
+  updater(next)
+  emit("update-node", next)
+}
+
+function mutateEdge(updater: (next: any) => void) {
+  if (!props.selectedEdge) return
+  const next = cloneEdge()
+  updater(next)
+  const expression = next.data?.expression || ""
+  const display = next.data?.label || expression
+  next.label = display
+  emit("update-edge", next)
+}
+
+function updateNodeField(key: string, value: any) {
+  mutateNode((next) => {
+    next.data ||= {}
+    next.data[key] = value
+  })
+}
+
+function updateCompField(partial: Record<string, any>) {
+  mutateNode((next) => {
+    next.data ||= {}
+    next.data.comp = { ...(next.data.comp || {}), ...partial }
+  })
+}
+
+function addIO(type: IOType) {
+  mutateNode((next) => {
+    ensureArray(next, type)
+    const defaults = {
+      name: "",
+      valueType: "STRING",
+      typeName: "",
+      transformer: "",
+      resolver: { type: "request", path: "", cast: "STRING", default: "" },
+      converter: {
+        kind: "GENERAL",
+        targetType: "STRING",
+        targetTypeName: "",
+        script: "",
+        arrayElementType: "STRING",
+        arrayElementTypeName: "",
+      },
+    }
+    next.data[type].push(defaults)
+  })
+}
+
+function updateIO(type: IOType, index: number, partial: Record<string, any>) {
+  mutateNode((next) => {
+    ensureArray(next, type)
+    const list = next.data[type]
+    list[index] = { ...(list[index] || {}), ...partial }
+  })
+}
+
+function removeIO(type: IOType, index: number) {
+  mutateNode((next) => {
+    ensureArray(next, type)
+    next.data[type].splice(index, 1)
+  })
+}
+
+function getInputResolver(input: any) {
+  if (input?.resolver) return input.resolver
+  return {
+    type: input?.sourceType || "request",
+    path: input?.source || "",
+    cast: input?.cast || "STRING",
+    default: input?.default || "",
+  }
+}
+
+function updateInputResolver(index: number, resolver: any) {
+  updateIO("inputs", index, { resolver })
+}
+
+function formatOutputType(output: any) {
+  const type = (output?.valueType || "OBJECT").toUpperCase()
+  if (type === "OBJECT" || type === "ARRAY") {
+    return output?.typeName || type
+  }
+  return type
+}
+
+function updateOutputField(partial: Record<string, any>) {
+  mutateNode((next) => {
+    next.data ||= {}
+    next.data.output = { ...(next.data.output || {}), ...partial }
+  })
+}
+
+function isObjectOutput(output: any) {
+  return (output?.valueType || "").toUpperCase() === "OBJECT"
+}
+
+function formatInputType(input: any) {
+  const type = (input?.valueType || "STRING").toUpperCase()
+  if (type === "OBJECT" || type === "ARRAY") {
+    return input?.typeName || type
+  }
+  return type
+}
+
+function updateInputType(index: number, value: string) {
+  updateIO("inputs", index, { valueType: value })
+}
+
+function updateInputTypeName(index: number, value: string) {
+  updateIO("inputs", index, { typeName: value })
+}
+
+function getConverter(input: any) {
+  if (input?.converter) return input.converter
+  return {
+    kind: "GENERAL",
+    targetType: (input?.valueType || "STRING").toUpperCase(),
+    targetTypeName: input?.typeName || "",
+    script: input?.transformer || "",
+    arrayElementType: "STRING",
+    arrayElementTypeName: "",
+  }
+}
+
+function updateConverter(index: number, converter: any) {
+  updateIO("inputs", index, { converter, transformer: converter?.script || "" })
+}
+
+function updateEdgeField(partial: Record<string, any>) {
+  mutateEdge((next) => {
+    next.data = { ...(next.data || {}), ...partial }
+  })
+}
+
+function syncExpression(next: any) {
+  const groups: ExpressionGroup[] = next.data.expressionGroups
+  const joiner: "AND" | "OR" = next.data.groupJoiner || "OR"
+  next.data.expression = buildExpression(groups, joiner)
+}
+
+function updateGroupJoiner(value: "AND" | "OR") {
+  mutateEdge((next) => {
+    ensureEdgeGroups(next)
+    next.data.groupJoiner = value
+    syncExpression(next)
+  })
+}
+
+function addGroup() {
+  mutateEdge((next) => {
+    ensureEdgeGroups(next)
+    next.data.expressionGroups.push(createGroup())
+    syncExpression(next)
+  })
+}
+
+function removeGroup(index: number) {
+  mutateEdge((next) => {
+    ensureEdgeGroups(next)
+    next.data.expressionGroups.splice(index, 1)
+    if (next.data.expressionGroups.length === 0) {
+      next.data.expressionGroups.push(createGroup())
+    }
+    syncExpression(next)
+  })
+}
+
+function updateGroupOperator(index: number, operator: "AND" | "OR") {
+  mutateEdge((next) => {
+    ensureEdgeGroups(next)
+    next.data.expressionGroups[index].operator = operator
+    syncExpression(next)
+  })
+}
+
+function addCondition(groupIndex: number) {
+  mutateEdge((next) => {
+    ensureEdgeGroups(next)
+    next.data.expressionGroups[groupIndex].conditions.push("")
+  })
+}
+
+function updateCondition(groupIndex: number, condIndex: number, value: string) {
+  mutateEdge((next) => {
+    ensureEdgeGroups(next)
+    next.data.expressionGroups[groupIndex].conditions[condIndex] = value
+    syncExpression(next)
+  })
+}
+
+function removeCondition(groupIndex: number, condIndex: number) {
+  mutateEdge((next) => {
+    ensureEdgeGroups(next)
+    next.data.expressionGroups[groupIndex].conditions.splice(condIndex, 1)
+    if (next.data.expressionGroups[groupIndex].conditions.length === 0) {
+      next.data.expressionGroups[groupIndex].conditions.push("")
+    }
+    syncExpression(next)
+  })
+}
+</script>
+
+<template>
+  <div v-if="!hasSelection" class="center">请选择节点或连线查看配置</div>
+  <div v-else class="col" style="height:100%">
+    <div class="bar">
+      <div style="font-weight:600; font-size:13px">{{ selectedEdge ? "连线配置" : "节点配置" }}</div>
+    </div>
+    <div style="padding:12px" class="col">
+      <template v-if="selectedEdge">
+      <div>
+        <div class="muted">线条标签</div>
+        <input
+          class="input"
+          placeholder="示例：true / 成功"
+          :value="selectedEdge.data?.label || ''"
+          @input="updateEdgeField({ label: ($event.target as HTMLInputElement).value })"
+        />
+      </div>
+      <div class="builder">
+        <div class="builder-head">
+          <div class="muted">条件组之间关系</div>
+          <select
+            class="input"
+            style="width:160px"
+            :value="groupJoiner"
+            @change="updateGroupJoiner(($event.target as HTMLSelectElement).value as 'AND' | 'OR')"
+          >
+            <option value="AND">AND（全部满足）</option>
+            <option value="OR">OR（任意满足）</option>
+          </select>
+        </div>
+
+        <div
+          v-for="(group, gIndex) in edgeGroups"
+          :key="group.id"
+          class="group-card"
+        >
+          <div class="group-header">
+            <div class="group-title">分组 {{ gIndex + 1 }}</div>
+            <div class="row" style="gap:6px">
+              <select
+                class="input"
+                style="width:110px"
+                :value="group.operator"
+                @change="updateGroupOperator(gIndex, ($event.target as HTMLSelectElement).value as 'AND' | 'OR')"
+              >
+                <option value="AND">组内 AND</option>
+                <option value="OR">组内 OR</option>
+              </select>
+              <button class="btn" style="font-size:12px" @click="removeGroup(gIndex)" :disabled="edgeGroups.length === 1">
+                删除组
+              </button>
+            </div>
+          </div>
+          <div class="conditions">
+            <div
+              v-for="(condition, cIndex) in group.conditions"
+              :key="cIndex"
+              class="condition-row"
+            >
+              <input
+                class="input"
+                placeholder="输入条件，如 ctx.amount > 1000"
+                :value="condition"
+                @input="updateCondition(gIndex, cIndex, ($event.target as HTMLInputElement).value)"
+              />
+              <button class="btn" style="font-size:12px" @click="removeCondition(gIndex, cIndex)" :disabled="group.conditions.length === 1">
+                删除
+              </button>
+            </div>
+            <button class="btn" style="font-size:12px" @click="addCondition(gIndex)">新增条件</button>
+          </div>
+        </div>
+
+        <button class="btn" style="font-size:12px; width:100%" @click="addGroup">新增条件组（括号）</button>
+      </div>
+
+      <div>
+        <div class="muted">表达式预览</div>
+        <div class="expression-preview">
+          <pre>{{ selectedEdge.data?.expression || '自动根据可视化配置生成' }}</pre>
+        </div>
+      </div>
+      <div class="tip">
+        提示：表达式会实时同步到画布连线标签，仍可自定义“线条标签”字段来覆盖展示文案。
+      </div>
+    </template>
+
+    <template v-else-if="isBranchNode">
+      <div class="tip">
+        条件分支节点默认作为“无条件”出口，你可以在右键连线时补充条件表达式，也可以保持为空（即未命中则走该分支）。
+      </div>
+    </template>
+
+      <template v-else-if="selectedNode">
+        <div>
+          <div class="muted">显示名称</div>
+        <input
+          class="input"
+          :class="{ locked: Boolean(selectedNode.data?.comp) }"
+          :readonly="Boolean(selectedNode.data?.comp)"
+          :value="selectedNode.data?.label || selectedNode.label || ''"
+          @input="!selectedNode.data?.comp && updateNodeField('label', ($event.target as HTMLInputElement).value)"
+        />
+      </div>
+
+      <div v-if="selectedNode.data?.comp">
+        <div class="muted">组件绑定</div>
+        <div class="row" style="flex-wrap:wrap">
+          <input
+            class="input locked"
+            style="flex:1"
+            placeholder="bean 名称"
+            :value="selectedNode.data?.comp?.bean || ''"
+            readonly
+          />
+          <input
+            class="input locked"
+            style="flex:1"
+            placeholder="method 名称"
+            :value="selectedNode.data?.comp?.method || ''"
+            readonly
+          />
+          <input
+            class="input locked"
+            style="flex:1"
+            placeholder="版本"
+            :value="selectedNode.data?.comp?.version || ''"
+            readonly
+          />
+        </div>
+      </div>
+
+        <div class="col" style="gap:8px; margin-top:12px">
+          <div class="row" style="justify-content:space-between; align-items:center">
+            <div class="muted">输入参数</div>
+            <button
+              v-if="allowCustomIO"
+              class="btn"
+              style="font-size:12px"
+              @click="addIO('inputs')"
+            >
+              新增输入
+            </button>
+            <span v-else class="muted" style="font-size:12px">来自组件方法，无法增删</span>
+          </div>
+          <div v-if="(selectedNode.data?.inputs || []).length === 0" class="muted" style="font-size:12px">暂无输入参数</div>
+          <div
+            v-for="(input, index) in selectedNode.data?.inputs || []"
+            :key="index"
+            class="card input-block"
+          >
+            <div class="input-header">
+              <div class="input-label">
+                <div class="muted small">参数</div>
+                <template v-if="allowCustomIO">
+                  <input
+                    class="input"
+                    style="width:160px"
+                    :value="input.name || ''"
+                    @input="updateIO('inputs', index, { name: ($event.target as HTMLInputElement).value })"
+                  />
+                </template>
+                <span v-else class="pill-text">{{ input.name }}</span>
+              </div>
+              <div class="input-label">
+                <div class="muted small">类型</div>
+                <template v-if="allowCustomIO">
+                  <div class="row" style="gap:6px; align-items:center">
+                    <select
+                      class="input"
+                      style="width:120px"
+                      :value="input.valueType || 'STRING'"
+                      @change="updateInputType(index, ($event.target as HTMLSelectElement).value)"
+                    >
+                      <option value="STRING">String</option>
+                      <option value="NUMBER">Number</option>
+                      <option value="BOOLEAN">Boolean</option>
+                      <option value="OBJECT">Object</option>
+                      <option value="ARRAY">Array</option>
+                    </select>
+                    <input
+                      v-if="['OBJECT','ARRAY'].includes((input.valueType || '').toUpperCase())"
+                      class="input"
+                      style="width:140px"
+                      placeholder="类型名"
+                      :value="input.typeName || ''"
+                      @input="updateInputTypeName(index, ($event.target as HTMLInputElement).value)"
+                    />
+                  </div>
+                </template>
+                <span v-else class="pill-text">{{ formatInputType(input) }}</span>
+              </div>
+              <button
+                v-if="allowCustomIO"
+                class="btn"
+                style="font-size:12px"
+                @click="removeIO('inputs', index)"
+              >
+                删除
+              </button>
+            </div>
+            <div class="resolver-label">取值配置</div>
+            <ParamResolverEditor
+              :value="getInputResolver(input)"
+              @update:value="(resolver) => updateInputResolver(index, resolver)"
+            />
+            <div class="muted" style="font-size:11px">数据转换器（可选）</div>
+            <ConverterEditor
+              :value="getConverter(input)"
+              @update:value="(value) => updateConverter(index, value)"
+              :model-options="modelOptions"
+            />
+          </div>
+        </div>
+
+        <div class="col" style="gap:8px; margin-top:12px">
+          <div class="row" style="justify-content:space-between; align-items:center">
+            <div class="muted">输出结果</div>
+          </div>
+          <div v-if="!outputInfo" class="muted" style="font-size:12px">暂无返回值</div>
+          <div
+            v-else
+            class="card"
+            style="padding:10px; display:flex; flex-direction:column; gap:8px"
+          >
+            <div v-if="outputInfo.description" class="input-hint">说明：{{ outputInfo.description }}</div>
+            <div class="type-pill">类型：{{ formatOutputType(outputInfo) }}</div>
+            <div v-if="isObjectOutput(outputInfo)" class="field-table">
+              <div class="field-row header">
+                <span>字段</span>
+                <span>类型</span>
+                <span>说明</span>
+              </div>
+              <div
+                v-for="(field, idx) in outputInfo.fields || []"
+                :key="idx"
+                class="field-row"
+              >
+                <span>{{ field.name }}</span>
+                <span>{{ field.type }}</span>
+                <span>{{ field.description || '-' }}</span>
+              </div>
+              <div v-if="(outputInfo.fields || []).length === 0" class="muted" style="font-size:12px">暂无字段</div>
+            </div>
+            <div v-else class="muted" style="font-size:12px">基础类型：{{ formatOutputType(outputInfo) }}</div>
+            <div class="binding-field">
+              <div class="muted" style="font-size:11px">绑定到 ctx 的 key</div>
+              <input
+                class="input"
+                placeholder="默认 retxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                :value="outputInfo.contextKey || ''"
+                @input="updateOutputField({ contextKey: ($event.target as HTMLInputElement).value })"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:12px">
+          <div class="muted">执行参数</div>
+          <div class="row" style="flex-wrap:wrap; gap:8px">
+            <input
+              class="input"
+              style="flex:1 1 140px"
+              placeholder="重试次数"
+              :value="selectedNode.data?.retry || ''"
+              @input="updateNodeField('retry', ($event.target as HTMLInputElement).value)"
+            />
+            <input
+              class="input"
+              style="flex:1 1 140px"
+              placeholder="超时（ms）"
+              :value="selectedNode.data?.timeout || ''"
+              @input="updateNodeField('timeout', ($event.target as HTMLInputElement).value)"
+            />
+            <select
+              class="input"
+              style="flex:1 1 140px"
+              :value="selectedNode.data?.isolation || 'SERIAL'"
+              @change="updateNodeField('isolation', ($event.target as HTMLSelectElement).value)"
+            >
+              <option value="SERIAL">串行</option>
+              <option value="PARALLEL">并行</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <div class="muted">事务模式</div>
+          <select
+            class="input"
+            :value="selectedNode.data?.txMode || 'NONE'"
+            @change="updateNodeField('txMode', ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="NONE">无</option>
+            <option value="SPRING">Spring</option>
+            <option value="SEATA">Seata</option>
+            <option value="SAGA">Saga</option>
+          </select>
+        </div>
+      </template>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.tip {
+  font-size: 12px;
+  color: #64748b;
+  background: #f8fafc;
+  border: 1px dashed rgba(148, 163, 184, 0.6);
+  border-radius: 10px;
+  padding: 10px;
+  line-height: 1.4;
+}
+
+.builder {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.builder-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.group-card {
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 10px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #f9fafb;
+}
+
+.group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.group-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.conditions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.condition-row {
+  display: flex;
+  gap: 6px;
+}
+
+.condition-row .input {
+  flex: 1;
+}
+
+.expression-preview {
+  border: 1px solid rgba(37, 99, 235, 0.3);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(37, 99, 235, 0.04);
+  color: #0f172a;
+  min-height: 72px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow: auto;
+}
+
+.expression-preview pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.input-hint {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.input.locked {
+  background: #f3f4f6;
+  color: #6b7280;
+  cursor: not-allowed;
+}
+
+:deep(.resolver) {
+  flex: 1;
+}
+
+.type-pill {
+  font-size: 11px;
+  color: #2563eb;
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  border-radius: 999px;
+  width: fit-content;
+  padding: 2px 10px;
+}
+
+.binding-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.input-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.input-header {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.input-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pill-text {
+  padding: 4px 10px;
+  background: rgba(226, 232, 240, 0.6);
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.resolver-label {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.field-table {
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 2fr;
+  padding: 6px 8px;
+  font-size: 11px;
+  align-items: center;
+  gap: 6px;
+}
+
+.field-row:nth-child(even) {
+  background: rgba(226, 232, 240, 0.4);
+}
+
+.field-row.header {
+  font-weight: 600;
+  background: rgba(226, 232, 240, 0.8);
+}
+</style>

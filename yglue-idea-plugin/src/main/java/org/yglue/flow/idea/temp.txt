@@ -1,0 +1,428 @@
+package org.yglue.flow.idea;
+
+import com.intellij.openapi.actionSystem.AnAction;
+import com.intellij.openapi.actionSystem.AnActionEvent;
+import com.intellij.openapi.application.ReadAction;
+import com.intellij.openapi.project.Project;
+import com.intellij.openapi.ui.Messages;
+import com.intellij.psi.PsiAnnotation;
+import com.intellij.psi.PsiAnnotationMemberValue;
+import com.intellij.psi.PsiArrayInitializerMemberValue;
+import com.intellij.psi.PsiClass;
+import com.intellij.psi.PsiFile;
+import com.intellij.psi.PsiJavaFile;
+import com.intellij.psi.PsiLiteralExpression;
+import com.intellij.psi.PsiDocComment;
+import com.intellij.psi.PsiDocCommentOwner;
+import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiManager;
+import com.intellij.psi.PsiMethod;
+import com.intellij.psi.PsiModifierList;
+import com.intellij.psi.PsiModifierListOwner;
+import com.intellij.psi.PsiParameter;
+import com.intellij.psi.PsiReferenceExpression;
+import com.intellij.psi.PsiType;
+import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.psi.search.FilenameIndex;
+import com.intellij.psi.search.GlobalSearchScope;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+
+public class ExportMetadataAction extends AnAction {
+
+    private static final Set<String> API_ANNOTATIONS = Set.of(
+            "org.yglue.flow.annotations.FlowApi"
+    );
+
+    private static final Set<String> OPERATION_ANNOTATIONS = Set.of(
+            "org.yglue.flow.annotations.FlowOperation",
+            "org.yglue.flow.annotations.DevflowOperation"
+    );
+
+    private static final Set<String> REST_CONTROLLER_ANNOTATIONS = Set.of(
+            "org.springframework.web.bind.annotation.RestController"
+    );
+    private static final Set<String> CONTROLLER_ANNOTATIONS = Set.of(
+            "org.springframework.stereotype.Controller"
+    );
+    private static final Set<String> RESPONSE_BODY_ANNOTATIONS = Set.of(
+            "org.springframework.web.bind.annotation.ResponseBody"
+    );
+    private static final Set<String> CLASS_MAPPING_ANNOTATIONS = Set.of(
+            "org.springframework.web.bind.annotation.RequestMapping"
+    );
+    private static final Map<String, String> METHOD_FIXED_MAPPINGS = Map.ofEntries(
+            Map.entry("org.springframework.web.bind.annotation.GetMapping", "GET"),
+            Map.entry("org.springframework.web.bind.annotation.PostMapping", "POST"),
+            Map.entry("org.springframework.web.bind.annotation.PutMapping", "PUT"),
+            Map.entry("org.springframework.web.bind.annotation.DeleteMapping", "DELETE"),
+            Map.entry("org.springframework.web.bind.annotation.PatchMapping", "PATCH")
+    );
+    private static final Set<String> METHOD_MAPPING_ANNOTATIONS = new LinkedHashSet<>(METHOD_FIXED_MAPPINGS.keySet());
+    static {
+        METHOD_MAPPING_ANNOTATIONS.add("org.springframework.web.bind.annotation.RequestMapping");
+    }
+
+    @Override
+    public void actionPerformed(AnActionEvent e) {
+        Project project = e.getProject();
+        if (project == null) return;
+
+        try {
+            Path outFile = exportProject(project);
+            Messages.showInfoMessage(project, "Exported to " + outFile, "YGFlow");
+        } catch (Exception ex) {
+            Messages.showErrorDialog(project, "Export failed: " + ex.getMessage(), "YGFlow");
+        }
+    }
+
+    public static Path exportProject(Project project) throws Exception {
+        JSONObject json = scanProject(project);
+        String base = project.getBasePath();
+        if (base == null) throw new IllegalStateException("Project basePath is null");
+        Path outDir = Path.of(base, ".ygflow");
+        Files.createDirectories(outDir);
+        Path outFile = outDir.resolve("export.json");
+        Files.writeString(outFile, json.toString(2));
+        return outFile;
+    }
+
+    private static JSONObject scanProject(Project project) {
+        JSONObject result = new JSONObject();
+        JSONArray apis = new JSONArray();
+        JSONArray restEndpoints = new JSONArray();
+        result.put("project", project.getName());
+        result.put("apis", apis);
+        result.put("rests", restEndpoints);
+
+        PsiManager psiManager = PsiManager.getInstance(project);
+        GlobalSearchScope scope = GlobalSearchScope.projectScope(project);
+        Collection<VirtualFile> vfs = FilenameIndex.getAllFilesByExt(project, "java", scope);
+
+        ReadAction.run(() -> {
+            for (VirtualFile vf : vfs) {
+                PsiFile psi = psiManager.findFile(vf);
+                if (!(psi instanceof PsiJavaFile psiJavaFile)) continue;
+
+                for (PsiClass clazz : psiJavaFile.getClasses()) {
+                    handleFlowApiClass(clazz, apis);
+                    collectRestEndpoints(clazz, restEndpoints);
+                }
+            }
+        });
+
+        return result;
+    }
+
+    private static void handleFlowApiClass(PsiClass aClass, JSONArray apis) {
+        PsiAnnotation apiAnno = findAnnotation(aClass, API_ANNOTATIONS);
+        if (apiAnno != null) {
+            JSONObject apiObj = new JSONObject();
+            String qualifiedName = aClass.getQualifiedName();
+            apiObj.put("class", qualifiedName != null ? qualifiedName : aClass.getName());
+
+            String apiName = emptyToDefault(getAttr(apiAnno, "name"), aClass.getName());
+            apiObj.put("name", apiName);
+            apiObj.put("description", getAttr(apiAnno, "description"));
+
+            String version = getAttr(apiAnno, "version");
+            apiObj.put("version", version.isBlank() ? "1.0.0" : version);
+
+            JSONArray ops = new JSONArray();
+            for (PsiMethod m : aClass.getMethods()) {
+                PsiAnnotation opAnno = findAnnotation(m, OPERATION_ANNOTATIONS);
+                if (opAnno == null) continue;
+
+                JSONObject opObj = new JSONObject();
+                opObj.put("method", m.getName());
+                opObj.put("name", getAttr(opAnno, "name"));
+                opObj.put("description", getAttr(opAnno, "description"));
+                opObj.put("tags", toJsonArray(getStringArray(opAnno, "tags")));
+
+                JSONArray params = new JSONArray();
+                for (PsiParameter p : m.getParameterList().getParameters()) {
+                    JSONObject pObj = new JSONObject();
+                    pObj.put("name", p.getName());
+                    pObj.put("type", renderType(p.getType()));
+                    params.put(pObj);
+                }
+                opObj.put("params", params);
+                PsiType returnType = m.getReturnType();
+                opObj.put("returnType", returnType != null ? renderType(returnType) : "void");
+                ops.put(opObj);
+            }
+            apiObj.put("operations", ops);
+            if (!ops.isEmpty()) {
+                apis.put(apiObj);
+            }
+        }
+        for (PsiClass inner : aClass.getInnerClasses()) {
+            handleFlowApiClass(inner, apis);
+        }
+    }
+
+    private static void collectRestEndpoints(PsiClass clazz, JSONArray sink) {
+        if (!isRestController(clazz)) {
+            for (PsiClass inner : clazz.getInnerClasses()) {
+                collectRestEndpoints(inner, sink);
+            }
+            return;
+        }
+        PsiModifierList modifierList = clazz.getModifierList();
+        List<String> classPaths = extractPaths(modifierList, CLASS_MAPPING_ANNOTATIONS);
+        if (classPaths.isEmpty()) {
+            classPaths = List.of("");
+        }
+
+        for (PsiMethod method : clazz.getMethods()) {
+            List<Mapping> mappings = extractMethodMappings(method);
+            if (mappings.isEmpty()) {
+                continue;
+            }
+            for (Mapping mapping : mappings) {
+                List<String> methodPaths = mapping.paths().isEmpty() ? List.of("") : mapping.paths();
+                for (String classPath : classPaths) {
+                    for (String methodPath : methodPaths) {
+                        String fullPath = normalizeUrl(classPath, methodPath);
+                        if (fullPath.isBlank()) {
+                            fullPath = "/";
+                        }
+                        JSONObject endpoint = new JSONObject();
+                        endpoint.put("class", Objects.toString(clazz.getQualifiedName(), clazz.getName()));
+                        endpoint.put("method", method.getName());
+                          endpoint.put("path", fullPath);
+                          endpoint.put("httpMethod", mapping.httpMethod());
+                          endpoint.put("produces", new JSONArray(mapping.produces()));
+                          endpoint.put("consumes", new JSONArray(mapping.consumes()));
+                          String docSummary = extractDocSummary(method);
+                          if (!docSummary.isBlank()) {
+                              endpoint.put("name", docSummary);
+                              endpoint.put("description", docSummary);
+                          }
+                          sink.put(endpoint);
+                      }
+                  }
+              }
+        }
+
+        for (PsiClass inner : clazz.getInnerClasses()) {
+            collectRestEndpoints(inner, sink);
+        }
+    }
+
+    private static boolean isRestController(PsiClass clazz) {
+        if (findAnnotation(clazz, REST_CONTROLLER_ANNOTATIONS) != null) {
+            return true;
+        }
+        return findAnnotation(clazz, RESPONSE_BODY_ANNOTATIONS) != null
+                && findAnnotation(clazz, CONTROLLER_ANNOTATIONS) != null;
+    }
+
+    private static List<Mapping> extractMethodMappings(PsiMethod method) {
+        List<Mapping> mappings = new ArrayList<>();
+        for (String annoFqn : METHOD_MAPPING_ANNOTATIONS) {
+            PsiAnnotation annotation = method.getAnnotation(annoFqn);
+            if (annotation == null) {
+                continue;
+            }
+            List<String> paths = extractPaths(annotation);
+            List<String> produces = extractStrings(annotation, "produces");
+            List<String> consumes = extractStrings(annotation, "consumes");
+
+            if (METHOD_FIXED_MAPPINGS.containsKey(annoFqn)) {
+                mappings.add(new Mapping(METHOD_FIXED_MAPPINGS.get(annoFqn), paths, produces, consumes));
+            } else {
+                List<String> methods = extractRequestMethods(annotation);
+                if (methods.isEmpty()) {
+                    methods = List.of("GET");
+                }
+                for (String httpMethod : methods) {
+                    mappings.add(new Mapping(httpMethod, paths, produces, consumes));
+                }
+            }
+        }
+        return mappings;
+    }
+
+    private static List<String> extractPaths(PsiAnnotation annotation) {
+        List<String> paths = extractStrings(annotation, "path");
+        if (paths.isEmpty()) {
+            paths = extractStrings(annotation, "value");
+        }
+        return paths;
+    }
+
+    private static List<String> extractPaths(PsiModifierList modifiers, Set<String> annotations) {
+        List<String> result = new ArrayList<>();
+        if (modifiers == null) {
+            return result;
+        }
+        for (String annotationFqn : annotations) {
+            PsiAnnotation annotation = modifiers.findAnnotation(annotationFqn);
+            if (annotation != null) {
+                result.addAll(extractPaths(annotation));
+            }
+        }
+        return result;
+    }
+
+    private static List<String> extractStrings(PsiAnnotation annotation, String attribute) {
+        List<String> values = new ArrayList<>();
+        PsiAnnotationMemberValue attr = annotation.findAttributeValue(attribute);
+        if (attr == null && Objects.equals(attribute, "value")) {
+            attr = annotation.findAttributeValue(null);
+        }
+        if (attr == null) {
+            return values;
+        }
+        if (attr instanceof PsiArrayInitializerMemberValue array) {
+            for (PsiAnnotationMemberValue initializer : array.getInitializers()) {
+                String value = extractString(initializer);
+                if (!value.isBlank()) {
+                    values.add(value);
+                }
+            }
+        } else {
+            String value = extractString(attr);
+            if (!value.isBlank()) {
+                values.add(value);
+            }
+        }
+        return values;
+    }
+
+    private static List<String> extractRequestMethods(PsiAnnotation annotation) {
+        List<String> result = new ArrayList<>();
+        PsiAnnotationMemberValue attr = annotation.findAttributeValue("method");
+        if (attr == null) {
+            return result;
+        }
+        if (attr instanceof PsiArrayInitializerMemberValue array) {
+            for (PsiAnnotationMemberValue initializer : array.getInitializers()) {
+                String methodName = extractEnumName(initializer);
+                if (!methodName.isBlank()) {
+                    result.add(methodName);
+                }
+            }
+        } else {
+            String methodName = extractEnumName(attr);
+            if (!methodName.isBlank()) {
+                result.add(methodName);
+            }
+        }
+        return result;
+    }
+
+    private static String extractEnumName(PsiAnnotationMemberValue value) {
+        if (value instanceof PsiReferenceExpression ref) {
+            String qualified = ref.getQualifiedName();
+            if (qualified != null) {
+                int idx = qualified.lastIndexOf('.') + 1;
+                return qualified.substring(idx);
+            }
+            return Objects.toString(ref.getReferenceName(), "");
+        }
+        String text = value.getText();
+        if (text == null) {
+            return "";
+        }
+        int idx = text.lastIndexOf('.') + 1;
+        return text.substring(idx).replace("}", "").replace("{", "");
+    }
+
+    private static String normalizeUrl(String classPath, String methodPath) {
+        String c = classPath == null ? "" : classPath.trim();
+        String m = methodPath == null ? "" : methodPath.trim();
+        if (c.isEmpty()) {
+            c = "/";
+        } else if (!c.startsWith("/")) {
+            c = "/" + c;
+        }
+        if (!m.isEmpty() && !m.startsWith("/")) {
+            m = "/" + m;
+        }
+        String combined = (c + m).replaceAll("//+", "/");
+        return combined.replaceAll("/+$", "/");
+    }
+
+    private record Mapping(String httpMethod, List<String> paths, List<String> produces, List<String> consumes) {}
+
+    private static String getAttr(PsiAnnotation anno, String key) {
+        PsiAnnotationMemberValue v = anno.findAttributeValue(key);
+        if (v == null) return "";
+        return extractString(v);
+    }
+
+    private static PsiAnnotation findAnnotation(PsiModifierListOwner owner, Set<String> annotationFqns) {
+        for (String fqn : annotationFqns) {
+            PsiAnnotation anno = owner.getAnnotation(fqn);
+            if (anno != null) {
+                return anno;
+            }
+        }
+        return null;
+    }
+
+    private static JSONArray toJsonArray(Set<String> values) {
+        JSONArray array = new JSONArray();
+        for (String v : values) {
+            array.put(v);
+        }
+        return array;
+    }
+
+    private static Set<String> getStringArray(PsiAnnotation anno, String key) {
+        PsiAnnotationMemberValue value = anno.findAttributeValue(key);
+        if (value == null) {
+            return Set.of();
+        }
+        Set<String> result = new LinkedHashSet<>();
+        if (value instanceof PsiArrayInitializerMemberValue array) {
+            for (PsiAnnotationMemberValue initializer : array.getInitializers()) {
+                String extracted = extractString(initializer);
+                if (!extracted.isBlank()) {
+                    result.add(extracted);
+                }
+            }
+        } else {
+            String str = extractString(value);
+            if (!str.isBlank()) {
+                result.add(str);
+            }
+        }
+        return result;
+    }
+
+    private static String extractString(PsiAnnotationMemberValue value) {
+        if (value instanceof PsiLiteralExpression literal) {
+            Object raw = literal.getValue();
+            return raw instanceof String ? (String) raw : "";
+        }
+        String text = value.getText();
+        if (text == null) {
+            return "";
+        }
+        if (text.startsWith("\"") && text.endsWith("\"") && text.length() >= 2) {
+            return text.substring(1, text.length() - 1);
+        }
+        return text;
+    }
+
+    private static String renderType(PsiType type) {
+        return type != null ? type.getCanonicalText() : "";
+    }
+
+    private static String emptyToDefault(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
+    }
+}
