@@ -1204,7 +1204,7 @@ function clearAllMappings() {
 }
 
 .code-editor-container :deep(.cm-editor.cm-focused .cm-content) {
-  caretColor: #2563eb;
+  caret-color: #2563eb;
 }
 
 .code-editor-container :deep(.cm-line) {

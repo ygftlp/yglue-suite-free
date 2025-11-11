@@ -122,6 +122,7 @@ export interface FlowSavePayload {
 export interface FlowEntrypointPayload {
   path: string
   method?: string | null
+  requestSchema?: string | null
   replaceResponse?: boolean
   enabled?: boolean
   flowCode?: string | null
@@ -166,6 +167,10 @@ export interface EndpointEntrypointConfig {
 export interface EndpointSchemaField {
   name: string
   type: string
+  source?: string
+  pathVariable?: string
+  paramName?: string
+  formField?: string
 }
 
 export interface EndpointResponseSchema {
@@ -181,6 +186,7 @@ export interface ProjectEndpoint {
   name: string
   description?: string | null
   configJson?: string | null
+  requestSchemaJson?: string | null
   enabled?: boolean | null
   flowCode?: string | null
   entrypoint?: EndpointEntrypointConfig | null

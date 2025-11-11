@@ -5,6 +5,7 @@ public class RestEntryPointResponse {
     private String path;
     private String method;
     private String flowCode;
+    private String requestSchema;
     private boolean replaceResponse;
     private boolean enabled;
 
@@ -15,12 +16,14 @@ public class RestEntryPointResponse {
                                   String path,
                                   String method,
                                   String flowCode,
+                                  String requestSchema,
                                   boolean replaceResponse,
                                   boolean enabled) {
         this.id = id;
         this.path = path;
         this.method = method;
         this.flowCode = flowCode;
+        this.requestSchema = requestSchema;
         this.replaceResponse = replaceResponse;
         this.enabled = enabled;
     }
@@ -55,6 +58,14 @@ public class RestEntryPointResponse {
 
     public void setFlowCode(String flowCode) {
         this.flowCode = flowCode;
+    }
+
+    public String getRequestSchema() {
+        return requestSchema;
+    }
+
+    public void setRequestSchema(String requestSchema) {
+        this.requestSchema = requestSchema;
     }
 
     /**

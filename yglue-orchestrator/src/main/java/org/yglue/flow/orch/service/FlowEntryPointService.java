@@ -1,5 +1,7 @@
 package org.yglue.flow.orch.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,6 +18,8 @@ import java.util.Locale;
 
 @Service
 public class FlowEntryPointService {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final ProjectService projectService;
     private final FlowEntryPointMapper mapper;
@@ -44,6 +48,7 @@ public class FlowEntryPointService {
             entry.setFlowCode(flowCode);
             entry.setPath(normalizePath(request.getPath()));
             entry.setHttpMethod(normalizeMethod(request.getMethod()));
+            entry.setRequestSchemaJson(normalizeSchemaJson(request.getRequestSchema()));
             entry.setReplaceResponse(request.getReplaceResponse() == null
                     ? Boolean.TRUE
                     : request.getReplaceResponse());
@@ -55,6 +60,7 @@ public class FlowEntryPointService {
         } else {
             existing.setPath(normalizePath(request.getPath()));
             existing.setHttpMethod(normalizeMethod(request.getMethod()));
+            existing.setRequestSchemaJson(normalizeSchemaJson(request.getRequestSchema()));
             existing.setReplaceResponse(request.getReplaceResponse() == null
                     ? Boolean.TRUE
                     : request.getReplaceResponse());
@@ -114,5 +120,21 @@ public class FlowEntryPointService {
             return null;
         }
         return method.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private String normalizeSchemaJson(String rawSchema) {
+        if (rawSchema == null) {
+            return null;
+        }
+        String trimmed = rawSchema.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        try {
+            JsonNode tree = OBJECT_MAPPER.readTree(trimmed);
+            return OBJECT_MAPPER.writeValueAsString(tree);
+        } catch (Exception ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "requestSchema must be valid JSON", ex);
+        }
     }
 }

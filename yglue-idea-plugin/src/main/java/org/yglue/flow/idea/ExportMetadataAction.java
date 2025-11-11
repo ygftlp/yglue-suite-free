@@ -27,6 +27,7 @@ import com.intellij.psi.search.FilenameIndex;
 import com.intellij.psi.search.GlobalSearchScope;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.yglue.flow.idea.schema.SchemaGenerator;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -301,7 +302,7 @@ public class ExportMetadataAction extends AnAction {
                               endpoint.put("description", docSummary);
                           }
                           
-                          endpoint.put("requestSchema", buildRequestSchema(method));
+                          endpoint.put("requestSchema", SchemaGenerator.generateRequestSchema(method));
                           endpoint.put("responseSchema", buildResponseSchema(method));
                           sink.put(endpoint);
                       }
@@ -518,148 +519,6 @@ public class ExportMetadataAction extends AnAction {
 
     private static String emptyToDefault(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
-    }
-
-    private static JSONArray buildRequestSchema(PsiMethod method) {
-        JSONArray schema = new JSONArray();
-        for (PsiParameter parameter : method.getParameterList().getParameters()) {
-            JSONObject item = new JSONObject();
-            item.put("name", parameter.getName());
-            item.put("type", renderType(parameter.getType()));
-            
-            // 识别参数来源（@PathVariable, @RequestParam, @RequestBody, @RequestHeader）
-            String source = detectParameterSource(parameter);
-            if (source != null && !source.isEmpty()) {
-                item.put("source", source);
-            }
-            
-            // 对于 @PathVariable，提取路径变量名
-            String pathVariableName = extractPathVariableName(parameter);
-            if (pathVariableName != null && !pathVariableName.isEmpty()) {
-                item.put("pathVariable", pathVariableName);
-            }
-            
-            // 对于 @RequestParam，提取参数名（如果指定）
-            String requestParamName = extractRequestParamName(parameter);
-            if (requestParamName != null && !requestParamName.isEmpty() && !requestParamName.equals(parameter.getName())) {
-                item.put("paramName", requestParamName);
-            }
-            
-            schema.put(item);
-        }
-        return schema;
-    }
-    
-    /**
-     * 检测参数来源：path, query, body, header
-     */
-    private static String detectParameterSource(PsiParameter parameter) {
-        // 检查 @PathVariable
-        if (hasAnnotation(parameter, "org.springframework.web.bind.annotation.PathVariable")) {
-            return "path";
-        }
-        // 检查 @RequestParam
-        if (hasAnnotation(parameter, "org.springframework.web.bind.annotation.RequestParam")) {
-            return "query";
-        }
-        // 检查 @RequestBody
-        if (hasAnnotation(parameter, "org.springframework.web.bind.annotation.RequestBody")) {
-            return "body";
-        }
-        // 检查 @RequestHeader
-        if (hasAnnotation(parameter, "org.springframework.web.bind.annotation.RequestHeader")) {
-            return "header";
-        }
-        // 默认：如果没有注解，根据参数位置和类型推断
-        // Spring MVC 默认行为：简单类型可能是 @RequestParam，复杂类型可能是 @RequestBody
-        PsiType paramType = parameter.getType();
-        if (paramType != null) {
-            String typeText = paramType.getCanonicalText();
-            // 简单类型默认作为 query 参数
-            if (isSimpleType(typeText)) {
-                return "query";
-            }
-            // 复杂类型默认作为 body
-            return "body";
-        }
-        return null;
-    }
-    
-    /**
-     * 提取 @PathVariable 的变量名
-     */
-    private static String extractPathVariableName(PsiParameter parameter) {
-        PsiAnnotation annotation = parameter.getAnnotation("org.springframework.web.bind.annotation.PathVariable");
-        if (annotation == null) {
-            return null;
-        }
-        PsiAnnotationMemberValue value = annotation.findAttributeValue("value");
-        if (value == null) {
-            value = annotation.findAttributeValue(null); // 尝试默认属性
-        }
-        if (value != null) {
-            String extracted = extractString(value);
-            if (!extracted.isBlank()) {
-                return extracted;
-            }
-        }
-        // 如果注解中没有指定名称，使用参数名
-        return parameter.getName();
-    }
-    
-    /**
-     * 提取 @RequestParam 的参数名
-     */
-    private static String extractRequestParamName(PsiParameter parameter) {
-        PsiAnnotation annotation = parameter.getAnnotation("org.springframework.web.bind.annotation.RequestParam");
-        if (annotation == null) {
-            return null;
-        }
-        PsiAnnotationMemberValue value = annotation.findAttributeValue("value");
-        if (value == null) {
-            value = annotation.findAttributeValue("name");
-        }
-        if (value == null) {
-            value = annotation.findAttributeValue(null); // 尝试默认属性
-        }
-        if (value != null) {
-            String extracted = extractString(value);
-            if (!extracted.isBlank()) {
-                return extracted;
-            }
-        }
-        return null;
-    }
-    
-    /**
-     * 检查参数是否有指定注解
-     */
-    private static boolean hasAnnotation(PsiParameter parameter, String annotationFqn) {
-        return parameter.getAnnotation(annotationFqn) != null;
-    }
-    
-    /**
-     * 判断是否为简单类型（String, Integer, Long, Double, Boolean 等）
-     */
-    private static boolean isSimpleType(String typeText) {
-        if (typeText == null || typeText.isEmpty()) {
-            return false;
-        }
-        // 基本类型和包装类型
-        return typeText.equals("java.lang.String")
-                || typeText.equals("java.lang.Integer") || typeText.equals("int")
-                || typeText.equals("java.lang.Long") || typeText.equals("long")
-                || typeText.equals("java.lang.Double") || typeText.equals("double")
-                || typeText.equals("java.lang.Float") || typeText.equals("float")
-                || typeText.equals("java.lang.Boolean") || typeText.equals("boolean")
-                || typeText.equals("java.lang.Byte") || typeText.equals("byte")
-                || typeText.equals("java.lang.Short") || typeText.equals("short")
-                || typeText.equals("java.lang.Character") || typeText.equals("char")
-                || typeText.equals("java.util.Date")
-                || typeText.equals("java.time.LocalDate")
-                || typeText.equals("java.time.LocalDateTime")
-                || typeText.equals("java.math.BigDecimal")
-                || typeText.equals("java.math.BigInteger");
     }
 
     private static JSONObject buildResponseSchema(PsiMethod method) {

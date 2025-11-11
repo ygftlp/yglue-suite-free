@@ -9,6 +9,8 @@ public class FlowEntryPointRequest {
 
     private String method;
 
+    private String requestSchema;
+
     private Boolean replaceResponse;
     private Boolean enabled;
 
@@ -26,6 +28,14 @@ public class FlowEntryPointRequest {
 
     public void setMethod(String method) {
         this.method = method;
+    }
+
+    public String getRequestSchema() {
+        return requestSchema;
+    }
+
+    public void setRequestSchema(String requestSchema) {
+        this.requestSchema = requestSchema;
     }
 
     public Boolean getReplaceResponse() {

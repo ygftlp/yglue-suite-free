@@ -55,6 +55,7 @@ public class FlowEntryPointController {
                 entryPoint.getPath(),
                 entryPoint.getHttpMethod(),
                 entryPoint.getFlowCode(),
+                entryPoint.getRequestSchemaJson(),
                 replaceResponse,
                 enabled);
     }

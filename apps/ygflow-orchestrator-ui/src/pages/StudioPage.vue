@@ -61,14 +61,30 @@ async function loadEndpoint() {
 watch([projectKey, endpointId], loadEndpoint, { immediate: true })
 
 function extractEndpointSchema(endpoint: ProjectEndpoint) {
-  let requestSchema = normalizeRequestSchema(endpoint.requestSchema)
+  let schemaJson = coerceSchemaJson(endpoint.requestSchemaJson)
+  let schemaNode = schemaJson ? safeParseJson(schemaJson) : null
+  if (schemaNode && schemaJson) {
+    schemaJson = JSON.stringify(schemaNode, null, 2)
+  }
+  let requestSchemaFields = schemaNode ? flattenSchemaFields(schemaNode) : normalizeRequestSchema(endpoint.requestSchema)
   let responseSchema = normalizeResponseSchema(endpoint.responseSchema)
 
-  if ((requestSchema?.length ?? 0) === 0 || !responseSchema) {
+  if (((requestSchemaFields?.length ?? 0) === 0 || !schemaJson) || !responseSchema) {
     const config = safeParseConfig(endpoint.configJson)
     if (config) {
-      if (!requestSchema || requestSchema.length === 0) {
-        requestSchema = normalizeRequestSchema(config.requestSchema)
+      if (!schemaJson) {
+        schemaJson = coerceSchemaJson(config.requestSchemaJson)
+        schemaNode = schemaJson ? safeParseJson(schemaJson) : schemaNode
+        if (schemaNode && schemaJson) {
+          schemaJson = JSON.stringify(schemaNode, null, 2)
+        }
+      }
+      if (!requestSchemaFields || requestSchemaFields.length === 0) {
+        if (schemaNode) {
+          requestSchemaFields = flattenSchemaFields(schemaNode)
+        } else {
+          requestSchemaFields = normalizeRequestSchema(config.requestSchema)
+        }
       }
       if (!responseSchema) {
         responseSchema = normalizeResponseSchema(config.responseSchema)
@@ -76,23 +92,42 @@ function extractEndpointSchema(endpoint: ProjectEndpoint) {
     }
   }
 
-  return { requestSchema, responseSchema }
+  return { requestSchemaFields, requestSchemaJson: schemaJson ?? null, responseSchema }
 }
 
 function normalizeRequestSchema(
   schema?: EndpointSchemaField[] | null | unknown
 ): EndpointSchemaField[] | undefined {
-  if (!Array.isArray(schema)) return undefined
-  const normalized = schema
-    .map((item) => {
-      if (!item || typeof item !== "object") return null
-      const name = typeof (item as any).name === "string" ? (item as any).name : ""
-      const type = typeof (item as any).type === "string" ? (item as any).type : ""
-      if (!name && !type) return null
-      return { name, type }
-    })
-    .filter((item): item is EndpointSchemaField => Boolean(item))
-  return normalized.length ? normalized : undefined
+  if (!schema) return undefined
+  if (Array.isArray(schema)) {
+    const normalized = schema
+      .map((item) => {
+        if (!item || typeof item !== "object") return null
+        const name = typeof (item as any).name === "string" ? (item as any).name : ""
+        const type = typeof (item as any).type === "string" ? (item as any).type : ""
+        if (!name && !type) return null
+        return {
+          name,
+          type,
+          source: (item as any).source,
+          pathVariable: (item as any).pathVariable,
+          paramName: (item as any).paramName,
+          formField: (item as any).formField,
+        } as EndpointSchemaField
+      })
+      .filter((item): item is EndpointSchemaField => Boolean(item))
+    return normalized.length ? normalized : undefined
+  }
+  if (typeof schema === "string" && schema.trim()) {
+    const parsed = safeParseJson(schema)
+    if (parsed) {
+      return flattenSchemaFields(parsed)
+    }
+  }
+  if (typeof schema === "object") {
+    return flattenSchemaFields(schema as any)
+  }
+  return undefined
 }
 
 function normalizeResponseSchema(
@@ -102,6 +137,48 @@ function normalizeResponseSchema(
   const type = typeof (schema as any).type === "string" ? (schema as any).type : undefined
   if (!type) return undefined
   return { type }
+}
+
+function coerceSchemaJson(value?: string | null): string | null {
+  if (!value) return null
+  const trimmed = value.trim()
+  return trimmed.length ? trimmed : null
+}
+
+function safeParseJson(value: string | null) {
+  if (!value) return null
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
+  }
+}
+
+function flattenSchemaFields(schema: any, prefix = ""): EndpointSchemaField[] {
+  if (!schema || typeof schema !== "object") return []
+  const properties = schema.properties
+  if (!properties || typeof properties !== "object") return []
+  const result: EndpointSchemaField[] = []
+  Object.entries<any>(properties).forEach(([key, value]) => {
+    if (!value || typeof value !== "object") return
+    const fieldName = prefix ? `${prefix}.${key}` : key
+    const fieldType = typeof value.type === "string" ? value.type.toUpperCase() : value.format ? value.format : "OBJECT"
+    const field: EndpointSchemaField = {
+      name: fieldName,
+      type: fieldType,
+      source: value["x-source"],
+      pathVariable: value["x-pathVariable"],
+      paramName: value["x-paramName"],
+      formField: value["x-formField"],
+    }
+    result.push(field)
+    if (fieldType === "OBJECT") {
+      result.push(...flattenSchemaFields(value, fieldName))
+    } else if (fieldType === "ARRAY" && value.items) {
+      result.push(...flattenSchemaFields(value.items, `${fieldName}[]`))
+    }
+  })
+  return result
 }
 
 function safeParseConfig(configJson?: string | null): any {

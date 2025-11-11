@@ -8,6 +8,7 @@ public class FlowEntryPoint {
     private String flowCode;
     private String httpMethod;
     private String path;
+    private String requestSchemaJson;
     private Boolean replaceResponse;
     private Boolean enabled;
     private Instant createTime;
@@ -54,6 +55,14 @@ public class FlowEntryPoint {
 
     public void setPath(String path) {
         this.path = path;
+    }
+
+    public String getRequestSchemaJson() {
+        return requestSchemaJson;
+    }
+
+    public void setRequestSchemaJson(String requestSchemaJson) {
+        this.requestSchemaJson = requestSchemaJson;
     }
 
     public Boolean getReplaceResponse() {

@@ -10,6 +10,7 @@
         <result property="flowCode" column="flow_code"/>
         <result property="httpMethod" column="http_method"/>
         <result property="path" column="path"/>
+        <result property="requestSchemaJson" column="request_schema_json"/>
         <result property="replaceResponse" column="replace_response"/>
         <result property="enabled" column="enabled"/>
         <result property="createTime" column="create_time"/>
@@ -20,15 +21,15 @@
     </resultMap>
 
     <sql id="FlowEntryPointColumns">
-        id, project_id, flow_code, http_method, path, replace_response, enabled,
+        id, project_id, flow_code, http_method, path, request_schema_json, replace_response, enabled,
         create_time, create_by, update_time, update_by, del_flag
     </sql>
 
     <insert id="insert" parameterType="org.yglue.flow.orch.domain.FlowEntryPoint" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO yglue_flow_entrypoint
-        (project_id, flow_code, http_method, path, replace_response, enabled, create_by, update_by)
+        (project_id, flow_code, http_method, path, request_schema_json, replace_response, enabled, create_by, update_by)
         VALUES
-        (#{projectId}, #{flowCode}, #{httpMethod}, #{path}, #{replaceResponse}, #{enabled}, #{createBy}, #{updateBy})
+        (#{projectId}, #{flowCode}, #{httpMethod}, #{path}, #{requestSchemaJson}, #{replaceResponse}, #{enabled}, #{createBy}, #{updateBy})
     </insert>
 
     <update id="deleteByProjectAndFlow">
@@ -68,6 +69,7 @@
         UPDATE yglue_flow_entrypoint
         SET http_method = #{httpMethod},
             path = #{path},
+            request_schema_json = #{requestSchemaJson},
             replace_response = #{replaceResponse},
             enabled = #{enabled},
             del_flag = #{delFlag},

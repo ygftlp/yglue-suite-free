@@ -1,7 +1,6 @@
 package org.yglue.flow.runtime.core.definition;
 
-import com.fasterxml.jackson.annotation.JsonAlias;
-import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 import lombok.Data;
 
 /**
@@ -16,4 +15,9 @@ public class RestEntryPoint {
     private String flowCode;
     private Boolean replaceResponse;
     private Boolean enabled;
+
+    private JsonNode requestSchema;
+
+    @com.fasterxml.jackson.annotation.JsonAlias("request_schema_json")
+    private String requestSchemaJson;
 }

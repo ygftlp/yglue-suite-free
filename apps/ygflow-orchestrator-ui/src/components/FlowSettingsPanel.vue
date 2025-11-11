@@ -1,5 +1,7 @@
 ﻿<script setup lang="ts">
-import { computed, ref, watch } from "vue"
+import { computed, ref, watch, onMounted, onBeforeUnmount } from "vue"
+import type { editor } from "monaco-editor"
+import * as monaco from "monaco-editor"
 import type { FlowEntrypoint, FlowSettings, LogPolicy } from "../data/flowSettings"
 type SchemaField = { name: string; type: string }
 type ResponseSchema = { type?: string | null }
@@ -7,7 +9,8 @@ type ResponseSchema = { type?: string | null }
 const props = defineProps<{
   modelValue: FlowSettings
   visible: boolean
-  requestSchema?: SchemaField[] | null
+  requestSchemaFields?: SchemaField[] | null
+  requestSchemaJson?: string | null
   responseSchema?: ResponseSchema | null
 }>()
 
@@ -26,24 +29,14 @@ const entrypoint = computed<FlowEntrypoint>(
   () => settings.value.entrypoint ?? lastEntrypoint.value ?? createEntrypoint()
 )
 const entrypointEnabled = computed(() => entrypoint.value.enabled !== false)
-const requestSchema = computed(() => props.requestSchema ?? [])
+const requestSchemaFields = computed(() => props.requestSchemaFields ?? [])
 const responseSchema = computed<ResponseSchema>(() => props.responseSchema ?? { type: "void" })
-const hasRequestSchema = computed(() => requestSchema.value.length > 0)
+const hasRequestSchema = computed(() => requestSchemaFields.value.length > 0)
 const responseSchemaType = computed(() => {
   const type = responseSchema.value?.type?.trim()
   if (!type) return "void"
   return type
 })
-
-watch(
-  () => settings.value.entrypoint,
-  (value) => {
-    if (value) {
-      lastEntrypoint.value = value
-    }
-  },
-  { immediate: true }
-)
 
 watch(
   () => settings.value.entrypoint,
@@ -71,7 +64,7 @@ function closePanel() {
 }
 
 function createEntrypoint(): FlowEntrypoint {
-  return { path: "", method: "GET", replaceResponse: false, enabled: true }
+  return { path: "", method: "GET", replaceResponse: false, enabled: true, requestSchema: null }
 }
 
 function toggleEntrypoint(enabled: boolean) {
@@ -92,6 +85,103 @@ function updateEntrypointField<K extends keyof FlowEntrypoint>(key: K, value: Fl
     ...settings.value,
     entrypoint: next,
   })
+}
+
+const schemaEditorContainer = ref<HTMLElement | null>(null)
+let schemaEditor: editor.IStandaloneCodeEditor | null = null
+const entrypointSchemaText = ref("")
+
+watch(
+  () => settings.value.entrypoint?.requestSchema ?? "",
+  (value) => {
+    if (value !== entrypointSchemaText.value) {
+      entrypointSchemaText.value = value ?? ""
+      if (schemaEditor && schemaEditor.getValue() !== entrypointSchemaText.value) {
+        schemaEditor.setValue(entrypointSchemaText.value)
+      }
+    }
+  },
+  { immediate: true }
+)
+
+watch(
+  () => props.requestSchemaJson,
+  (value) => {
+    if (!value) return
+    if (!entrypointSchemaText.value) {
+      const formatted = prettifyJson(value)
+      entrypointSchemaText.value = formatted
+      schemaEditor?.setValue(formatted)
+      updateEntrypointField("requestSchema", formatted)
+    }
+  },
+  { immediate: true }
+)
+
+onMounted(() => {
+  if (!schemaEditorContainer.value) return
+  schemaEditor = monaco.editor.create(schemaEditorContainer.value, {
+    value: entrypointSchemaText.value,
+    language: "json",
+    theme: "vs-light",
+    automaticLayout: true,
+    minimap: { enabled: false },
+    scrollBeyondLastLine: false,
+    tabSize: 2,
+    readOnly: !entrypointEnabled.value,
+  })
+  schemaEditor.onDidChangeModelContent(() => {
+    const value = schemaEditor?.getValue() ?? ""
+    entrypointSchemaText.value = value
+    updateEntrypointField("requestSchema", value)
+  })
+})
+
+onBeforeUnmount(() => {
+  schemaEditor?.dispose()
+  schemaEditor = null
+})
+
+watch(entrypointEnabled, (enabled) => {
+  if (schemaEditor) {
+    schemaEditor.updateOptions({ readOnly: !enabled })
+  }
+})
+
+function prettifyJson(value: string | null | undefined): string {
+  if (!value) return ""
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2)
+  } catch {
+    return value
+  }
+}
+
+function formatEntrypointSchema() {
+  if (!entrypointSchemaText.value) return
+  entrypointSchemaText.value = prettifyJson(entrypointSchemaText.value)
+}
+
+function inferSourceLabel(item: SchemaField): string {
+  const path = (item as any).name || ""
+  if (path.includes("[]")) {
+    return "数组元素"
+  }
+  const source = (item as any).source
+  switch (source) {
+    case "path":
+      return "路径"
+    case "query":
+      return "查询"
+    case "header":
+      return "请求头"
+    case "form":
+      return "表单"
+    case "body":
+      return "请求体"
+    default:
+      return source || ""
+  }
 }
 </script>
 
@@ -333,16 +423,28 @@ function updateEntrypointField<K extends keyof FlowEntrypoint>(key: K, value: Fl
                 <tr>
                   <th>参数名</th>
                   <th>类型</th>
+                  <th>来源</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="item in requestSchema" :key="item.name">
+                <tr v-for="item in requestSchemaFields" :key="item.name">
                   <td>{{ item.name || "-" }}</td>
                   <td>{{ item.type || "-" }}</td>
+                  <td>{{ inferSourceLabel(item) }}</td>
                 </tr>
               </tbody>
             </table>
             <div v-else class="schema-placeholder">未提供请求参数结构</div>
+            <label class="field full">
+              <span>请求 Schema（JSON）</span>
+              <div ref="schemaEditorContainer" class="schema-editor" :class="{ disabled: !entrypointEnabled }"></div>
+              <div class="schema-actions">
+                <button type="button" class="ghost-btn" :disabled="!entrypointEnabled" @click="formatEntrypointSchema">
+                  格式化
+                </button>
+                <span class="field-hint">Schema 会随流程发布一并提交，可按需调整。</span>
+              </div>
+            </label>
           </div>
           <div class="schema-block">
             <div class="schema-heading">响应类型</div>
@@ -547,6 +649,26 @@ function updateEntrypointField<K extends keyof FlowEntrypoint>(key: K, value: Fl
   color: #94a3b8;
 }
 
+.schema-editor {
+  height: 220px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.schema-editor.disabled {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.schema-actions {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
 .schema-response {
   font-size: 12px;
   color: #2563eb;
@@ -572,6 +694,11 @@ function updateEntrypointField<K extends keyof FlowEntrypoint>(key: K, value: Fl
   cursor: pointer;
   font-size: 12px;
   color: #0f172a;
+}
+
+.ghost-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .primary-btn {

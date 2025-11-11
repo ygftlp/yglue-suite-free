@@ -8,6 +8,8 @@ import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.HandlerInterceptor;
 import org.yglue.flow.runtime.RuleEngine;
 import org.yglue.flow.runtime.core.FlowExecutionResult;
+import org.yglue.flow.runtime.core.definition.RestEntryPoint;
+import org.yglue.flow.runtime.core.definition.RestEntryPoint;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -19,19 +21,19 @@ class FlowDispatchInterceptor implements HandlerInterceptor {
     private static final Logger log = LoggerFactory.getLogger(FlowDispatchInterceptor.class);
 
     private final RuleEngine ruleEngine;
-    private final FlowRuntimeProperties properties;
     private final FlowRequestPayloadExtractor payloadExtractor;
     private final ObjectMapper objectMapper;
     private final RestEntryPointRegistry registry;
+    private final RequestSchemaValidator requestSchemaValidator;
 
     FlowDispatchInterceptor(RuleEngine ruleEngine,
-                            FlowRuntimeProperties properties,
                             ObjectMapper objectMapper,
-                            RestEntryPointRegistry registry) {
+                            RestEntryPointRegistry registry,
+                            RequestSchemaValidator requestSchemaValidator) {
         this.ruleEngine = ruleEngine;
-        this.properties = properties;
         this.objectMapper = objectMapper;
         this.registry = registry;
+        this.requestSchemaValidator = requestSchemaValidator;
         this.payloadExtractor = new FlowRequestPayloadExtractor(objectMapper);
     }
 
@@ -43,14 +45,24 @@ class FlowDispatchInterceptor implements HandlerInterceptor {
         if (matchContext == null) {
             return true;
         }
-        String ruleId = matchContext.ruleId();
         Map<String, Object> payload = payloadExtractor.extract(request, true);
-        // 将请求参数包装在 "request" 键下，以便通过 request.path.xxx, request.body.xxx 等方式访问
+        RestEntryPoint entryPoint = matchContext.entryPoint();
+        if (entryPoint != null && requestSchemaValidator != null) {
+            RequestSchemaValidator.ValidationResult validationResult =
+                    requestSchemaValidator.validate(entryPoint, request, payload);
+            if (!validationResult.isValid()) {
+                writeValidationError(response, validationResult);
+                return false;
+            }
+            if (validationResult.getNormalized() != null) {
+                payload.put("params", validationResult.getNormalized());
+            }
+        }
         Map<String, Object> flowInput = new java.util.LinkedHashMap<>();
         flowInput.put("request", payload);
-        FlowExecutionResult result = ruleEngine.execute(ruleId, flowInput);
+        FlowExecutionResult result = ruleEngine.execute(matchContext.ruleId(), flowInput);
         if (log.isInfoEnabled()) {
-            log.info("yglue flow executed for ruleId={} {} {}", ruleId, request.getMethod(), request.getRequestURI());
+            log.info("yglue flow executed for ruleId={} {} {}", matchContext.ruleId(), request.getMethod(), request.getRequestURI());
         }
         writeResponse(response, result);
         return false;
@@ -62,7 +74,7 @@ class FlowDispatchInterceptor implements HandlerInterceptor {
             if (log.isDebugEnabled()) {
                 log.debug("Matched flow via annotation for {} {}", request.getMethod(), request.getRequestURI());
             }
-            return new MatchContext(annotation.ruleId());
+            return new MatchContext(annotation.ruleId(), null);
         }
         if (registry == null) {
             return null;
@@ -72,7 +84,7 @@ class FlowDispatchInterceptor implements HandlerInterceptor {
                     if (log.isDebugEnabled()) {
                         log.debug("Matched flow via entrypoint {} {} -> {}", request.getMethod(), request.getRequestURI(), entry.getFlowCode());
                     }
-                    return new MatchContext(entry.getFlowCode());
+                    return new MatchContext(entry.getFlowCode(), entry);
                 })
                 .orElse(null);
     }
@@ -94,7 +106,6 @@ class FlowDispatchInterceptor implements HandlerInterceptor {
             response.setStatus(HttpServletResponse.SC_NO_CONTENT);
             return;
         }
-        // 如果是简单类型，直接写回文本，避免被 JSON 包裹
         if (returnValue instanceof String
                 || returnValue instanceof Number
                 || returnValue instanceof Boolean) {
@@ -109,5 +120,13 @@ class FlowDispatchInterceptor implements HandlerInterceptor {
         objectMapper.writeValue(response.getWriter(), returnValue);
     }
 
-    private record MatchContext(String ruleId) {}
+    private void writeValidationError(HttpServletResponse response,
+                                      RequestSchemaValidator.ValidationResult validationResult) throws IOException {
+        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        objectMapper.writeValue(response.getWriter(), validationResult.toErrorBody());
+    }
+
+    private record MatchContext(String ruleId, RestEntryPoint entryPoint) {}
 }
+
