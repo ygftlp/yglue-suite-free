@@ -4,6 +4,7 @@ import lombok.Data;
 import org.yglue.flow.orch.domain.ProjectEndpoint;
 
 import java.util.Date;
+import java.util.Map;
 
 @Data
 public class ProjectEndpointResponse {
@@ -21,6 +22,8 @@ public class ProjectEndpointResponse {
     private String flowCode;
     private Boolean enabled;
     private Boolean replaceResponse;
+    private String requestSchemaJson;
+    private Map<String, Object> responseSchema;
 
     public static ProjectEndpointResponse from(ProjectEndpoint endpoint) {
         ProjectEndpointResponse response = new ProjectEndpointResponse();

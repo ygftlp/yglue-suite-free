@@ -1,16 +1,12 @@
 package org.yglue.flow.runtime.core.util;
 
-import org.springframework.expression.Expression;
-import org.springframework.expression.ExpressionParser;
-import org.springframework.expression.spel.standard.SpelExpressionParser;
-import org.springframework.expression.spel.support.StandardEvaluationContext;
 import org.yglue.flow.runtime.FlowContext;
+import org.yglue.flow.runtime.core.expression.ExpressionEngine;
+import org.yglue.flow.runtime.core.expression.ExpressionEvaluationContext;
+import org.yglue.flow.runtime.core.expression.ExpressionEngines;
 
-import java.util.Map;
 
 public final class ExpressionEvaluator {
-
-    private static final ExpressionParser PARSER = new SpelExpressionParser();
 
     private ExpressionEvaluator() {
     }
@@ -22,18 +18,12 @@ public final class ExpressionEvaluator {
         if (!(rawExpression instanceof String expression)) {
             return rawExpression;
         }
-        String expr = expression;
-        boolean spel = expr.startsWith("#{") && expr.endsWith("}");
-        if (!spel) {
+        if (!expression.startsWith("#{") || !expression.endsWith("}")) {
             return expression;
         }
-        expr = expr.substring(2, expr.length() - 1);
-        StandardEvaluationContext ec = new StandardEvaluationContext();
-        Map<String, Object> data = context.data();
-        ec.setVariable("ctx", data);
-        data.forEach(ec::setVariable);
-        Expression parsed = PARSER.parseExpression(expr);
-        return parsed.getValue(ec);
+        ExpressionEngine engine = ExpressionEngines.getDefault();
+        ExpressionEvaluationContext evalContext = ExpressionEvaluationContext.fromFlowContext(context);
+        return engine.evaluate(expression, evalContext);
     }
 
     public static boolean evaluateBoolean(Object expression, FlowContext context) {

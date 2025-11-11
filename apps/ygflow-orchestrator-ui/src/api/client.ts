@@ -199,6 +199,32 @@ export interface ProjectEndpoint {
   delFlag?: number | null
 }
 
+export interface FlowModel {
+  id: number
+  identifier: string
+  name: string
+  className: string
+  description?: string | null
+  category?: string | null
+  version?: string | null
+  tags?: string[] | null
+  schemaJson?: string | null
+  updateTime?: string | null
+}
+
+export interface FlowResolver {
+  id: number
+  type: string
+  name?: string | null
+  description?: string | null
+  category?: string | null
+  builtin?: boolean | null
+  configSchema?: string | null
+  className?: string | null
+  rawJson?: string | null
+  updateTime?: string | null
+}
+
 export interface ProjectEndpointCreatePayload {
   endpointType?: string
   method?: string
@@ -353,6 +379,14 @@ export const api = {
       payload,
       { method: "POST" }
     )
+  },
+
+  listFlowModels(projectKey: string): Promise<FlowModel[]> {
+    return request<FlowModel[]>(`/projects/${encodeURIComponent(projectKey)}/models`)
+  },
+
+  listFlowResolvers(projectKey: string): Promise<FlowResolver[]> {
+    return request<FlowResolver[]>(`/projects/${encodeURIComponent(projectKey)}/resolvers`)
   },
 
   listFlowVersions(projectKey: string, flowCode: string): Promise<FlowVersion[]> {

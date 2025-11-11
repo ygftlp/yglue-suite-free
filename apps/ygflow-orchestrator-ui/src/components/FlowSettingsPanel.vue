@@ -1,10 +1,33 @@
 ﻿<script setup lang="ts">
-import { computed, ref, watch, onMounted, onBeforeUnmount } from "vue"
-import type { editor } from "monaco-editor"
-import * as monaco from "monaco-editor"
+import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from "vue"
+import type { editor } from "monaco-editor/esm/vs/editor/editor.api"
+import * as monaco from "monaco-editor/esm/vs/editor/editor.api"
+import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker"
+import JsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker"
 import type { FlowEntrypoint, FlowSettings, LogPolicy } from "../data/flowSettings"
 type SchemaField = { name: string; type: string }
 type ResponseSchema = { type?: string | null }
+
+if (typeof window !== "undefined") {
+  const globalSelf = self as typeof self & {
+    MonacoEnvironment?:
+      | {
+          getWorker(moduleId: string, label: string): Worker
+        }
+      | undefined
+  }
+
+  if (!globalSelf.MonacoEnvironment) {
+    globalSelf.MonacoEnvironment = {
+      getWorker(_moduleId: string, label: string) {
+        if (label === "json") {
+          return new JsonWorker()
+        }
+        return new EditorWorker()
+      },
+    }
+  }
+}
 
 const props = defineProps<{
   modelValue: FlowSettings
@@ -108,18 +131,20 @@ watch(
   () => props.requestSchemaJson,
   (value) => {
     if (!value) return
-    if (!entrypointSchemaText.value) {
-      const formatted = prettifyJson(value)
+    const formatted = prettifyJson(value)
+    if (entrypointSchemaText.value !== formatted) {
       entrypointSchemaText.value = formatted
-      schemaEditor?.setValue(formatted)
+      if (schemaEditor && schemaEditor.getValue() !== formatted) {
+        schemaEditor.setValue(formatted)
+      }
       updateEntrypointField("requestSchema", formatted)
     }
   },
   { immediate: true }
 )
 
-onMounted(() => {
-  if (!schemaEditorContainer.value) return
+function initSchemaEditor() {
+  if (!schemaEditorContainer.value || schemaEditor) return
   schemaEditor = monaco.editor.create(schemaEditorContainer.value, {
     value: entrypointSchemaText.value,
     language: "json",
@@ -128,24 +153,33 @@ onMounted(() => {
     minimap: { enabled: false },
     scrollBeyondLastLine: false,
     tabSize: 2,
-    readOnly: !entrypointEnabled.value,
+    readOnly: true,
   })
   schemaEditor.onDidChangeModelContent(() => {
     const value = schemaEditor?.getValue() ?? ""
     entrypointSchemaText.value = value
     updateEntrypointField("requestSchema", value)
   })
+}
+
+onMounted(() => {
+  if (props.visible) {
+    nextTick(initSchemaEditor)
+  }
 })
+
+watch(
+  () => props.visible,
+  (visible) => {
+    if (visible) {
+      nextTick(initSchemaEditor)
+    }
+  }
+)
 
 onBeforeUnmount(() => {
   schemaEditor?.dispose()
   schemaEditor = null
-})
-
-watch(entrypointEnabled, (enabled) => {
-  if (schemaEditor) {
-    schemaEditor.updateOptions({ readOnly: !enabled })
-  }
 })
 
 function prettifyJson(value: string | null | undefined): string {
@@ -155,11 +189,6 @@ function prettifyJson(value: string | null | undefined): string {
   } catch {
     return value
   }
-}
-
-function formatEntrypointSchema() {
-  if (!entrypointSchemaText.value) return
-  entrypointSchemaText.value = prettifyJson(entrypointSchemaText.value)
 }
 
 function inferSourceLabel(item: SchemaField): string {
@@ -437,12 +466,9 @@ function inferSourceLabel(item: SchemaField): string {
             <div v-else class="schema-placeholder">未提供请求参数结构</div>
             <label class="field full">
               <span>请求 Schema（JSON）</span>
-              <div ref="schemaEditorContainer" class="schema-editor" :class="{ disabled: !entrypointEnabled }"></div>
+              <div ref="schemaEditorContainer" class="schema-editor schema-editor--readonly"></div>
               <div class="schema-actions">
-                <button type="button" class="ghost-btn" :disabled="!entrypointEnabled" @click="formatEntrypointSchema">
-                  格式化
-                </button>
-                <span class="field-hint">Schema 会随流程发布一并提交，可按需调整。</span>
+                <span class="field-hint">该 Schema 由上游组件自动生成，仅供查看。</span>
               </div>
             </label>
           </div>
@@ -656,7 +682,7 @@ function inferSourceLabel(item: SchemaField): string {
   overflow: hidden;
 }
 
-.schema-editor.disabled {
+.schema-editor--readonly {
   pointer-events: none;
   opacity: 0.6;
 }

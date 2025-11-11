@@ -4,7 +4,7 @@ import ParamResolverEditor from "./ParamResolverEditor.vue"
 import ConverterEditor from "./ConverterEditor.vue"
 import TransformerEditor from "./TransformerEditor.vue"
 import { transactionManagers } from "../data/transactionManagers"
-import { modelOptions } from "../data/models"
+import type { FlowModel, FlowResolver } from "../api/client"
 
 type IOType = "inputs"
 
@@ -18,12 +18,23 @@ const props = defineProps<{
     responseSchema?: { type?: string | null } | null
   } | null
   entrypointPath?: string | null
+  flowModels?: FlowModel[] | null
+  flowResolvers?: FlowResolver[] | null
 }>()
 
 const emit = defineEmits<{
   (e: "update-node", node: any): void
   (e: "update-edge", edge: any): void
 }>()
+
+const modelOptions = computed(() =>
+  (props.flowModels ?? []).map((model) => ({
+    label: model.name ?? model.identifier,
+    value: model.className || model.identifier,
+  }))
+)
+
+const resolverCatalog = computed(() => props.flowResolvers ?? [])
 
 const isBranchNode = computed(() => props.selectedNode?.type === "branch" || props.selectedNode?.data?.branch)
 const transactionVariant = computed(() => props.selectedNode?.data?.transaction as "begin" | "end" | undefined)
@@ -291,6 +302,8 @@ function getServiceName(comp: any): string | null {
         :edges="props.edges"
         :endpoint-schema="props.endpointSchema"
         :entrypoint-path="props.entrypointPath"
+        :flow-models="props.flowModels ?? []"
+        :flow-resolvers="resolverCatalog"
         @update-node="emit('update-node', $event)"
       />
     </template>
@@ -428,6 +441,7 @@ function getServiceName(comp: any): string | null {
               :value="getInputResolver(input)"
               :request-schema="props.endpointSchema?.requestSchema"
               :entrypoint-path="props.entrypointPath"
+              :resolver-catalog="resolverCatalog"
               @update:value="(resolver) => updateInputResolver(index, resolver)"
             />
             <div class="muted" style="font-size:11px">数据转换器（可选）</div>

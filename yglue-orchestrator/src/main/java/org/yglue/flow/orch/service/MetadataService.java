@@ -22,13 +22,19 @@ public class MetadataService {
     private final ProjectService projectService;
     private final ProjectMetadataMapper metadataMapper;
     private final ProjectEndpointService projectEndpointService;
+    private final FlowModelService flowModelService;
+    private final FlowResolverService flowResolverService;
 
     public MetadataService(ProjectService projectService,
                            ProjectMetadataMapper metadataMapper,
-                           ProjectEndpointService projectEndpointService) {
+                           ProjectEndpointService projectEndpointService,
+                           FlowModelService flowModelService,
+                           FlowResolverService flowResolverService) {
         this.projectService = projectService;
         this.metadataMapper = metadataMapper;
         this.projectEndpointService = projectEndpointService;
+        this.flowModelService = flowModelService;
+        this.flowResolverService = flowResolverService;
     }
 
     @Transactional
@@ -44,6 +50,14 @@ public class MetadataService {
         if (root != null) {
             endpoints.addAll(parseRestEndpoints(root));
             endpoints.addAll(parseFlowEndpoints(root));
+            flowModelService.syncModels(
+                    ensure.project().getId(),
+                    parseFlowModels(root)
+            );
+            flowResolverService.syncResolvers(
+                    ensure.project().getId(),
+                    parseFlowResolvers(root)
+            );
         }
 
         projectEndpointService.syncEndpoints(
@@ -230,6 +244,83 @@ public class MetadataService {
             }
         }
         return endpoints;
+    }
+
+    private List<FlowModelService.ModelPayload> parseFlowModels(JsonNode root) {
+        List<FlowModelService.ModelPayload> models = new ArrayList<>();
+        if (root == null || root.isMissingNode()) {
+            return models;
+        }
+        JsonNode modelArray = root.path("models");
+        if (!modelArray.isArray()) {
+            return models;
+        }
+        for (JsonNode node : modelArray) {
+            String identifier = textOrDefault(node, "id", "");
+            if (identifier.isBlank()) {
+                identifier = textOrDefault(node, "name", "");
+            }
+            if (identifier.isBlank()) {
+                continue;
+            }
+            String name = textOrDefault(node, "name", identifier);
+            String className = textOrDefault(node, "class", "");
+            String description = textOrDefault(node, "description", "");
+            String category = textOrDefault(node, "category", "");
+            String version = textOrDefault(node, "version", "1.0.0");
+            List<String> tags = new ArrayList<>();
+            JsonNode tagsNode = node.path("tags");
+            if (tagsNode.isArray()) {
+                for (JsonNode tagNode : tagsNode) {
+                    if (tagNode != null && !tagNode.isNull()) {
+                        String tagValue = tagNode.asText();
+                        if (tagValue != null && !tagValue.isBlank()) {
+                            tags.add(tagValue);
+                        }
+                    }
+                }
+            }
+            String schemaJson = null;
+            JsonNode schemaNode = node.get("schema");
+            if (schemaNode != null && !schemaNode.isNull()) {
+                schemaJson = schemaNode.toString();
+            }
+            models.add(new FlowModelService.ModelPayload(
+                    identifier,
+                    name,
+                    className,
+                    description,
+                    category,
+                    version,
+                    tags,
+                    schemaJson,
+                    node.toString()
+            ));
+        }
+        return models;
+    }
+
+    private List<FlowResolverService.ResolverPayload> parseFlowResolvers(JsonNode root) {
+        List<FlowResolverService.ResolverPayload> resolvers = new ArrayList<>();
+        if (root == null || root.isMissingNode()) {
+            return resolvers;
+        }
+        JsonNode resolverArray = root.path("resolvers");
+        if (!resolverArray.isArray()) {
+            return resolvers;
+        }
+        for (JsonNode node : resolverArray) {
+            if (node == null || node.isNull() || !node.isObject()) {
+                continue;
+            }
+            @SuppressWarnings("unchecked")
+            FlowResolverService.ResolverPayload payload =
+                    FlowResolverService.ResolverPayload.fromRaw(OBJECT_MAPPER.convertValue(node, java.util.Map.class));
+            if (payload != null) {
+                resolvers.add(payload);
+            }
+        }
+        return resolvers;
     }
 
     private static String textOrDefault(JsonNode node, String field, String fallback) {

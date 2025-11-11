@@ -82,6 +82,13 @@ public class SchemaGenerator {
         return schema;
     }
 
+    public static JSONObject generateModelSchema(PsiClass psiClass) {
+        JSONObject schema = buildPojoSchema(psiClass, psiClass.getProject(), new HashSet<>());
+        schema.put("$schema", JSON_SCHEMA_DRAFT_7);
+        schema.put("title", psiClass.getName());
+        return schema;
+    }
+
     private static ParameterSchema buildParameterSchema(PsiParameter parameter, Set<String> visited) {
         JSONObject schema = buildSchemaForType(parameter.getType(), parameter.getProject(), visited);
         schema.put("title", parameter.getName());

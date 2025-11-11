@@ -2,12 +2,15 @@
 import { ChevronLeft, ChevronRight } from "lucide-vue-next"
 import Inspector from "./Inspector.vue"
 import type { EndpointSchemaHint } from "./useCanvasEditor"
+import type { FlowModel, FlowResolver } from "../api/client"
 
 const props = defineProps<{
   collapsed: boolean
   width: number
   endpointSchema?: EndpointSchemaHint
   entrypointPath?: string | null
+  flowModels?: FlowModel[] | null
+  flowResolvers?: FlowResolver[] | null
   selectedNode: any | null
   selectedEdge: any | null
   nodes: any[]
@@ -36,6 +39,8 @@ const emit = defineEmits<{
         <Inspector
           :endpoint-schema="props.endpointSchema"
           :entrypoint-path="props.entrypointPath ?? undefined"
+          :flow-models="props.flowModels ?? []"
+          :flow-resolvers="props.flowResolvers ?? []"
           :selected-node="props.selectedNode"
           :selected-edge="props.selectedEdge"
           :nodes="props.nodes"
@@ -117,4 +122,5 @@ const emit = defineEmits<{
   overflow-y: auto;
 }
 </style>
+
 

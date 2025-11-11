@@ -1,6 +1,10 @@
 package org.yglue.flow.orch.web.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -29,6 +33,9 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/projects/{projectKey}/endpoints")
 public class ProjectEndpointController {
+
+    private static final Logger log = LoggerFactory.getLogger(ProjectEndpointController.class);
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private static final Map<String, String> COMPONENT_DISPLAY_NAMES = Map.of(
             "BUSINESS", "业务组件",
@@ -153,6 +160,7 @@ public class ProjectEndpointController {
     private ProjectEndpointResponse toResponse(ProjectEndpoint endpoint,
                                                Map<String, FlowEntryPoint> entryPointMap) {
         ProjectEndpointResponse response = ProjectEndpointResponse.from(endpoint);
+        enrichSchemaMetadata(endpoint, response);
         
         if ("REST".equalsIgnoreCase(endpoint.getEndpointType())) {
             String key = composeKey(endpoint.getMethod(), endpoint.getPath());
@@ -173,6 +181,38 @@ public class ProjectEndpointController {
         
         response.setComponentType(resolveComponentType(response.getComponentType(), response.getEndpointType()));
         return response;
+    }
+
+    private void enrichSchemaMetadata(ProjectEndpoint endpoint, ProjectEndpointResponse response) {
+        String rawConfig = endpoint.getConfigJson();
+        if (!StringUtils.hasText(rawConfig)) {
+            return;
+        }
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(rawConfig);
+            JsonNode requestSchemaJsonNode = root.get("requestSchemaJson");
+            if (requestSchemaJsonNode != null && !requestSchemaJsonNode.isNull()) {
+                response.setRequestSchemaJson(requestSchemaJsonNode.isTextual()
+                        ? requestSchemaJsonNode.asText()
+                        : requestSchemaJsonNode.toString());
+            } else {
+                JsonNode requestSchemaNode = root.get("requestSchema");
+                if (requestSchemaNode != null && !requestSchemaNode.isNull()) {
+                    response.setRequestSchemaJson(requestSchemaNode.toString());
+                }
+            }
+
+            JsonNode responseSchemaNode = root.get("responseSchema");
+            if (responseSchemaNode != null && !responseSchemaNode.isNull()) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> responseSchema =
+                        OBJECT_MAPPER.convertValue(responseSchemaNode, Map.class);
+                response.setResponseSchema(responseSchema);
+            }
+        } catch (Exception ex) {
+            log.warn("Failed to parse endpoint configJson for schema metadata. endpointId={}, error={}",
+                    endpoint.getId(), ex.getMessage());
+        }
     }
 
     private String composeKey(String method, String path) {

@@ -98,6 +98,7 @@ function handleDropNode(payload: { item: any; position: { x: number; y: number }
       :width="inspectorWidth"
       :endpoint-schema="props.endpointSchema"
       :entrypoint-path="props.entrypointHint?.path ?? null"
+      :flow-models="props.flowModels ?? []"
       :selected-node="selected"
       :selected-edge="selectedEdge"
       :nodes="nodes"

@@ -41,6 +41,10 @@ import java.util.Set;
 
 public class ExportMetadataAction extends AnAction {
 
+    private static final String FLOW_MODEL_ANNOTATION = "org.yglue.flow.annotations.FlowModel";
+
+    private static final String FLOW_RESOLVER_ANNOTATION = "org.yglue.flow.annotations.FlowResolver";
+
     private static final Set<String> API_ANNOTATIONS = Set.of(
             "org.yglue.flow.annotations.FlowApi"
     );
@@ -102,9 +106,14 @@ public class ExportMetadataAction extends AnAction {
         JSONObject result = new JSONObject();
         JSONArray apis = new JSONArray();
         JSONArray restEndpoints = new JSONArray();
+        JSONArray models = new JSONArray();
+        JSONArray resolvers = new JSONArray();
         result.put("project", project.getName());
         result.put("apis", apis);
         result.put("rests", restEndpoints);
+        result.put("models", models);
+        result.put("resolvers", resolvers);
+        appendBuiltinResolvers(resolvers);
 
         PsiManager psiManager = PsiManager.getInstance(project);
         GlobalSearchScope scope = GlobalSearchScope.projectScope(project);
@@ -117,6 +126,8 @@ public class ExportMetadataAction extends AnAction {
 
                 for (PsiClass clazz : psiJavaFile.getClasses()) {
                     handleFlowApiClass(clazz, apis);
+                    handleFlowModelClass(clazz, models);
+                    handleFlowResolverClass(clazz, resolvers);
                     collectRestEndpoints(clazz, restEndpoints);
                 }
             }
@@ -247,6 +258,79 @@ public class ExportMetadataAction extends AnAction {
         for (PsiClass inner : aClass.getInnerClasses()) {
             handleFlowApiClass(inner, apis);
         }
+    }
+
+    private static void handleFlowResolverClass(PsiClass aClass, JSONArray sink) {
+        PsiAnnotation resolverAnno = aClass.getAnnotation(FLOW_RESOLVER_ANNOTATION);
+        if (resolverAnno == null) {
+            for (PsiClass inner : aClass.getInnerClasses()) {
+                handleFlowResolverClass(inner, sink);
+            }
+            return;
+        }
+        JSONObject item = new JSONObject();
+        String type = getAttr(resolverAnno, "value");
+        item.put("type", type.isBlank() ? (aClass.getQualifiedName() == null ? aClass.getName() : aClass.getQualifiedName()) : type);
+        item.put("name", getAttr(resolverAnno, "name"));
+        item.put("description", getAttr(resolverAnno, "description"));
+        item.put("category", getAttr(resolverAnno, "category"));
+        item.put("configSchema", getAttr(resolverAnno, "configSchema"));
+        item.put("builtin", Boolean.parseBoolean(getAttr(resolverAnno, "builtin")));
+        String qualifiedName = aClass.getQualifiedName();
+        item.put("class", qualifiedName != null ? qualifiedName : aClass.getName());
+        sink.put(item);
+    }
+
+    private static void appendBuiltinResolvers(JSONArray sink) {
+        sink.put(new JSONObject()
+                .put("type", "REQUEST")
+                .put("name", "请求参数")
+                .put("description", "从 HTTP 请求中的 path/query/header/body/form 位置提取字段")
+                .put("category", "HTTP")
+                .put("builtin", true));
+        sink.put(new JSONObject()
+                .put("type", "CONTEXT")
+                .put("name", "流程上下文")
+                .put("description", "从 ctx/流程变量中取值")
+                .put("category", "上下文")
+                .put("builtin", true));
+        sink.put(new JSONObject()
+                .put("type", "CONSTANT")
+                .put("name", "常量")
+                .put("description", "使用常量或配置值作为节点输入")
+                .put("category", "常量")
+                .put("builtin", true));
+        sink.put(new JSONObject()
+                .put("type", "EXPRESSION")
+                .put("name", "表达式")
+                .put("description", "通过 SpEL / Groovy 表达式组合请求与上下文数据")
+                .put("category", "表达式")
+                .put("builtin", true));
+    }
+
+    private static void handleFlowModelClass(PsiClass aClass, JSONArray models) {
+        PsiAnnotation modelAnno = aClass.getAnnotation(FLOW_MODEL_ANNOTATION);
+        if (modelAnno == null) {
+            for (PsiClass inner : aClass.getInnerClasses()) {
+                handleFlowModelClass(inner, models);
+            }
+            return;
+        }
+
+        JSONObject modelObj = new JSONObject();
+        String qualifiedName = aClass.getQualifiedName();
+        modelObj.put("class", qualifiedName != null ? qualifiedName : aClass.getName());
+        String name = emptyToDefault(getAttr(modelAnno, "name"), aClass.getName());
+        String identifier = emptyToDefault(getAttr(modelAnno, "value"), name);
+        modelObj.put("id", identifier);
+        modelObj.put("name", name);
+        modelObj.put("description", getAttr(modelAnno, "description"));
+        modelObj.put("category", getAttr(modelAnno, "category"));
+        String version = getAttr(modelAnno, "version");
+        modelObj.put("version", version.isBlank() ? "1.0.0" : version);
+        modelObj.put("tags", toJsonArray(getStringArray(modelAnno, "tags")));
+        modelObj.put("schema", SchemaGenerator.generateModelSchema(aClass));
+        models.put(modelObj);
     }
 
     private static void collectRestEndpoints(PsiClass clazz, JSONArray sink) {

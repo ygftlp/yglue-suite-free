@@ -1,4 +1,4 @@
-import type { EndpointResponseSchema, EndpointSchemaField } from "../../api/client"
+import type { EndpointResponseSchema, EndpointSchemaField, FlowModel, FlowResolver } from "../../api/client"
 import type { FlowEntrypoint } from "../../data/flowSettings"
 
 export type EndpointSchemaHint = {
@@ -12,6 +12,8 @@ export type CanvasEditorProps = {
   flowCode?: string
   entrypointHint?: Partial<FlowEntrypoint> | null
   endpointSchema?: EndpointSchemaHint
+  flowModels?: FlowModel[] | null
+  flowResolvers?: FlowResolver[] | null
 }
 
 export type ContextMenuState = {

@@ -3,7 +3,14 @@ import { computed, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import CanvasEditor from "../components/CanvasEditor.vue"
 import { Network, ArrowLeft } from "lucide-vue-next"
-import { api, type EndpointResponseSchema, type EndpointSchemaField, type ProjectEndpoint } from "../api/client"
+import {
+  api,
+  type EndpointResponseSchema,
+  type EndpointSchemaField,
+  type FlowModel,
+  type FlowResolver,
+  type ProjectEndpoint,
+} from "../api/client"
 
 const route = useRoute()
 const router = useRouter()
@@ -14,6 +21,8 @@ const endpointId = computed(() => Number(route.params.endpointId))
 const endpoint = ref<ProjectEndpoint | null>(null)
 const endpointLoading = ref(false)
 const endpointError = ref<string | null>(null)
+const flowModels = ref<FlowModel[]>([])
+const flowResolvers = ref<FlowResolver[]>([])
 
 const flowCode = computed(() => {
   if (!endpoint.value) return undefined
@@ -34,9 +43,14 @@ const entrypointHint = computed(() => {
 
 const schemaHint = computed(() => {
   if (!endpoint.value) return null
-  const { requestSchema, responseSchema } = extractEndpointSchema(endpoint.value)
-  if ((!requestSchema || requestSchema.length === 0) && !responseSchema) return null
-  return { requestSchema, responseSchema }
+  const { requestSchemaFields, requestSchemaJson, responseSchema } = extractEndpointSchema(endpoint.value)
+  const hasRequestSchema = Array.isArray(requestSchemaFields) && requestSchemaFields.length > 0
+  if (!hasRequestSchema && !requestSchemaJson && !responseSchema) return null
+  return {
+    requestSchema: requestSchemaFields ?? null,
+    requestSchemaJson: requestSchemaJson ?? null,
+    responseSchema: responseSchema ?? null,
+  }
 })
 
 function goBack() {
@@ -59,6 +73,26 @@ async function loadEndpoint() {
 }
 
 watch([projectKey, endpointId], loadEndpoint, { immediate: true })
+watch(projectKey, loadModels, { immediate: true })
+watch(projectKey, loadResolvers, { immediate: true })
+
+async function loadModels() {
+  if (!projectKey.value) return
+  try {
+    flowModels.value = await api.listFlowModels(projectKey.value)
+  } catch (err) {
+    console.warn("Failed to load flow models", err)
+  }
+}
+
+async function loadResolvers() {
+  if (!projectKey.value) return
+  try {
+    flowResolvers.value = await api.listFlowResolvers(projectKey.value)
+  } catch (err) {
+    console.warn("Failed to load flow resolvers", err)
+  }
+}
 
 function extractEndpointSchema(endpoint: ProjectEndpoint) {
   let schemaJson = coerceSchemaJson(endpoint.requestSchemaJson)
@@ -217,6 +251,8 @@ function safeParseConfig(configJson?: string | null): any {
         :flow-code="flowCode"
         :entrypoint-hint="entrypointHint"
         :endpoint-schema="schemaHint"
+        :flow-models="flowModels"
+        :flow-resolvers="flowResolvers"
       />
     </main>
   </div>

@@ -3,7 +3,7 @@ import { computed, ref, watch } from "vue"
 
 const props = defineProps<{
   value: {
-    type?: "context" | "request" | "constant" | "expression"
+    type?: string
     path?: string
     constant?: string
     expression?: string
@@ -14,13 +14,38 @@ const props = defineProps<{
   placeholder?: string
   requestSchema?: Array<{ name: string; type: string }> | null
   entrypointPath?: string | null
+  resolverCatalog?: Array<{ type: string; name?: string | null; description?: string | null }> | null
 }>()
 
 const emit = defineEmits<{
   (e: "update:value", payload: any): void
 }>()
 
-const mode = computed(() => props.value?.type || "request")
+const mode = computed(() => (props.value?.type || "request").toLowerCase())
+
+const builtinOptions = [
+  { value: "request", label: "请求参数" },
+  { value: "context", label: "上下文" },
+  { value: "expression", label: "表达式" },
+  { value: "constant", label: "常量" },
+]
+
+const modeOptions = computed(() => {
+  const map = new Map<string, { value: string; label: string; description?: string | null }>()
+  builtinOptions.forEach((item) => map.set(item.value, item))
+  ;(props.resolverCatalog ?? []).forEach((item) => {
+    if (!item?.type) return
+    const key = item.type.toLowerCase()
+    map.set(key, {
+      value: key,
+      label: item.name || item.type,
+      description: item.description,
+    })
+  })
+  return Array.from(map.values())
+})
+
+const selectedOption = computed(() => modeOptions.value.find((item) => item.value === mode.value))
 
 // 从路径中提取路径变量（如 /api/projects/{projectKey}/flows/{code} -> [projectKey, code]）
 function extractPathVariables(path: string | null | undefined): string[] {
@@ -123,7 +148,7 @@ function update(partial: Record<string, any>) {
   emit("update:value", next)
 }
 
-function changeMode(nextType: "context" | "request" | "constant" | "expression") {
+function changeMode(nextType: string) {
   if (props.disabled) return
   update({ type: nextType })
 }
@@ -203,10 +228,9 @@ function onDoubleClick() {
 <template>
   <div class="resolver" :class="{ disabled }">
     <select class="input mode" :value="mode" @change="changeMode(($event.target as HTMLSelectElement).value as any)">
-      <option value="request">请求参数</option>
-      <option value="context">上下文</option>
-      <option value="expression">表达式</option>
-      <option value="constant">常量</option>
+      <option v-for="option in modeOptions" :key="option.value" :value="option.value">
+        {{ option.label }}
+      </option>
     </select>
 
     <template v-if="mode === 'request' || mode === 'context'">
@@ -257,6 +281,7 @@ function onDoubleClick() {
       />
     </template>
 
+    <div v-if="selectedOption?.description" class="mode-hint">{{ selectedOption.description }}</div>
   </div>
 </template>
 
@@ -344,6 +369,12 @@ function onDoubleClick() {
 .input.readonly-hint:focus {
   outline: none;
   border-color: rgba(148, 163, 184, 0.6);
+}
+
+.mode-hint {
+  font-size: 11px;
+  color: #64748b;
+  width: 100%;
 }
 
 </style>
