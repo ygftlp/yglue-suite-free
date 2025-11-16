@@ -112,7 +112,6 @@ function handleDropNode(payload: { item: any; position: { x: number; y: number }
     :visible="flowSettingsVisible"
     v-model="flowSettings"
     :request-schema-fields="props.endpointSchema?.requestSchema ?? undefined"
-    :request-schema-json="props.endpointSchema?.requestSchemaJson ?? undefined"
     :response-schema="props.endpointSchema?.responseSchema ?? undefined"
     @close="closeFlowSettings"
   />

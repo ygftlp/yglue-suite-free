@@ -69,13 +69,16 @@ class FlowDispatchInterceptor implements HandlerInterceptor {
     }
 
     private MatchContext resolveMatch(HttpServletRequest request, Object handler) {
-        FlowOrchestrated annotation = resolveAnnotation(handler);
-        if (annotation != null) {
+        // 如果是 HandlerMethod（REST Controller 方法），由 AOP 切面处理，拦截器不再处理
+        if (handler instanceof HandlerMethod) {
             if (log.isDebugEnabled()) {
-                log.debug("Matched flow via annotation for {} {}", request.getMethod(), request.getRequestURI());
+                log.debug("HandlerMethod detected, will be handled by AOP aspect for {} {}", 
+                         request.getMethod(), request.getRequestURI());
             }
-            return new MatchContext(annotation.ruleId(), null);
+            return null; // 返回 null，让拦截器不处理，由 AOP 切面处理
         }
+        
+        // 对于非 HandlerMethod 的处理器（如静态资源等），继续使用拦截器查找流程规则
         if (registry == null) {
             return null;
         }
@@ -87,17 +90,6 @@ class FlowDispatchInterceptor implements HandlerInterceptor {
                     return new MatchContext(entry.getFlowCode(), entry);
                 })
                 .orElse(null);
-    }
-
-    private FlowOrchestrated resolveAnnotation(Object handler) {
-        if (!(handler instanceof HandlerMethod method)) {
-            return null;
-        }
-        FlowOrchestrated annotation = method.getMethodAnnotation(FlowOrchestrated.class);
-        if (annotation != null) {
-            return annotation;
-        }
-        return method.getBeanType().getAnnotation(FlowOrchestrated.class);
     }
 
     private void writeResponse(HttpServletResponse response, FlowExecutionResult result) throws IOException {

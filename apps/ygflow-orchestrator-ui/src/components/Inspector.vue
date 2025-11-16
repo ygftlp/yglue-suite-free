@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { computed } from "vue"
-import ParamResolverEditor from "./ParamResolverEditor.vue"
-import ConverterEditor from "./ConverterEditor.vue"
+import { computed, ref } from "vue"
 import TransformerEditor from "./TransformerEditor.vue"
+import ScriptEditor from "./ScriptEditor.vue"
 import { transactionManagers } from "../data/transactionManagers"
 import type { FlowModel, FlowResolver } from "../api/client"
 
@@ -43,6 +42,9 @@ const isTransformerNode = computed(() => props.selectedNode?.type === "transform
 const allowCustomIO = computed(() => !props.selectedNode?.data?.comp)
 const hasSelection = computed(() => Boolean(props.selectedNode || props.selectedEdge))
 const outputInfo = computed(() => props.selectedNode?.data?.output || null)
+
+// 脚本编辑器 refs
+const scriptEditorRefs = ref<Array<{ openCodeEditor: () => void } | null>>([])
 
 // 已移除条件分支连线功能
 
@@ -128,18 +130,51 @@ function removeIO(type: IOType, index: number) {
   })
 }
 
-function getInputResolver(input: any) {
-  if (input?.resolver) return input.resolver
-  return {
-    type: input?.sourceType || "request",
-    path: input?.source || "",
-    cast: input?.cast || "STRING",
-    default: input?.default || "",
-  }
+function getInputScript(input: any): string {
+  if (!input) return ""
+  // 优先使用 script，如果没有则使用 transformer（兼容旧数据）
+  return input.script || input.transformer || ""
 }
 
-function updateInputResolver(index: number, resolver: any) {
-  updateIO("inputs", index, { resolver })
+function updateInputScript(index: number, script: string) {
+  updateIO("inputs", index, { script, transformer: script })
+}
+
+function getInputScriptVariableGroups(input: any) {
+  const groups = [
+    {
+      title: "请求参数",
+      items: [
+        { label: "request.path.xxx", snippet: "request.path.xxx", description: "路径变量，如 request.path.projectKey" },
+        { label: "request.query.xxx", snippet: "request.query.xxx", description: "查询参数，如 request.query.page" },
+        { label: "request.body.xxx", snippet: "request.body.xxx", description: "请求体字段，如 request.body.name" },
+        { label: "request.headers.xxx", snippet: "request.headers.xxx", description: "请求头，如 request.headers.Authorization" },
+      ],
+    },
+    {
+      title: "流程上下文",
+      items: [
+        { label: "ctx", snippet: "ctx", description: "流程上下文，可读写共享变量，如 ctx['userId']" },
+        { label: "ctx['_lastNodeResult']", snippet: "ctx['_lastNodeResult']", description: "最后一个节点的输出结果" },
+        { label: "ctx['_node_xxx']", snippet: "ctx['_node_xxx']", description: "指定节点ID的输出结果" },
+      ],
+    },
+  ]
+  return groups
+}
+
+function getInputScriptFunctionGroups() {
+  return [
+    {
+      title: "内置函数",
+      items: [
+        { label: "jsonPath(value, path)", snippet: "jsonPath(request.body, \"$.data.field\")", description: "按 JSONPath 提取字段，适合 JSON 结构快速取值。" },
+        { label: "assert(condition, message)", snippet: "assert(request.path.projectKey != null, \"项目标识不能为空\")", description: "当条件不满足时抛出异常，中断后续执行。" },
+        { label: "formatDate(value, pattern)", snippet: "formatDate(request.body.orderTime, \"yyyy-MM-dd HH:mm:ss\")", description: "格式化日期/时间对象为指定字符串。" },
+        { label: "safeNumber(value, defaultValue)", snippet: "safeNumber(request.query.page, 1)", description: "安全转换为数字，无法转换时给定默认值。" },
+      ],
+    },
+  ]
 }
 
 /**
@@ -187,21 +222,6 @@ function updateInputTypeName(index: number, value: string) {
   updateIO("inputs", index, { typeName: value })
 }
 
-function getConverter(input: any) {
-  if (input?.converter) return input.converter
-  return {
-    kind: "GENERAL",
-    targetType: (input?.valueType || "STRING").toUpperCase(),
-    targetTypeName: input?.typeName || "",
-    script: input?.transformer || "",
-    arrayElementType: "STRING",
-    arrayElementTypeName: "",
-  }
-}
-
-function updateConverter(index: number, converter: any) {
-  updateIO("inputs", index, { converter, transformer: converter?.script || "" })
-}
 
 function updateEdgeField(partial: Record<string, any>) {
   mutateEdge((next) => {
@@ -387,68 +407,78 @@ function getServiceName(comp: any): string | null {
             class="card input-block"
           >
             <div class="input-header">
-              <div class="input-label">
-                <div class="muted small">参数</div>
-                <template v-if="allowCustomIO">
-                  <input
-                    class="input"
-                    style="width:160px"
-                    :value="input.name || ''"
-                    @input="updateIO('inputs', index, { name: ($event.target as HTMLInputElement).value })"
-                  />
-                </template>
-                <span v-else class="pill-text">{{ input.name }}</span>
-              </div>
-              <div class="input-label">
-                <div class="muted small">类型</div>
-                <template v-if="allowCustomIO">
-                  <div class="row" style="gap:6px; align-items:center">
-                    <select
-                      class="input"
-                      style="width:120px"
-                      :value="input.valueType || 'STRING'"
-                      @change="updateInputType(index, ($event.target as HTMLSelectElement).value)"
-                    >
-                      <option value="STRING">String</option>
-                      <option value="NUMBER">Number</option>
-                      <option value="BOOLEAN">Boolean</option>
-                      <option value="OBJECT">Object</option>
-                      <option value="ARRAY">Array</option>
-                    </select>
+              <div class="input-main-info">
+                <div class="input-label">
+                  <div class="muted small">参数</div>
+                  <template v-if="allowCustomIO">
                     <input
-                      v-if="['OBJECT','ARRAY'].includes((input.valueType || '').toUpperCase())"
                       class="input"
-                      style="width:140px"
-                      placeholder="类型名"
-                      :value="input.typeName || ''"
-                      @input="updateInputTypeName(index, ($event.target as HTMLInputElement).value)"
+                      :value="input.name || ''"
+                      @input="updateIO('inputs', index, { name: ($event.target as HTMLInputElement).value })"
                     />
+                  </template>
+                  <span v-else class="pill-text">{{ input.name }}</span>
+                </div>
+                <div class="input-label">
+                  <div class="muted small">类型</div>
+                  <template v-if="allowCustomIO">
+                    <div class="type-input-group">
+                      <select
+                        class="input"
+                        :value="input.valueType || 'STRING'"
+                        @change="updateInputType(index, ($event.target as HTMLSelectElement).value)"
+                      >
+                        <option value="STRING">String</option>
+                        <option value="NUMBER">Number</option>
+                        <option value="BOOLEAN">Boolean</option>
+                        <option value="OBJECT">Object</option>
+                        <option value="ARRAY">Array</option>
+                      </select>
+                      <input
+                        v-if="['OBJECT','ARRAY'].includes((input.valueType || '').toUpperCase())"
+                        class="input type-name-input"
+                        placeholder="类型名（如 com.example.User）"
+                        :value="input.typeName || ''"
+                        @input="updateInputTypeName(index, ($event.target as HTMLInputElement).value)"
+                      />
+                    </div>
+                  </template>
+                  <div v-else class="type-display">
+                    <span class="pill-text type-text">{{ formatInputType(input) }}</span>
                   </div>
-                </template>
-                <span v-else class="pill-text">{{ formatInputType(input) }}</span>
+                  <!-- 脚本值显示 -->
+                  <div class="script-value-preview">
+                    <div class="muted small" style="margin-bottom: 4px;">取值</div>
+                    <textarea
+                      class="input script-value-input"
+                      :value="getInputScript(input)"
+                      placeholder="点击此处打开脚本编辑器..."
+                      readonly
+                      @click="scriptEditorRefs[index]?.openCodeEditor()"
+                    ></textarea>
+                  </div>
+                </div>
               </div>
-              <button
-                v-if="allowCustomIO"
-                class="btn"
-                style="font-size:12px"
-                @click="removeIO('inputs', index)"
-              >
-                删除
-              </button>
+              <div class="input-actions">
+                <button
+                  v-if="allowCustomIO"
+                  class="btn"
+                  style="font-size:12px"
+                  @click="removeIO('inputs', index)"
+                >
+                  删除
+                </button>
+              </div>
             </div>
-            <div class="resolver-label">取值配置</div>
-            <ParamResolverEditor
-              :value="getInputResolver(input)"
-              :request-schema="props.endpointSchema?.requestSchema"
-              :entrypoint-path="props.entrypointPath"
-              :resolver-catalog="resolverCatalog"
-              @update:value="(resolver) => updateInputResolver(index, resolver)"
-            />
-            <div class="muted" style="font-size:11px">数据转换器（可选）</div>
-            <ConverterEditor
-              :value="getConverter(input)"
-              @update:value="(value) => updateConverter(index, value)"
-              :model-options="modelOptions"
+            <!-- 脚本编辑器（隐藏预览，只显示弹框） -->
+            <ScriptEditor
+              :ref="(el) => { scriptEditorRefs[index] = el as any }"
+              :script="getInputScript(input)"
+              title="参数取值脚本编辑器"
+              :variable-groups="getInputScriptVariableGroups(input)"
+              :function-groups="getInputScriptFunctionGroups()"
+              :hide-preview="true"
+              @update:script="(script) => updateInputScript(index, script)"
             />
           </div>
         </div>
@@ -593,10 +623,120 @@ function getServiceName(comp: any): string | null {
 
 .input-header {
   display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  align-items: flex-end;
+  flex-direction: column;
+  gap: 10px;
 }
+
+.input-main-info {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+
+.input-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.type-input-group {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.type-input-group .input {
+  flex: 0 0 auto;
+}
+
+.type-input-group select {
+  min-width: 120px;
+  max-width: 200px;
+}
+
+.type-input-group .type-name-input {
+  flex: 1;
+  min-width: 200px;
+  max-width: 100%;
+}
+
+.type-display {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+}
+
+.type-text {
+  display: inline-block;
+  max-width: 100%;
+  word-break: break-word;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+.script-value-preview {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.script-value-input {
+  font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+  font-size: 11px;
+  min-height: 60px;
+  max-height: 120px;
+  resize: vertical;
+  cursor: pointer;
+  background: #f8fafc;
+  color: #475569;
+}
+
+.script-value-input:hover {
+  background: #f1f5f9;
+  border-color: rgba(148, 163, 184, 0.5);
+}
+
+.script-value-input:focus {
+  outline: none;
+  border-color: #2563eb;
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+}
+
+.btn-icon {
+  background: transparent;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.btn-icon:hover {
+  background: #f8fafc;
+  border-color: rgba(148, 163, 184, 0.6);
+}
+
+.icon-expand {
+  font-size: 10px;
+  color: #64748b;
+  transition: transform 0.2s ease;
+  display: inline-block;
+}
+
+.icon-expand.expanded {
+  transform: rotate(180deg);
+}
+
+
 
 .input-label {
   display: flex;

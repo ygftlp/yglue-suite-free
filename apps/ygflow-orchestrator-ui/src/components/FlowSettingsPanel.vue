@@ -1,39 +1,13 @@
 ﻿<script setup lang="ts">
-import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from "vue"
-import type { editor } from "monaco-editor/esm/vs/editor/editor.api"
-import * as monaco from "monaco-editor/esm/vs/editor/editor.api"
-import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker"
-import JsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker"
+import { computed, ref, watch } from "vue"
 import type { FlowEntrypoint, FlowSettings, LogPolicy } from "../data/flowSettings"
 type SchemaField = { name: string; type: string }
 type ResponseSchema = { type?: string | null }
-
-if (typeof window !== "undefined") {
-  const globalSelf = self as typeof self & {
-    MonacoEnvironment?:
-      | {
-          getWorker(moduleId: string, label: string): Worker
-        }
-      | undefined
-  }
-
-  if (!globalSelf.MonacoEnvironment) {
-    globalSelf.MonacoEnvironment = {
-      getWorker(_moduleId: string, label: string) {
-        if (label === "json") {
-          return new JsonWorker()
-        }
-        return new EditorWorker()
-      },
-    }
-  }
-}
 
 const props = defineProps<{
   modelValue: FlowSettings
   visible: boolean
   requestSchemaFields?: SchemaField[] | null
-  requestSchemaJson?: string | null
   responseSchema?: ResponseSchema | null
 }>()
 
@@ -108,87 +82,6 @@ function updateEntrypointField<K extends keyof FlowEntrypoint>(key: K, value: Fl
     ...settings.value,
     entrypoint: next,
   })
-}
-
-const schemaEditorContainer = ref<HTMLElement | null>(null)
-let schemaEditor: editor.IStandaloneCodeEditor | null = null
-const entrypointSchemaText = ref("")
-
-watch(
-  () => settings.value.entrypoint?.requestSchema ?? "",
-  (value) => {
-    if (value !== entrypointSchemaText.value) {
-      entrypointSchemaText.value = value ?? ""
-      if (schemaEditor && schemaEditor.getValue() !== entrypointSchemaText.value) {
-        schemaEditor.setValue(entrypointSchemaText.value)
-      }
-    }
-  },
-  { immediate: true }
-)
-
-watch(
-  () => props.requestSchemaJson,
-  (value) => {
-    if (!value) return
-    const formatted = prettifyJson(value)
-    if (entrypointSchemaText.value !== formatted) {
-      entrypointSchemaText.value = formatted
-      if (schemaEditor && schemaEditor.getValue() !== formatted) {
-        schemaEditor.setValue(formatted)
-      }
-      updateEntrypointField("requestSchema", formatted)
-    }
-  },
-  { immediate: true }
-)
-
-function initSchemaEditor() {
-  if (!schemaEditorContainer.value || schemaEditor) return
-  schemaEditor = monaco.editor.create(schemaEditorContainer.value, {
-    value: entrypointSchemaText.value,
-    language: "json",
-    theme: "vs-light",
-    automaticLayout: true,
-    minimap: { enabled: false },
-    scrollBeyondLastLine: false,
-    tabSize: 2,
-    readOnly: true,
-  })
-  schemaEditor.onDidChangeModelContent(() => {
-    const value = schemaEditor?.getValue() ?? ""
-    entrypointSchemaText.value = value
-    updateEntrypointField("requestSchema", value)
-  })
-}
-
-onMounted(() => {
-  if (props.visible) {
-    nextTick(initSchemaEditor)
-  }
-})
-
-watch(
-  () => props.visible,
-  (visible) => {
-    if (visible) {
-      nextTick(initSchemaEditor)
-    }
-  }
-)
-
-onBeforeUnmount(() => {
-  schemaEditor?.dispose()
-  schemaEditor = null
-})
-
-function prettifyJson(value: string | null | undefined): string {
-  if (!value) return ""
-  try {
-    return JSON.stringify(JSON.parse(value), null, 2)
-  } catch {
-    return value
-  }
 }
 
 function inferSourceLabel(item: SchemaField): string {
@@ -464,13 +357,6 @@ function inferSourceLabel(item: SchemaField): string {
               </tbody>
             </table>
             <div v-else class="schema-placeholder">未提供请求参数结构</div>
-            <label class="field full">
-              <span>请求 Schema（JSON）</span>
-              <div ref="schemaEditorContainer" class="schema-editor schema-editor--readonly"></div>
-              <div class="schema-actions">
-                <span class="field-hint">该 Schema 由上游组件自动生成，仅供查看。</span>
-              </div>
-            </label>
           </div>
           <div class="schema-block">
             <div class="schema-heading">响应类型</div>
@@ -675,25 +561,6 @@ function inferSourceLabel(item: SchemaField): string {
   color: #94a3b8;
 }
 
-.schema-editor {
-  height: 220px;
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.schema-editor--readonly {
-  pointer-events: none;
-  opacity: 0.6;
-}
-
-.schema-actions {
-  margin-top: 6px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
-}
 
 .schema-response {
   font-size: 12px;

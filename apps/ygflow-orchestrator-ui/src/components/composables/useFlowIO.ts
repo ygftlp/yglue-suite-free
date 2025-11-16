@@ -276,45 +276,12 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
     flowSettingsVisible.value = false
   }
 
-  function syncEntrypointSchemaFromHint() {
-    const schemaJson = props.endpointSchema?.requestSchemaJson
-    if (schemaJson) {
-      let formatted = schemaJson
-      try {
-        formatted = JSON.stringify(JSON.parse(schemaJson), null, 2)
-      } catch {
-        // ignore, keep original
-      }
-      const currentSchema = flowSettings.value.entrypoint?.requestSchema || ""
-      if (currentSchema === formatted) {
-        return
-      }
-      const defaults = createDefaultFlowSettings()
-      flowSettings.value.entrypoint ||= normalizeEntrypoint(props.entrypointHint) ?? defaults.entrypoint
-      if (!flowSettings.value.entrypoint) {
-        flowSettings.value.entrypoint = defaults.entrypoint
-      }
-      if (flowSettings.value.entrypoint) {
-        flowSettings.value.entrypoint.requestSchema = formatted
-      }
-    }
-  }
-
   watch(
     () => props.entrypointHint,
     () => {
       applyEntrypointHintIfNeeded()
-      syncEntrypointSchemaFromHint()
     },
     { immediate: true, deep: true }
-  )
-
-  watch(
-    () => props.endpointSchema?.requestSchemaJson,
-    () => {
-      syncEntrypointSchemaFromHint()
-    },
-    { immediate: true }
   )
 
   watch(

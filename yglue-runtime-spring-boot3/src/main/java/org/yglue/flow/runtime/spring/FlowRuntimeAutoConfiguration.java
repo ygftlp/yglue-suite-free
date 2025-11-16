@@ -8,6 +8,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.EnableAspectJAutoProxy;
 import org.springframework.web.servlet.HandlerInterceptor;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -22,6 +23,7 @@ import java.util.List;
 @ConditionalOnClass(HandlerInterceptor.class)
 @EnableConfigurationProperties(FlowRuntimeProperties.class)
 @ConditionalOnProperty(prefix = "yglue.runtime.flow", name = "enabled", havingValue = "true", matchIfMissing = true)
+@EnableAspectJAutoProxy
 public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
 
     private final FlowRuntimeProperties properties;
@@ -74,6 +76,15 @@ public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
     @ConditionalOnMissingBean
     public ExecutionInterceptor loggingExecutionInterceptor() {
         return new LoggingInterceptor();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public FlowOrchestratedAspect flowOrchestratedAspect(RuleEngine ruleEngine,
+                                                          ObjectMapper objectMapper,
+                                                          RequestSchemaValidator requestSchemaValidator,
+                                                          RestEntryPointRegistry entryPointRegistry) {
+        return new FlowOrchestratedAspect(ruleEngine, objectMapper, requestSchemaValidator, entryPointRegistry);
     }
 
     @Override
