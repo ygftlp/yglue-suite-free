@@ -97,10 +97,24 @@ public class LiteFlowRuleEngine {
         Map<String, Object> contextData = null;
         Object returnValue = null;
         
-        if (response.getContextBean() != null) {
-            // 从 LiteFlow 的 Context 中提取数据
-            // 这里需要根据实际的 LiteFlow Context 实现来调整
-            contextData = Map.of(); // TODO: 从 response.getContextBean() 中提取数据
+        // 从 LiteFlow 的 Context 中提取数据
+        // LiteflowResponse 可能包含上下文数据，需要通过 getContext() 或其他方法获取
+        try {
+            // 尝试通过反射获取上下文
+            Object context = getContextFromResponse(response);
+            if (context != null) {
+                contextData = extractDataFromContext(context);
+            }
+        } catch (Exception e) {
+            log.debug("[LiteFlowRuleEngine] 无法从响应中提取上下文数据", e);
+        }
+        
+        // 获取执行结果
+        // LiteflowResponse 通常有 getData() 或类似方法获取结果
+        try {
+            returnValue = getResultFromResponse(response);
+        } catch (Exception e) {
+            log.debug("[LiteFlowRuleEngine] 无法从响应中提取结果", e);
         }
         
         return new FlowExecutionResult(
@@ -108,6 +122,98 @@ public class LiteFlowRuleEngine {
                 contextData != null ? contextData : Map.of(),
                 returnValue
         );
+    }
+    
+    /**
+     * 从 LiteflowResponse 中获取上下文对象
+     * LiteflowResponse 提供了 getFirstContextBean() 方法来获取第一个上下文对象
+     */
+    private Object getContextFromResponse(LiteflowResponse response) {
+        try {
+            // LiteflowResponse 有 getFirstContextBean() 方法
+            return response.getFirstContextBean();
+        } catch (Exception e) {
+            log.debug("[LiteFlowRuleEngine] 无法获取上下文: {}", e.getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * 从上下文对象中提取数据
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> extractDataFromContext(Object context) {
+        if (context == null) {
+            return null;
+        }
+        
+        try {
+            // 如果上下文本身就是 Map
+            if (context instanceof Map) {
+                return (Map<String, Object>) context;
+            }
+            
+            // 尝试调用 getData() 方法
+            java.lang.reflect.Method getDataMethod = context.getClass().getMethod("getData");
+            Object data = getDataMethod.invoke(context);
+            if (data instanceof Map) {
+                return (Map<String, Object>) data;
+            }
+        } catch (Exception e) {
+            log.debug("[LiteFlowRuleEngine] 从上下文提取数据失败: {}", e.getMessage());
+        }
+        
+        return null;
+    }
+    
+    /**
+     * 从 LiteflowResponse 中获取执行结果
+     * LiteflowResponse 通常通过上下文对象来获取结果数据
+     */
+    private Object getResultFromResponse(LiteflowResponse response) {
+        try {
+            // 从上下文对象中获取结果
+            // 通常结果存储在上下文的某个字段中，或者通过 getFirstContextBean() 获取的上下文对象本身
+            Object context = response.getFirstContextBean();
+            if (context != null) {
+                // 尝试从上下文中提取结果
+                // 这里假设上下文对象有 getData() 方法或类似的方法
+                return extractResultFromContext(context);
+            }
+            return null;
+        } catch (Exception e) {
+            log.debug("[LiteFlowRuleEngine] 获取结果时出错: {}", e.getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * 从上下文对象中提取结果
+     */
+    private Object extractResultFromContext(Object context) {
+        if (context == null) {
+            return null;
+        }
+        
+        try {
+            // 尝试调用 getData() 方法获取结果
+            java.lang.reflect.Method getDataMethod = context.getClass().getMethod("getData");
+            Object data = getDataMethod.invoke(context);
+            return data;
+        } catch (NoSuchMethodException e) {
+            // 如果没有 getData() 方法，尝试其他常见方法
+            try {
+                java.lang.reflect.Method getResultMethod = context.getClass().getMethod("getResult");
+                return getResultMethod.invoke(context);
+            } catch (Exception ex) {
+                // 如果都没有，返回上下文对象本身
+                return context;
+            }
+        } catch (Exception e) {
+            log.debug("[LiteFlowRuleEngine] 从上下文提取结果失败: {}", e.getMessage());
+            // 如果提取失败，返回上下文对象本身
+            return context;
+        }
     }
 
     /**

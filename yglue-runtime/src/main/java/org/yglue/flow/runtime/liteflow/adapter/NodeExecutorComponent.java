@@ -57,7 +57,7 @@ public class NodeExecutorComponent extends NodeComponent {
         
         // 将结果保存到 LiteFlow Context
         if (result != null) {
-            this.setSlotData(result);
+            saveResultToContext(result);
         }
         
         log.debug("[NodeExecutorComponent] 节点执行完成: nodeId={}, result={}", 
@@ -69,7 +69,7 @@ public class NodeExecutorComponent extends NodeComponent {
      */
     private FlowContext getFlowContext() {
         // 尝试从 LiteFlow Context 中获取 FlowContext
-        Object contextObj = this.getContextBean();
+        Object contextObj = getContextBeanSafely();
         
         if (contextObj instanceof FlowContext) {
             return (FlowContext) contextObj;
@@ -96,6 +96,47 @@ public class NodeExecutorComponent extends NodeComponent {
     }
 
     /**
+     * 安全地获取 LiteFlow Context Bean
+     * 尝试多种方式获取上下文对象
+     */
+    private Object getContextBeanSafely() {
+        try {
+            // 方式1：尝试无参的 getContextBean() 方法
+            try {
+                java.lang.reflect.Method getContextBeanMethod = this.getClass().getSuperclass()
+                        .getMethod("getContextBean");
+                return getContextBeanMethod.invoke(this);
+            } catch (NoSuchMethodException e) {
+                // 方式2：尝试 getFirstContextBean() 方法
+                try {
+                    java.lang.reflect.Method getFirstContextBeanMethod = this.getClass().getSuperclass()
+                            .getMethod("getFirstContextBean");
+                    return getFirstContextBeanMethod.invoke(this);
+                } catch (NoSuchMethodException ex) {
+                    // 方式3：尝试通过反射获取 slot 或 context
+                    try {
+                        java.lang.reflect.Field slotField = this.getClass().getSuperclass().getDeclaredField("slot");
+                        slotField.setAccessible(true);
+                        Object slot = slotField.get(this);
+                        if (slot != null) {
+                            // 尝试从 slot 中获取 context
+                            java.lang.reflect.Method getContextMethod = slot.getClass().getMethod("getContext");
+                            return getContextMethod.invoke(slot);
+                        }
+                    } catch (Exception ignored) {
+                        // 忽略所有异常
+                    }
+                    log.debug("[NodeExecutorComponent] 无法获取 Context Bean，返回 null");
+                    return null;
+                }
+            }
+        } catch (Exception e) {
+            log.debug("[NodeExecutorComponent] 获取 Context Bean 时出错: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * 从 LiteFlow Context 中提取数据
      * 这里需要根据实际的 LiteFlow Context 实现来调整
      */
@@ -119,6 +160,40 @@ public class NodeExecutorComponent extends NodeComponent {
         }
         
         return null;
+    }
+
+    /**
+     * 将执行结果保存到 LiteFlow Context
+     */
+    private void saveResultToContext(Object result) {
+        try {
+            Object contextObj = getContextBeanSafely();
+            if (contextObj == null) {
+                return;
+            }
+
+            // 尝试调用 setData 方法
+            try {
+                java.lang.reflect.Method setDataMethod = contextObj.getClass()
+                        .getMethod("setData", String.class, Object.class);
+                setDataMethod.invoke(contextObj, nodeDefinition.getId(), result);
+            } catch (NoSuchMethodException e) {
+                // 如果没有 setData 方法，尝试其他方式
+                if (contextObj instanceof Map) {
+                    ((Map<String, Object>) contextObj).put(nodeDefinition.getId(), result);
+                } else {
+                    try {
+                        java.lang.reflect.Method putMethod = contextObj.getClass()
+                                .getMethod("put", String.class, Object.class);
+                        putMethod.invoke(contextObj, nodeDefinition.getId(), result);
+                    } catch (Exception ex) {
+                        log.debug("[NodeExecutorComponent] 无法保存结果到 Context", ex);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("[NodeExecutorComponent] 保存结果到 Context 失败", e);
+        }
     }
 }
 

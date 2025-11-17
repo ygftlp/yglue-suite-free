@@ -175,13 +175,13 @@ public class FlowLoader {
      * 支持前端保存的节点格式：
      * {
      *   "id": "...",
-     *   "type": "task",
+     *   "type": "service",  // 节点类型：service（本地服务）、rest（REST调用）、transformer（脚本转换）等
      *   "data": {
      *     "comp": {...},
      *     "inputs": [...],
      *     "output": {...},
      *     "label": "...",
-     *     "nodeType": "task"  // 可选，如果根级别没有 type 字段，会从 data.nodeType 获取
+     *     "nodeType": "service"  // 可选，如果根级别没有 type 字段，会从 data.nodeType 获取
      *   },
      *   "position": {...}
      * }

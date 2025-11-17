@@ -176,7 +176,17 @@ export function useFlowState() {
   function addNodeFromPalette(item: any, position: { x: number; y: number }) {
     if (!item) return
     const id = String(Date.now())
-    const nodeType = item.nodeType ?? "task"
+    // 根据 endpointType 决定节点类型：FLOW_OPERATION -> service（本地服务调用）
+    let nodeType = item.nodeType
+    if (!nodeType && item.endpointType) {
+      const endpointType = String(item.endpointType).toUpperCase()
+      if (endpointType === "FLOW_OPERATION") {
+        nodeType = "service"  // 本地服务调用使用 service 节点
+      } else if (endpointType === "REST" || endpointType === "HTTP") {
+        nodeType = "rest"  // REST 调用使用 rest 节点
+      }
+    }
+    nodeType = nodeType ?? "service"  // 默认使用 service 节点
     const label =
       nodeType === "branch"
         ? item.title || item.displayName || "Branch"

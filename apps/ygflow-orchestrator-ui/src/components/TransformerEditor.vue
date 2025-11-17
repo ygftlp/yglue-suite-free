@@ -232,7 +232,7 @@ const scriptVariableGroups = computed<ScriptHelperGroup[]>(() => {
       groups.push({
         title: "REST 请求参数",
         items: requestItems,
-      })
+    })
     }
   }
 

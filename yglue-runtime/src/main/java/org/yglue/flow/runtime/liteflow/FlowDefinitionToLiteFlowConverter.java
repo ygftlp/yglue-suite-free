@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationContext;
 import org.yglue.flow.runtime.core.definition.FlowDefinition;
 import org.yglue.flow.runtime.core.definition.NodeDefinition;
+import org.yglue.flow.runtime.liteflow.adapter.ServiceNodeComponent;
 
 import java.util.*;
 
@@ -37,6 +38,9 @@ public class FlowDefinitionToLiteFlowConverter {
             return chainName;
         }
         
+        // 先注册所有节点到动态组件注册表
+        registerNodesToDynamicComponent(definition);
+        
         // 构建 LiteFlow EL 表达式
         String elExpression = buildElExpression(definition);
         
@@ -59,6 +63,24 @@ public class FlowDefinitionToLiteFlowConverter {
         }
         
         return chainName;
+    }
+    
+    /**
+     * 将所有节点注册到动态组件注册表
+     */
+    private void registerNodesToDynamicComponent(FlowDefinition definition) {
+        List<NodeDefinition> nodes = definition.getNodes();
+        if (nodes == null || nodes.isEmpty()) {
+            return;
+        }
+        
+        for (NodeDefinition node : nodes) {
+            String componentId = getComponentId(node);
+            // 注册节点信息到服务组件
+            ServiceNodeComponent.registerComponent(componentId, node, definition);
+            log.debug("[FlowDefinitionToLiteFlowConverter] 注册节点到动态组件: componentId={}, nodeType={}, nodeId={}", 
+                    componentId, node.getType(), node.getId());
+        }
     }
 
     /**
@@ -96,32 +118,46 @@ public class FlowDefinitionToLiteFlowConverter {
         
         // 根据节点类型生成对应的 LiteFlow 组件调用
         String componentId = getComponentId(node);
+        String componentRef = getComponentRef(componentId);
         
         // 处理条件节点
         if ("if".equalsIgnoreCase(type)) {
-            return buildIfExpression(node, componentId);
+            return buildIfExpression(node, componentRef);
         }
         
         // 处理分支节点
         if ("branch".equalsIgnoreCase(type)) {
-            return buildBranchExpression(node, componentId);
+            return buildBranchExpression(node, componentRef);
         }
         
-        // 普通节点，直接调用组件
-        return componentId;
+        // 普通节点，使用 dynamicNode 组件
+        return componentRef;
     }
 
     /**
      * 获取 LiteFlow 组件 ID
      * 根据节点类型和配置生成唯一的组件标识
+     * 
+     * 注意：这里返回的组件 ID 会作为参数传递给 dynamicNode 组件
+     * 实际在 EL 表达式中使用固定的组件 ID "dynamicNode"
      */
     private String getComponentId(NodeDefinition node) {
         String type = node.getType();
         String nodeId = node.getId();
         
         // 为每种节点类型生成对应的组件 ID
-        // 格式：{type}_{nodeId}，例如：task_node1, transformer_node2
+        // 格式：{type}_{nodeId}，例如：service_node1, transformer_node2, rest_node3
         return type.toLowerCase() + "_" + nodeId;
+    }
+    
+    /**
+     * 获取 LiteFlow EL 表达式中的组件引用
+     * 使用固定的 serviceNode 组件，通过 tag 传递实际的组件 ID
+     */
+    private String getComponentRef(String componentId) {
+        // 使用 serviceNode 组件，并通过 tag 传递组件 ID
+        // 格式：serviceNode.tag("componentId")
+        return String.format("serviceNode.tag(\"%s\")", componentId);
     }
 
     /**
@@ -215,6 +251,7 @@ public class FlowDefinitionToLiteFlowConverter {
     public void unregister(String ruleId) {
         registeredChains.remove(ruleId);
         // TODO: 从 LiteFlow 中移除规则
+        // 注意：这里不清除 ServiceNodeComponent 的注册，因为可能有多个流程共享节点
     }
 
     /**
@@ -222,6 +259,7 @@ public class FlowDefinitionToLiteFlowConverter {
      */
     public void clearAll() {
         registeredChains.clear();
+        ServiceNodeComponent.clearAll();
         // TODO: 清除 LiteFlow 中的所有规则
     }
 }

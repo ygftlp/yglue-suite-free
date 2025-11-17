@@ -20,7 +20,19 @@ function getNodeComponentName(node: ExportNode): string {
   const { type, data } = node
   const nodeId = node.id
 
-  // 任务节点：使用 bean.method 格式
+  // 服务节点：使用 bean.method 格式（本地服务调用）
+  if (type === "service" && data?.comp) {
+    const bean = data.comp.bean || data.comp.flowApiBeanName
+    const method = data.comp.method
+    if (bean && method) {
+      return `${bean}.${method}`
+    }
+    if (bean) {
+      return bean
+    }
+  }
+  
+  // 兼容旧的 task 节点类型
   if (type === "task" && data?.comp) {
     const bean = data.comp.bean || data.comp.flowApiBeanName
     const method = data.comp.method
@@ -208,7 +220,7 @@ function buildBranchExpression(
 export function generateLiteFlowRule(nodes: ExportNode[], edges: ExportEdge[], settings?: FlowSettings) {
   const nodeLines = nodes.map((node) => {
     const componentName = getNodeComponentName(node)
-    return `- ${node.id} (${node.type || "task"}): ${node.data?.label || ""} -> ${componentName}`
+    return `- ${node.id} (${node.type || "service"}): ${node.data?.label || ""} -> ${componentName}`
   })
   const edgeLines = edges.map((edge) => `${edge.source} -> ${edge.target}`)
   const chains = generateChains(nodes, edges)

@@ -90,7 +90,7 @@ public class RuleEngine {
                 .register("branch", new BranchNodeExecutor())
                 .register("call", new CallNodeExecutor(applicationContext))
                 .register("transformer", new TransformerNodeExecutor())
-                .register("task", new TaskNodeExecutor(applicationContext));
+                .register("service", new ServiceNodeExecutor(applicationContext));
 
         RestInvocationRegistry restRegistry = new RestInvocationRegistry()
                 .register(new BeanRestInvocationStrategy())
