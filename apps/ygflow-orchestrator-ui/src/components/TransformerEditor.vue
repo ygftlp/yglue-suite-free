@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue"
+import { computed } from "vue"
 import type { FlowModel, FlowResolver } from "../api/client"
 import ScriptEditor from "./ScriptEditor.vue"
 
@@ -8,6 +8,7 @@ interface Props {
   nodes?: any[] | null
   edges?: any[] | null
   endpointSchema?: {
+    requestSchema?: Array<{ name: string; type: string; typeName?: string; source?: string; pathVariable?: string; paramName?: string; formField?: string }> | null
     responseSchema?: { type?: string | null } | null
   } | null
   entrypointPath?: string | null
@@ -32,6 +33,7 @@ interface ScriptHelperItem {
   snippet: string
   description: string
   example?: string
+  tooltip?: string
 }
 
 interface ScriptHelperGroup {
@@ -50,8 +52,6 @@ const emit = defineEmits<Emits>()
 
 const isTransformerNode = computed(() => props.selectedNode?.type === "transformer")
 const outputType = computed(() => props.selectedNode?.data?.outputType || "object")
-
-const showGuide = ref(false)
 
 function cloneNode() {
   return JSON.parse(JSON.stringify(props.selectedNode))
@@ -154,39 +154,86 @@ const selectedOutputModelDisplay = computed(() => {
 
 const resolverCatalog = computed(() => props.flowResolvers ?? [])
 
-type OutputSelectOption = { value: string; label: string; disabled?: boolean }
-const MODEL_DIVIDER_VALUE = "__divider_flow_model"
 
 const scriptVariableGroups = computed<ScriptHelperGroup[]>(() => {
   const groups: ScriptHelperGroup[] = [
     {
-      title: "输入变量",
+      title: "临时变量",
       items: [
-        { label: "input", snippet: "input", description: "上游节点输出（对象/数组），由前一个节点提供。" },
-        { label: "resolved", snippet: "resolved", description: "ParamResolver 解析后的参数集合，通过 resolved.xxx 访问。" },
+        { 
+          label: "input", 
+          snippet: "input", 
+          description: `上游节点输出（对象/数组），由前一个节点提供。${upstreamOutputType.value ? `类型：${upstreamOutputType.value}` : ""}` 
+        },
       ],
     },
     {
       title: "流程上下文",
       items: [
         { label: "ctx", snippet: "ctx", description: "流程上下文，可读写共享变量，例如 ctx['orderId']。" },
-        { label: "output", snippet: "output", description: "脚本最终返回对象 (Map)，可为其设置字段。" },
         { label: "env", snippet: "env", description: "运行环境信息（租户、操作人等）。" },
       ],
     },
   ]
 
-  if (selectedOutputModelDisplay.value) {
-    groups.push({
-      title: "FlowModel 提示",
-      items: [
-        {
-          label: selectedOutputModelDisplay.value.name,
-          snippet: `// 输出模型：${selectedOutputModelDisplay.value.name}\n// class: ${selectedOutputModelDisplay.value.className}`,
-          description: "当前节点绑定的 FlowModel，按模型字段填充 output。",
-        },
-      ],
+  // 添加 REST 请求参数提示（作为变量定义）
+  if (props.endpointSchema?.requestSchema && props.endpointSchema.requestSchema.length > 0) {
+    const requestItems: ScriptHelperItem[] = []
+    
+    props.endpointSchema.requestSchema.forEach((field) => {
+      const fieldName = field.name
+      const fieldType = field.type
+      const typeName = (field as any).typeName // x-javaType
+      const source = field.source
+      
+      let snippet = ""
+      let description = ""
+      let example = ""
+      
+      if (source === "path" || field.pathVariable) {
+        const pathVar = field.pathVariable || fieldName
+        snippet = `def ${fieldName} = ctx['request.path.${pathVar}']`
+        description = `路径变量：${fieldName} (${fieldType})`
+        if (typeName) {
+          example = `// 类型：${typeName}`
+        }
+      } else if (source === "query" || field.paramName) {
+        const paramName = field.paramName || fieldName
+        snippet = `def ${fieldName} = ctx['request.query.${paramName}']`
+        description = `查询参数：${fieldName} (${fieldType})`
+        if (typeName) {
+          example = `// 类型：${typeName}`
+        }
+      } else if (source === "body" || source === "form") {
+        snippet = `def ${fieldName} = ctx['request.body.${fieldName}']`
+        description = `请求体字段：${fieldName} (${fieldType})`
+        if (typeName) {
+          example = `// 类型：${typeName}`
+        }
+      } else {
+        // 默认作为请求体字段
+        snippet = `def ${fieldName} = ctx['request.body.${fieldName}']`
+        description = `请求参数：${fieldName} (${fieldType})`
+        if (typeName) {
+          example = `// 类型：${typeName}`
+        }
+      }
+      
+      requestItems.push({
+        label: fieldName,
+        snippet,
+        description,
+        example: example || undefined,
+        tooltip: typeName && typeName !== fieldType ? `完整类型：${typeName}` : undefined,
+      })
     })
+    
+    if (requestItems.length > 0) {
+      groups.push({
+        title: "REST 请求参数",
+        items: requestItems,
+      })
+    }
   }
 
   const customGroups = [
@@ -337,130 +384,75 @@ function isSimpleType(type: string): boolean {
   return simpleTypes.some((st) => type.includes(st))
 }
 
-const selectedOutputTypeValue = computed(() => {
-  const currentModel = currentOutputModel.value
-  if (currentModel?.identifier) {
-    const modelValue = `model:${currentModel.identifier}`
-    if (flowModelOptionMap.value.has(modelValue)) {
-      return modelValue
-    }
-  }
-  const currentType = outputType.value
-  const responseType = props.endpointSchema?.responseSchema?.type
-  if (responseType) {
-    const parsed = parseResponseType(responseType)
-    if (parsed) {
-      if (parsed.isResponseEntity && currentType === "object") {
-        return "rest-response-entity"
-      }
-      if (!parsed.isResponseEntity) {
-        if (isSimpleType(parsed.bodyType) && currentType === "single") {
-          return "rest-single"
-        }
-        if (!isSimpleType(parsed.bodyType) && currentType === "object") {
-          return "rest-object"
-        }
-      }
-    }
-  }
-  return currentType
-})
-
-const outputTypeOptions = computed<OutputSelectOption[]>(() => {
-  const options: OutputSelectOption[] = []
-  const responseType = props.endpointSchema?.responseSchema?.type
-  if (responseType) {
-    const parsed = parseResponseType(responseType)
-    if (parsed) {
-      if (parsed.isResponseEntity) {
-        options.push({
-          value: "rest-response-entity",
-          label: `REST 返回类型：ResponseEntity<${parsed.bodyType}>`,
-        })
-      } else if (isSimpleType(parsed.bodyType)) {
-        options.push({
-          value: "rest-single",
-          label: `REST 返回类型：${parsed.bodyType}（单值）`,
-        })
-      } else {
-        options.push({
-          value: "rest-object",
-          label: `REST 返回类型：${parsed.bodyType}（对象）`,
-        })
-      }
-    }
-  }
-  options.push(
-    { value: "object", label: "对象（Map）" },
-    { value: "single", label: "单值（String/Number/Boolean）" }
-  )
-  if (flowModelOptions.value.length) {
-    options.push({ value: MODEL_DIVIDER_VALUE, label: "—— FlowModel ——", disabled: true })
-    flowModelOptions.value.forEach((item) => {
-      options.push({
-        value: item.value,
-        label: `FlowModel：${item.label}`,
-      })
-    })
-  }
-  return options
-})
-
-function updateOutputType(type: string) {
-  if (type === MODEL_DIVIDER_VALUE) return
-  if (type.startsWith("model:")) {
-    const model = flowModelOptionMap.value.get(type) ?? null
-    setOutputModel(model)
-    updateNodeField("outputType", "object")
-    return
-  }
-  setOutputModel(null)
-  let actualType: "object" | "single" = "object"
-  if (type === "rest-response-entity" || type === "rest-object") {
-    actualType = "object"
-  } else if (type === "rest-single") {
-    actualType = "single"
-  } else {
-    actualType = type as "object" | "single"
-  }
-  updateNodeField("outputType", actualType)
-}
 
 function handleScriptUpdate(value: string) {
   updateNodeField("script", value)
+}
+
+/**
+ * 生成包含 REST 参数的初始脚本
+ */
+function generateInitialScript(): string {
+  if (!props.endpointSchema?.requestSchema || props.endpointSchema.requestSchema.length === 0) {
+    return ""
+  }
+  
+  const lines: string[] = []
+  lines.push("// REST 请求参数")
+  
+  props.endpointSchema.requestSchema.forEach((field) => {
+    const fieldName = field.name
+    const fieldType = field.type
+    const typeName = (field as any).typeName // x-javaType
+    const source = field.source
+    
+    let ctxPath = ""
+    if (source === "path" || field.pathVariable) {
+      const pathVar = field.pathVariable || fieldName
+      ctxPath = `ctx['request.path.${pathVar}']`
+    } else if (source === "query" || field.paramName) {
+      const paramName = field.paramName || fieldName
+      ctxPath = `ctx['request.query.${paramName}']`
+    } else if (source === "body" || source === "form") {
+      ctxPath = `ctx['request.body.${fieldName}']`
+    } else {
+      ctxPath = `ctx['request.body.${fieldName}']`
+    }
+    
+    // 添加类型注释：显示 type，如果有 typeName 也显示
+    if (typeName && typeName !== fieldType) {
+      lines.push(`// ${fieldName}: ${fieldType} (${typeName})`)
+    } else {
+      lines.push(`// ${fieldName}: ${fieldType}`)
+    }
+    lines.push(`def ${fieldName} = ${ctxPath}`)
+  })
+  
+  lines.push("")
+  lines.push("// 在此处编写脚本逻辑")
+  
+  return lines.join("\n")
+}
+
+/**
+ * 检查并初始化脚本（如果为空）
+ */
+function ensureScriptInitialized() {
+  const currentScript = props.selectedNode?.data?.script || ""
+  if (!currentScript.trim() && props.endpointSchema?.requestSchema && props.endpointSchema.requestSchema.length > 0) {
+    const initialScript = generateInitialScript()
+    if (initialScript) {
+      updateNodeField("script", initialScript)
+    }
+  }
 }
 
 </script>
 
 <template>
   <div v-if="isTransformerNode" class="transformer-editor">
-    <div class="section">
-      <h3 class="section-title">输入来源</h3>
-      <div class="tip">
-        <div style="margin-bottom: 4px">
-          <strong>说明：</strong>转换器会自动接收上游节点的输出作为 <code>input</code>。若需要使用流程上下文，可通过 <code>ctx</code> 访问。
-        </div>
-        <div v-if="upstreamOutputType" class="divider-tip">
-          <strong>上游节点输出类型：</strong>
-          <code class="response-type-code">{{ upstreamOutputType }}</code>
-        </div>
-        <div v-else class="muted tiny">提示：请先连接上游节点以查看输出类型</div>
-      </div>
-    </div>
-
-    <div class="section">
-      <button class="guide-toggle" type="button" @click="showGuide = !showGuide">
-        操作提示
-        <span class="guide-caret" :class="{ open: showGuide }">⌄</span>
-      </button>
-      <div v-if="showGuide" class="guide-tip">
-        <ol>
-          <li>在右侧“节点配置 → 输入参数”里先定义 ParamResolver，明确每个输出所需的来源。</li>
-          <li>回到此处，通过“输出类型”选择最终返回格式（或 FlowModel），让脚本有明确的产出约束。</li>
-          <li>在下方 Groovy 脚本内构建 `output`，可结合 <code>input</code>、<code>resolved</code>、<code>ctx</code> 完成所有映射与处理。</li>
-        </ol>
-      </div>
-      <div v-if="resolverCatalog.length" class="resolver-tip">
+    <div v-if="resolverCatalog.length" class="section">
+      <div class="resolver-tip">
         <div class="resolver-tip-title">可用解析器</div>
         <ul>
           <li v-for="item in resolverCatalog" :key="item.id ?? item.type">
@@ -472,53 +464,14 @@ function handleScriptUpdate(value: string) {
       </div>
     </div>
 
-    <div class="section">
-      <h3 class="section-title">输出类型</h3>
-      <div class="field-group">
-        <label class="field-label">输出格式</label>
-        <select
-          class="input"
-          :value="selectedOutputTypeValue"
-          @change="updateOutputType(($event.target as HTMLSelectElement).value)"
-        >
-          <option
-            v-for="option in outputTypeOptions"
-            :key="option.value"
-            :value="option.value"
-            :disabled="option.disabled"
-          >
-            {{ option.label }}
-          </option>
-        </select>
-      </div>
-      <div v-if="selectedOutputModelDisplay" class="model-hint">
-        <div class="model-hint-title">
-          {{ selectedOutputModelDisplay.name }}
-          <span v-if="selectedOutputModelDisplay.version" class="model-hint-version">
-            v{{ selectedOutputModelDisplay.version }}
-          </span>
-        </div>
-        <div class="model-hint-meta">{{ selectedOutputModelDisplay.className }}</div>
-        <div v-if="selectedOutputModelDisplay.description" class="model-hint-desc">
-          {{ selectedOutputModelDisplay.description }}
-        </div>
-      </div>
-      <div class="tip">
-        <span v-if="outputType === 'object'">输出为对象（Map）</span>
-        <span v-else>输出为单值（String/Number/Boolean）</span>
-        <div v-if="endpointSchema?.responseSchema?.type" class="muted tiny">
-          选择 REST 返回类型选项将参考接口签名生成模板。
-        </div>
-      </div>
-    </div>
-
-
     <ScriptEditor
       title="Groovy 脚本"
       :script="selectedNode.data?.script || ''"
       :variable-groups="scriptVariableGroups"
       :function-groups="scriptFunctionGroups"
+      :endpoint-schema="props.endpointSchema"
       @update:script="handleScriptUpdate"
+      @open="ensureScriptInitialized"
     />
   </div>
 </template>

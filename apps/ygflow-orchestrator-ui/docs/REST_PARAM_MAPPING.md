@@ -146,7 +146,7 @@ GET /api/users?page=1&size=10
 
 ### 方式 3：在 Groovy 脚本中使用
 
-在转换器节点的 Groovy 脚本中，可以通过 `ctx` 访问：
+在脚本节点的 Groovy 脚本中，可以通过 `ctx` 访问：
 
 ```groovy
 def projectKey = ctx['request.path.projectKey']

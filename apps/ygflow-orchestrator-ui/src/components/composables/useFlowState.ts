@@ -112,7 +112,7 @@ export function useFlowState() {
     if (targetNode?.type === "transformer") {
       const existingIncomingEdges = edges.value.filter((e: any) => e.target === params.target && e.id !== params.edge?.id)
       if (existingIncomingEdges.length >= 1) {
-        window.alert("转换器节点只能有一条输入连线，请先删除现有连线")
+        window.alert("脚本节点只能有一条输入连线，请先删除现有连线")
         return
       }
     }
@@ -217,7 +217,7 @@ export function useFlowState() {
       }
       if (nodeType === "transformer") {
         return {
-          label: item.title || "通用转换器",
+          label: item.title || "脚本节点",
           mappingConfig: {
             fieldMappings: [],
           },

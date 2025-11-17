@@ -147,6 +147,7 @@ function normalizeRequestSchema(
           pathVariable: (item as any).pathVariable,
           paramName: (item as any).paramName,
           formField: (item as any).formField,
+          typeName: (item as any).typeName,
         } as EndpointSchemaField
       })
       .filter((item): item is EndpointSchemaField => Boolean(item))
@@ -197,6 +198,36 @@ function flattenSchemaFields(schema: any, prefix = ""): EndpointSchemaField[] {
     if (!value || typeof value !== "object") return
     const fieldName = prefix ? `${prefix}.${key}` : key
     const fieldType = typeof value.type === "string" ? value.type.toUpperCase() : value.format ? value.format : "OBJECT"
+    
+    // 提取类型名：优先使用 x-javaType，然后是 typeName、$ref、className 等
+    let typeName: string | undefined = undefined
+    if (value["x-javaType"] && typeof value["x-javaType"] === "string") {
+      // 优先使用 x-javaType（后端提供的 Java 类型）
+      typeName = value["x-javaType"].trim()
+    } else if (value.typeName && typeof value.typeName === "string") {
+      typeName = value.typeName.trim()
+    } else if (value["$ref"] && typeof value["$ref"] === "string") {
+      // 从 $ref 中提取类型名，例如 "#/components/schemas/UserDto" -> "UserDto"
+      const refMatch = value["$ref"].match(/\/([^/]+)$/)
+      if (refMatch) {
+        typeName = refMatch[1]
+      } else {
+        typeName = value["$ref"]
+      }
+    } else if (value.className && typeof value.className === "string") {
+      typeName = value.className.trim()
+    } else if (value["x-typeName"] && typeof value["x-typeName"] === "string") {
+      typeName = value["x-typeName"].trim()
+    }
+    
+    // 处理 List<Type> 或 Map<String, Type> 等泛型类型
+    if (value["x-type"] && typeof value["x-type"] === "string") {
+      const xType = value["x-type"].trim()
+      if (xType.includes("<") || !typeName) {
+        typeName = xType
+      }
+    }
+    
     const field: EndpointSchemaField = {
       name: fieldName,
       type: fieldType,
@@ -204,7 +235,8 @@ function flattenSchemaFields(schema: any, prefix = ""): EndpointSchemaField[] {
       pathVariable: value["x-pathVariable"],
       paramName: value["x-paramName"],
       formField: value["x-formField"],
-    }
+      typeName: typeName,
+    } as EndpointSchemaField & { typeName?: string }
     result.push(field)
     if (fieldType === "OBJECT") {
       result.push(...flattenSchemaFields(value, fieldName))

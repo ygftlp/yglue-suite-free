@@ -32,6 +32,7 @@ export type FlowSettings = {
 
 /**
  * 生成 UUID v4
+ * 统一使用 UUID 格式作为流程标识
  */
 function generateUUID(): string {
   // 使用浏览器原生 API（现代浏览器支持）

@@ -171,6 +171,7 @@ export interface EndpointSchemaField {
   pathVariable?: string
   paramName?: string
   formField?: string
+  typeName?: string
 }
 
 export interface EndpointResponseSchema {

@@ -4,7 +4,7 @@ import { api, type FlowVersion } from "../../api/client"
 import { createDefaultFlowSettings, type FlowEntrypoint, type FlowSettings } from "../../data/flowSettings"
 import { generateLiteFlowRule } from "../../utils/ruleExporter"
 import type { CanvasEditorProps } from "./canvasTypes"
-import { generateUUID, generateContextKey, normalizeEntrypoint, serializeEntrypointPayload, safeParseContent } from "./flowUtils"
+import { generateUUID, generateContextKey, normalizeEntrypoint, serializeEntrypointPayload, safeParseContent, ensureUUIDCode, isValidUUID } from "./flowUtils"
 import { useRulePreview } from "./useRulePreview"
 
 type FlowStateBridge = {
@@ -37,12 +37,23 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
     }
   }
 
+  function syncEntrypointSchemaFromHint() {
+    if (!props.endpointSchema?.requestSchemaJson || !flowSettings.value.entrypoint) return
+    // 如果 entrypoint 还没有 requestSchema，则从 endpointSchema 同步
+    if (!flowSettings.value.entrypoint.requestSchema) {
+      flowSettings.value.entrypoint = {
+        ...flowSettings.value.entrypoint,
+        requestSchema: props.endpointSchema.requestSchemaJson,
+      }
+    }
+  }
+
   function resetEditor(flowCode?: string) {
     flowState.resetGraph()
     const defaults = createDefaultFlowSettings()
     flowSettings.value = {
       ...defaults,
-      code: flowCode || generateUUID(),
+      code: ensureUUIDCode(flowCode),
       name: flowCode || defaults.name,
       entrypoint: normalizeEntrypoint(props.entrypointHint) ?? defaults.entrypoint,
     }
@@ -66,7 +77,7 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
     flowSettings.value = {
       ...defaults,
       ...loadedSettings,
-      code: (loadedSettings as FlowSettings).code || flowCode || defaults.code,
+      code: ensureUUIDCode((loadedSettings as FlowSettings).code || flowCode),
     }
     applyEntrypointHintIfNeeded()
     syncEntrypointSchemaFromHint()
@@ -124,11 +135,13 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
       return
     }
     let code = (flowSettings.value.code || "").trim()
-    if (!code) {
+    if (!code || !isValidUUID(code)) {
       code = generateUUID()
       flowSettings.value.code = code
-      openFlowSettings()
-      return
+      if (!code) {
+        openFlowSettings()
+        return
+      }
     }
     const name = (flowSettings.value.name || "").trim()
     if (!name) {
@@ -224,11 +237,13 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
       return
     }
     let code = (flowSettings.value.code || "").trim()
-    if (!code) {
+    if (!code || !isValidUUID(code)) {
       code = generateUUID()
       flowSettings.value.code = code
-      openFlowSettings()
-      return
+      if (!code) {
+        openFlowSettings()
+        return
+      }
     }
     let versionNo = currentVersionNo.value
     if (!versionNo) {
@@ -244,7 +259,6 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
         window.alert(`保存草稿时出错：${message}`)
         return
       }
-      return
     }
     const normalizedEntrypoint = normalizeEntrypoint(flowSettings.value.entrypoint)
     flowSettings.value.entrypoint = normalizedEntrypoint ?? null

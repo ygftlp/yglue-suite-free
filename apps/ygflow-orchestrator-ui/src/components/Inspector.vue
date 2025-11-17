@@ -13,7 +13,7 @@ const props = defineProps<{
   nodes?: any[] | null
   edges?: any[] | null
   endpointSchema?: {
-    requestSchema?: Array<{ name: string; type: string }> | null
+    requestSchema?: Array<{ name: string; type: string; source?: string; pathVariable?: string; paramName?: string; formField?: string }> | null
     responseSchema?: { type?: string | null } | null
   } | null
   entrypointPath?: string | null
@@ -326,6 +326,8 @@ function getServiceName(comp: any): string | null {
         :flow-resolvers="resolverCatalog"
         @update-node="emit('update-node', $event)"
       />
+      <!-- 脚本节点不需要显示通用的输入参数和输出结果配置 -->
+      <!-- 脚本节点的输入来自上游节点（自动），输出由脚本生成 -->
     </template>
     <template v-else-if="isBranchNode">
       <div class="tip">
@@ -351,7 +353,7 @@ function getServiceName(comp: any): string | null {
       </div>
     </template>
 
-      <template v-else-if="selectedNode">
+      <template v-else-if="selectedNode && !isTransformerNode">
         <div>
           <div class="muted">显示名称</div>
         <input

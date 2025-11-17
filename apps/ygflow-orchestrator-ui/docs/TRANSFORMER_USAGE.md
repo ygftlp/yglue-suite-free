@@ -1,24 +1,24 @@
-# 转换器节点使用指南
+# 脚本节点使用指南
 
 ## 概述
 
-转换器节点用于将流程输出转换为目标接口的请求/响应结构。特别适用于以下场景：
+脚本节点通过 Groovy 脚本处理数据转换和响应构造。特别适用于以下场景：
 
 1. **类型转换**：将业务组件返回的简单类型（如 `String`）转换为复杂类型（如 `Map`、`List`、自定义对象等）
 2. **数据格式转换**：将流程上下文的数据转换为 REST 接口需要的格式
 3. **响应构造**：构造符合 REST 接口返回类型的响应结构（支持各种返回类型，如 `String`、`Map`、`List`、`ResponseEntity` 等）
 
-## 转换器的输入来源
+## 脚本节点的输入来源
 
-转换器可以访问以下数据源：
+脚本节点可以访问以下数据源：
 
 ### 1. 前一个业务组件的输出（推荐）
 
-**自动获取**：转换器会自动获取最后一个节点的输出，保存在 `input` 变量中。
+**自动获取**：脚本节点会自动获取最后一个节点的输出，保存在 `input` 变量中。
 
 **示例场景**：
 - 业务组件返回：`String result = "success"`
-- 转换器可以通过 `input` 访问：`input` = `"success"`
+- 脚本节点可以通过 `input` 访问：`input` = `"success"`
 
 ### 2. 流程上下文（ctx）
 
@@ -34,7 +34,7 @@
 
 ### 3. 指定输入源路径（高级用法）
 
-在转换器节点配置中，可以设置 `inputSource` 字段，指定从上下文的哪个路径获取输入：
+在脚本节点配置中，可以设置 `inputSource` 字段，指定从上下文的哪个路径获取输入：
 
 ```json
 {
@@ -64,9 +64,9 @@ public Map<String, Object> create(
 
 **流程设计**：
 1. 业务组件节点（task）：返回 `String result = "success"`
-2. 转换器节点（transformer）：将 `String` 转换为 `Map<String, Object>`
+2. 脚本节点（transformer）：将 `String` 转换为 `Map<String, Object>`
 
-**转换器配置**：
+**脚本节点配置**：
 
 #### 方式1：使用字段映射
 
@@ -75,7 +75,7 @@ public Map<String, Object> create(
 - 目标字段：`message`
 - 转换类型：直接映射
 
-**结果**：转换器返回 `{"message": "success"}`
+**结果**：脚本节点返回 `{"message": "success"}`
 
 #### 方式2：使用 Groovy 脚本
 
@@ -104,13 +104,13 @@ public ResponseEntity<Map<String, Object>> create(
 
 **流程设计**：
 1. 业务组件节点（task）：返回 `String result = "success"`
-2. 转换器节点（transformer）：将 `String` 转换为 `ResponseEntity<Map<String, Object>>`
+2. 脚本节点（transformer）：将 `String` 转换为 `ResponseEntity<Map<String, Object>>`
 
-**转换器配置**：
+**脚本节点配置**：
 
 #### 方式1：使用 Groovy 脚本（推荐）
 
-在转换器的 Groovy 脚本中：
+在脚本节点的 Groovy 脚本中：
 
 ```groovy
 // input 是前一个业务组件的输出（String）
@@ -167,7 +167,7 @@ public String getStatus(@PathVariable("id") String id) {
 }
 ```
 
-**转换器配置**：
+**脚本节点配置**：
 
 ```groovy
 // 直接返回 String
@@ -186,7 +186,7 @@ public List<Map<String, Object>> list() {
 }
 ```
 
-**转换器配置**：
+**脚本节点配置**：
 
 ```groovy
 // input 是业务组件返回的数据
@@ -258,7 +258,7 @@ def secondResult = ctx['_node_task_2']  // task_2 节点的输出
 
 ## 响应结构说明
 
-转换器可以返回各种类型，后端会根据返回类型和 REST 接口的返回类型进行匹配：
+脚本节点可以返回各种类型，后端会根据返回类型和 REST 接口的返回类型进行匹配：
 
 ### 1. 简单类型（String、Number、Boolean）
 
@@ -296,7 +296,7 @@ true
 
 ### 4. ResponseEntity 结构（需要控制状态码和响应头）
 
-如果 REST 接口返回类型是 `ResponseEntity<T>`，转换器可以返回 ResponseEntity 结构：
+如果 REST 接口返回类型是 `ResponseEntity<T>`，脚本节点可以返回 ResponseEntity 结构：
 
 ```groovy
 [
@@ -335,13 +335,13 @@ true
 
 ## 最佳实践
 
-1. **优先使用 `input` 变量**：转换器会自动获取前一个节点的输出
+1. **优先使用 `input` 变量**：脚本节点会自动获取前一个节点的输出
 2. **使用 `ctx` 访问请求参数**：如 `ctx['request.path.projectKey']`
 3. **在 Groovy 脚本中处理复杂逻辑**：字段映射适合简单转换，复杂逻辑用脚本
 4. **根据 REST 接口返回类型选择响应格式**：
    - 如果接口返回 `String`、`Map`、`List` 等简单类型，直接返回对应值
    - 如果接口返回 `ResponseEntity<T>`，需要返回包含 `statusCode`、`headers`、`body` 的结构
-5. **保持响应类型一致性**：确保转换器返回的类型与 REST 接口声明的返回类型匹配
+5. **保持响应类型一致性**：确保脚本节点返回的类型与 REST 接口声明的返回类型匹配
 
 ## 注意事项
 
@@ -355,8 +355,8 @@ true
    - 同时保存到 `_node_{nodeId}`，可以通过节点ID访问
 
 3. **返回类型匹配**：
-   - 转换器返回的类型应该与 REST 接口声明的返回类型匹配
-   - 如果接口返回 `ResponseEntity<T>`，转换器需要返回包含 `statusCode`、`headers`、`body` 的结构
+   - 脚本节点返回的类型应该与 REST 接口声明的返回类型匹配
+   - 如果接口返回 `ResponseEntity<T>`，脚本节点需要返回包含 `statusCode`、`headers`、`body` 的结构
    - 如果接口返回 `Map`、`List` 或简单类型，直接返回对应值即可
-   - 后端会自动将转换器的返回值序列化为 JSON 响应
+   - 后端会自动将脚本节点的返回值序列化为 JSON 响应
 

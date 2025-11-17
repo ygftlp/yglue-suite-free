@@ -1,7 +1,7 @@
 ﻿<script setup lang="ts">
 import { computed, ref, watch } from "vue"
 import type { FlowEntrypoint, FlowSettings, LogPolicy } from "../data/flowSettings"
-type SchemaField = { name: string; type: string }
+type SchemaField = { name: string; type: string; typeName?: string }
 type ResponseSchema = { type?: string | null }
 
 const props = defineProps<{
@@ -104,6 +104,24 @@ function inferSourceLabel(item: SchemaField): string {
     default:
       return source || ""
   }
+}
+
+/**
+ * 获取类型显示文本（保持界面布局稳定）
+ */
+function formatTypeDisplay(item: SchemaField): string {
+  return item.type || "-"
+}
+
+/**
+ * 获取类型提示文本（x-javaType，用于 tooltip）
+ */
+function getTypeTooltip(item: SchemaField): string | null {
+  const typeName = (item as any).typeName
+  if (typeName && typeof typeName === "string" && typeName.trim()) {
+    return typeName.trim()
+  }
+  return null
 }
 </script>
 
@@ -351,7 +369,12 @@ function inferSourceLabel(item: SchemaField): string {
               <tbody>
                 <tr v-for="item in requestSchemaFields" :key="item.name">
                   <td>{{ item.name || "-" }}</td>
-                  <td>{{ item.type || "-" }}</td>
+                  <td 
+                    :title="getTypeTooltip(item) || undefined"
+                    :class="{ 'has-tooltip': getTypeTooltip(item) }"
+                  >
+                    {{ formatTypeDisplay(item) || "-" }}
+                  </td>
                   <td>{{ inferSourceLabel(item) }}</td>
                 </tr>
               </tbody>
@@ -548,6 +571,17 @@ function inferSourceLabel(item: SchemaField): string {
   border: 1px solid rgba(226, 232, 240, 0.8);
   padding: 6px 8px;
   text-align: left;
+}
+
+.schema-table td.has-tooltip {
+  cursor: help;
+  position: relative;
+}
+
+.schema-table td.has-tooltip:hover {
+  color: #2563eb;
+  text-decoration: underline;
+  text-decoration-style: dotted;
 }
 
 .schema-table th {

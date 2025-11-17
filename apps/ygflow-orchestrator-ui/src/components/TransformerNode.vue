@@ -20,7 +20,7 @@ const props = defineProps<Props>()
     <Handle id="out-bottom" type="source" :position="Position.Bottom" />
 
     <div class="node-icon">🔄</div>
-    <div class="node-label">{{ props.data?.label || '转换器' }}</div>
+    <div class="node-label">{{ props.data?.label || '脚本节点' }}</div>
     <div class="node-meta">
       <div v-if="props.data?.mappingConfig" class="mapping-info">
         字段映射: {{ (props.data.mappingConfig.fieldMappings || []).length }}个
@@ -34,7 +34,7 @@ const props = defineProps<Props>()
 
 <style scoped>
 /**
- * 通用转换器节点样式
+ * 脚本节点样式
  * 与其他节点保持一致的视觉风格，包括边框、阴影和定位
  */
 .transformer-node {

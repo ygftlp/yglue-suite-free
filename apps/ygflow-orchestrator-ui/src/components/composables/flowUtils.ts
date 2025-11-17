@@ -9,15 +9,39 @@ export function formatTimestamp(value: string) {
   }
 }
 
+/**
+ * 生成 UUID v4
+ * 统一使用 UUID 格式作为流程标识
+ */
 export function generateUUID(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return crypto.randomUUID()
   }
+  // 后备方案：手动生成 UUID v4
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0
     const v = c === "x" ? r : (r & 0x3) | 0x8
     return v.toString(16)
   })
+}
+
+/**
+ * 验证字符串是否为有效的 UUID 格式
+ */
+export function isValidUUID(str: string | null | undefined): boolean {
+  if (!str || typeof str !== "string") return false
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  return uuidRegex.test(str.trim())
+}
+
+/**
+ * 确保流程 code 是有效的 UUID，如果不是则生成新的 UUID
+ */
+export function ensureUUIDCode(code: string | null | undefined): string {
+  if (isValidUUID(code)) {
+    return code!.trim()
+  }
+  return generateUUID()
 }
 
 export function generateContextKey() {
