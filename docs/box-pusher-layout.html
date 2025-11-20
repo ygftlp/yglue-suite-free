@@ -2,492 +2,1086 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <title>推箱子小游戏界面布局示意</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BoxRush 推箱子高保真交互原型</title>
     <style>
+      @import url("https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600&family=Inter:wght@400;500;600&display=swap");
+
       :root {
-        font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
-        color: #1b2a41;
-        background: #eef3fb;
+        color-scheme: dark light;
+        --brand: #ff7b3f;
+        --brand-dark: #f45d2c;
+        --bg: radial-gradient(circle at top, #1f3159, #0a0f1f 65%);
+        --card: rgba(17, 24, 39, 0.75);
+        --glass: rgba(255, 255, 255, 0.08);
+        --text: #f4f7ff;
+        --muted: #a9b7d9;
+        --accent: #4fd1c5;
       }
       * {
         box-sizing: border-box;
       }
       body {
         margin: 0;
-        padding: 40px;
+        min-height: 100vh;
+        font-family: "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        display: flex;
+        justify-content: center;
+        padding: 32px 16px 64px;
       }
-      h1 {
-        text-align: center;
-        margin-bottom: 32px;
-        font-size: 28px;
+      .background-blur {
+        position: fixed;
+        inset: 0;
+        background: radial-gradient(circle at 70% 20%, rgba(79, 209, 197, 0.4), transparent 45%),
+          radial-gradient(circle at 30% 80%, rgba(255, 123, 63, 0.35), transparent 50%);
+        filter: blur(80px);
+        z-index: 0;
       }
-      .grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      .app-shell {
+        width: min(1200px, 100%);
+        position: relative;
+        z-index: 1;
+      }
+      header {
+        display: flex;
+        flex-direction: column;
         gap: 32px;
+        margin-bottom: 24px;
       }
-      .screen {
-        background: #ffffff;
+      .nav {
+        background: rgba(15, 23, 42, 0.85);
+        border: 1px solid rgba(255, 255, 255, 0.06);
         border-radius: 24px;
-        padding: 16px;
-        box-shadow: 0 20px 40px rgba(30, 60, 120, 0.15);
+        padding: 18px 24px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        backdrop-filter: blur(16px);
       }
-      .screen h2 {
-        margin: 0 0 12px;
-        font-size: 20px;
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-family: "Baloo 2", cursive;
+        font-size: 24px;
       }
-      .phone {
-        width: 100%;
-        aspect-ratio: 9 / 16;
+      .brand-badge {
+        width: 44px;
+        height: 44px;
+        border-radius: 14px;
+        background: linear-gradient(135deg, #ffb347, #ffcc33);
+        box-shadow: 0 14px 24px rgba(255, 190, 60, 0.45);
+        display: grid;
+        place-items: center;
+        font-size: 24px;
+      }
+      .nav-links {
+        display: flex;
+        gap: 14px;
+      }
+      .nav-btn {
+        border: none;
+        padding: 12px 24px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--text);
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      .nav-btn.active {
+        background: linear-gradient(120deg, var(--brand), var(--brand-dark));
+        box-shadow: 0 12px 30px rgba(255, 123, 63, 0.35);
+      }
+      main {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 24px;
+      }
+      .panel {
+        background: var(--card);
         border-radius: 32px;
-        padding: 16px;
-        background: linear-gradient(180deg, #f6f8fb 0%, #d8e8ff 100%);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 32px;
+        gap: 24px;
+        display: none;
+        backdrop-filter: blur(18px);
+      }
+      .panel.active {
+        display: grid;
+      }
+      .panel-title {
+        font-size: 28px;
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+      .panel-subtitle {
+        color: var(--muted);
+        margin-bottom: 24px;
+      }
+      /* Home */
+      .home-hero {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 32px;
+        align-items: center;
+      }
+      .hero-content h1 {
+        font-size: clamp(32px, 4vw, 48px);
+        margin-bottom: 16px;
+      }
+      .hero-content p {
+        color: var(--muted);
+        margin-bottom: 24px;
+        line-height: 1.6;
+      }
+      .hero-actions {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .primary-btn,
+      .ghost-btn {
+        border-radius: 999px;
+        padding: 14px 28px;
+        font-size: 16px;
+        font-weight: 600;
+        border: none;
+        cursor: pointer;
+        transition: transform 0.2s ease;
+      }
+      .primary-btn {
+        background: linear-gradient(120deg, var(--brand), var(--brand-dark));
+        color: white;
+        box-shadow: 0 20px 45px rgba(255, 123, 63, 0.35);
+      }
+      .ghost-btn {
+        background: transparent;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: var(--text);
+      }
+      .primary-btn:hover,
+      .ghost-btn:hover {
+        transform: translateY(-3px);
+      }
+      .phone-preview {
+        border-radius: 36px;
+        padding: 24px;
+        background: linear-gradient(160deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
+        border: 1px solid rgba(255, 255, 255, 0.08);
         position: relative;
         overflow: hidden;
       }
-      .safe-area {
-        width: 100%;
-        height: 100%;
-        border-radius: 24px;
-        padding: 12px;
+      .preview-shine {
+        position: absolute;
+        inset: 20px;
+        border-radius: 28px;
+        background: rgba(255, 255, 255, 0.05);
+        transform: rotate(-6deg);
+      }
+      .phone-preview .inner {
         position: relative;
-      }
-      .top-bar,
-      .bottom-nav,
-      .hud-top,
-      .hud-bottom,
-      .result-card,
-      .leaderboard-tabs,
-      .leaderboard-list {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        border-radius: 16px;
-      }
-      .top-bar {
-        background: rgba(255, 255, 255, 0.85);
-        padding: 12px 16px;
-        font-weight: 600;
-        color: #334;
-      }
-      .top-bar .actions {
-        display: flex;
-        gap: 12px;
-        font-size: 14px;
-      }
-      .main-card {
-        margin: 16px 0;
-        background: #fff;
-        border-radius: 24px;
+        border-radius: 28px;
         padding: 16px;
+        background: linear-gradient(160deg, #1c2944, #091123);
+        box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.6);
+        min-height: 520px;
         display: flex;
         flex-direction: column;
         gap: 12px;
       }
-      .main-illustration {
-        flex: 1;
-        background: repeating-linear-gradient(
-            45deg,
-            #e6eefc,
-            #e6eefc 12px,
-            #cedff8 12px,
-            #cedff8 24px
-          ),
-          url("data:image/svg+xml,%3Csvg width='120' height='120' viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='120' height='120' fill='none' stroke='%234265c1' stroke-opacity='0.1' stroke-width='2'/%3E%3C/svg%3E");
-        border-radius: 16px;
-      }
-      .cta-row {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 12px;
-      }
-      .btn {
-        border: none;
-        border-radius: 16px;
-        padding: 12px;
-        font-size: 16px;
-        font-weight: 600;
-        cursor: pointer;
-      }
-      .btn-primary {
-        background: #ff7b3f;
-        color: #fff;
-      }
-      .btn-secondary {
-        background: transparent;
-        color: #ff7b3f;
-        border: 2px solid #ff7b3f;
-      }
-      .bottom-nav {
-        background: rgba(255, 255, 255, 0.92);
-        padding: 10px 12px;
-        gap: 12px;
-      }
-      .nav-item {
-        flex: 1;
-        padding: 10px;
-        border-radius: 12px;
-        text-align: center;
-        font-size: 12px;
-        background: rgba(255, 255, 255, 0.6);
-        color: #4a5b7c;
-      }
-      .nav-item.active {
-        background: #ffebd6;
-        color: #ff7b3f;
-        font-weight: 600;
-      }
-      /* Game HUD */
-      .hud-top,
-      .hud-bottom {
-        background: rgba(16, 26, 46, 0.75);
-        color: #f2f5ff;
-        padding: 10px 14px;
-      }
-      .hud-top {
-        font-size: 14px;
-      }
-      .grid-board {
-        margin: 12px 0;
+      .preview-grid {
         flex: 1;
         display: grid;
         grid-template-columns: repeat(6, 1fr);
-        gap: 4px;
-        background: #99a9c2;
-        padding: 8px;
-        border-radius: 16px;
+        gap: 6px;
+      }
+      .preview-grid span {
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.1);
+        animation: pulse 4s ease-in-out infinite;
+      }
+      .preview-grid span:nth-child(odd) {
+        animation-delay: 0.2s;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 0.4;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+      .hero-metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 16px;
+        margin-top: 24px;
+      }
+      .metric-card {
+        background: rgba(255, 255, 255, 0.04);
+        border-radius: 20px;
+        padding: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .metric-card h3 {
+        margin: 0;
+        font-size: 24px;
+      }
+      .metric-card p {
+        margin: 6px 0 0;
+        color: var(--muted);
+      }
+      /* Play Panel */
+      .play-layout {
+        display: grid;
+        grid-template-columns: minmax(320px, 60%) minmax(240px, 1fr);
+        gap: 24px;
+      }
+      .game-shell {
+        border-radius: 28px;
+        padding: 20px;
+        background: linear-gradient(155deg, rgba(10, 18, 40, 0.9), rgba(18, 33, 73, 0.95));
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.35);
+      }
+      .hud {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 14px 18px;
+        border-radius: 18px;
+        background: rgba(8, 16, 32, 0.65);
+        margin-bottom: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+      }
+      .hud .stat {
+        display: flex;
+        flex-direction: column;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .hud .stat strong {
+        font-size: 18px;
+        color: var(--text);
+      }
+      .game-grid {
+        display: grid;
+        grid-template-columns: repeat(10, minmax(0, 1fr));
+        gap: 6px;
+        background: rgba(255, 255, 255, 0.03);
+        padding: 14px;
+        border-radius: 18px;
+        min-height: 420px;
       }
       .tile {
-        width: 100%;
         aspect-ratio: 1;
-        border-radius: 6px;
+        border-radius: 10px;
+        position: relative;
+        box-shadow: inset 0 -3px rgba(0, 0, 0, 0.2);
+        transition: transform 0.15s ease;
       }
       .tile.wall {
-        background: #1f3658;
+        background: linear-gradient(160deg, #0d1222, #1c2136);
+        border: 1px solid rgba(255, 255, 255, 0.03);
       }
       .tile.floor {
-        background: #dfe8fb;
+        background: linear-gradient(160deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
       }
-      .tile.target {
-        background: radial-gradient(circle, #ffe8d6 40%, #f5c099 90%);
+      .tile.target::after {
+        content: "";
+        position: absolute;
+        inset: 16%;
+        border-radius: 12px;
+        border: 2px dashed rgba(255, 255, 255, 0.8);
       }
       .tile.box {
-        background: #f68f4b;
-        border: 4px solid #c96a26;
+        background: linear-gradient(140deg, #ffaf58, #ff8d42);
+        border: 2px solid rgba(0, 0, 0, 0.15);
+      }
+      .tile.box::after {
+        content: "";
+        position: absolute;
+        inset: 22%;
+        border-radius: 6px;
+        border: 2px solid rgba(255, 255, 255, 0.2);
       }
       .tile.player {
-        background: #4cc3c7;
-        border: 4px solid #1a8c8f;
+        background: linear-gradient(160deg, #4fd1c5, #1fa6a3);
+        box-shadow: 0 12px 25px rgba(79, 209, 197, 0.4);
       }
-      .hud-bottom {
-        justify-content: space-between;
-        font-size: 12px;
+      .tile.glow {
+        animation: glow 1.5s infinite;
       }
-      .joystick {
-        width: 70px;
-        height: 70px;
-        border-radius: 50%;
-        border: 2px dashed rgba(255, 255, 255, 0.6);
+      @keyframes glow {
+        0%,
+        100% {
+          box-shadow: 0 0 12px rgba(255, 255, 255, 0.1);
+        }
+        50% {
+          box-shadow: 0 0 25px rgba(255, 255, 255, 0.4);
+        }
       }
-      .actions {
+      .control-pad {
+        margin-top: 16px;
         display: flex;
-        gap: 10px;
+        justify-content: center;
+        gap: 12px;
       }
-      .round-btn {
+      .control-pad button {
+        width: 52px;
+        height: 52px;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--text);
+        font-size: 18px;
+        cursor: pointer;
+        transition: transform 0.15s ease;
+      }
+      .control-pad button:active {
+        transform: translateY(2px);
+      }
+      .play-sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .info-card {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 22px;
+        padding: 18px;
+      }
+      .info-card h3 {
+        margin: 0 0 8px;
+        font-size: 18px;
+      }
+      .info-card p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .action-row {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .chip {
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        font-size: 13px;
+      }
+      .secondary-btn {
+        border-radius: 12px;
+        padding: 10px 18px;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        background: transparent;
+        color: var(--text);
+        cursor: pointer;
+      }
+      /* Leaderboard panel */
+      .rank-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 18px;
+      }
+      .rank-card {
+        border-radius: 22px;
+        padding: 20px;
+        background: linear-gradient(160deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        position: relative;
+        overflow: hidden;
+      }
+      .rank-card::after {
+        content: "";
+        position: absolute;
+        inset: 30px;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.04);
+        pointer-events: none;
+      }
+      .rank-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .rank-num {
         width: 48px;
         height: 48px;
-        border-radius: 50%;
-        border: none;
-        font-weight: 600;
-        cursor: pointer;
-      }
-      .round-btn.orange {
-        background: #ff7b3f;
-        color: #fff;
-      }
-      .round-btn.gray {
-        background: #d4dae6;
-        color: #334;
-      }
-      /* Result overlay */
-      .overlay {
-        background: linear-gradient(180deg, rgba(9, 17, 39, 0.8), rgba(30, 54, 96, 0.9));
-        padding: 20px;
-        border-radius: 24px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        gap: 16px;
-        color: #fff;
-      }
-      .result-card {
-        flex-direction: column;
-        gap: 12px;
-        background: #fff;
-        padding: 20px;
-        color: #1b2a41;
-        width: 100%;
-      }
-      .stats {
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.08);
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 8px;
-        text-align: center;
-      }
-      .primary-btn {
-        width: 100%;
-        padding: 12px;
-        border-radius: 14px;
-        border: none;
-        font-size: 15px;
-        font-weight: 600;
-        cursor: pointer;
-      }
-      .leaderboard-peek {
-        width: 100%;
-        background: rgba(255, 255, 255, 0.1);
-        padding: 12px;
-        border-radius: 18px;
-      }
-      /* Leaderboard */
-      .leaderboard-screen .phone {
-        background: url("data:image/svg+xml,%3Csvg width='8' height='8' viewBox='0 0 8 8' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 0h4v4H0zM4 4h4v4H4z' fill='%23bcd1ff' fill-opacity='0.4'/%3E%3C/svg%3E"),
-          rgba(46, 72, 130, 0.8);
-      }
-      .leaderboard-screen .safe-area {
-        backdrop-filter: blur(8px);
-        background: rgba(255, 255, 255, 0.15);
-        color: #fff;
-      }
-      .leaderboard-tabs {
-        gap: 8px;
-        background: rgba(255, 255, 255, 0.2);
-        padding: 6px;
-      }
-      .tab {
-        flex: 1;
-        text-align: center;
-        padding: 8px;
-        border-radius: 12px;
-        font-size: 13px;
-      }
-      .tab.active {
-        background: #ff7b3f;
-      }
-      .leaderboard-list {
-        flex-direction: column;
-        gap: 8px;
-        margin-top: 12px;
-      }
-      .entry {
-        display: grid;
-        grid-template-columns: 48px 1fr 70px;
-        padding: 10px;
-        background: rgba(255, 255, 255, 0.18);
-        border-radius: 14px;
-        align-items: center;
-        font-size: 13px;
-      }
-      .entry.highlight {
-        background: rgba(255, 123, 63, 0.5);
-      }
-      .rank-badge {
-        width: 36px;
-        height: 36px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        place-items: center;
+        font-size: 22px;
         font-weight: 700;
       }
-      .rank-1 {
-        background: #ffd166;
-        color: #a15c00;
+      .rank-name {
+        font-size: 18px;
       }
-      .rank-2 {
-        background: #d2ddeb;
-        color: #5b6480;
+      .rank-time {
+        font-size: 28px;
+        font-weight: 600;
+        margin: 12px 0;
       }
-      .rank-3 {
-        background: #f3bba7;
-        color: #703617;
+      .rank-footer {
+        display: flex;
+        justify-content: space-between;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .rank-card.self {
+        border-color: var(--brand);
+        box-shadow: 0 18px 40px rgba(255, 123, 63, 0.25);
+      }
+      /* Modal */
+      .modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(4, 7, 17, 0.75);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        z-index: 10;
+      }
+      .modal.hidden {
+        display: none;
+      }
+      .modal-card {
+        width: min(420px, 100%);
+        background: linear-gradient(180deg, #111d2f, #0a1222);
+        border-radius: 28px;
+        padding: 28px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        text-align: center;
+      }
+      .modal-card h3 {
+        margin: 12px 0;
+        font-size: 26px;
+      }
+      .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin: 20px 0;
+      }
+      .stat-tile {
+        padding: 12px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .stat-tile span {
+        display: block;
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .stat-tile strong {
+        font-size: 20px;
+      }
+      @media (max-width: 900px) {
+        body {
+          padding: 16px;
+        }
+        .nav {
+          flex-direction: column;
+          gap: 16px;
+        }
+        .play-layout {
+          grid-template-columns: 1fr;
+        }
+        .game-grid {
+          min-height: 320px;
+        }
       }
     </style>
   </head>
   <body>
-    <h1>推箱子小游戏界面布局示意</h1>
-    <div class="grid">
-      <!-- Lobby -->
-      <section class="screen lobby-screen">
-        <h2>大厅 Lobby</h2>
-        <div class="phone">
-          <div class="safe-area">
-            <div class="top-bar">
-              <span>Box Rush</span>
-              <div class="actions">
-                <span>⚙ 设置</span>
-                <span>🔊</span>
-              </div>
-            </div>
-            <div class="main-card">
-              <div class="main-illustration"></div>
-              <div class="cta-row">
-                <button class="btn btn-primary">开始</button>
-                <button class="btn btn-secondary">排行榜</button>
-              </div>
-            </div>
-            <div class="bottom-nav">
-              <div class="nav-item active">关卡</div>
-              <div class="nav-item">自我挑战</div>
-              <div class="nav-item">广告奖励</div>
-            </div>
+    <div class="background-blur"></div>
+    <div class="app-shell">
+      <header>
+        <div class="nav">
+          <div class="brand">
+            <div class="brand-badge">📦</div>
+            BoxRush
+          </div>
+          <div class="nav-links">
+            <button class="nav-btn active" data-panel="home">首页</button>
+            <button class="nav-btn" data-panel="play">进入游戏</button>
+            <button class="nav-btn" data-panel="rank">排行榜</button>
           </div>
         </div>
-      </section>
+      </header>
 
-      <!-- Game HUD -->
-      <section class="screen game-screen">
-        <h2>游戏内 HUD</h2>
-        <div class="phone" style="background: #263657">
-          <div class="safe-area">
-            <div class="hud-top">
-              <div>计时 00:32</div>
-              <div>步数 18 | 撤销 2</div>
-              <div>⏸ ⟳</div>
+      <main>
+        <!-- HOME -->
+        <section class="panel active" data-panel-content="home">
+          <div class="panel-title">赛博休闲推箱大作战</div>
+          <div class="panel-subtitle">即时记录耗时 · 广告激励 · 抖音随开随玩</div>
+          <div class="home-hero">
+            <div class="hero-content">
+              <h1>轻触即玩，一次推箱刷新朋友圈记录</h1>
+              <p>
+                BoxRush
+                通过高饱和霓虹视觉、次时代 UI 以及毫秒级计时系统，让玩家可以在抖音小游戏中快速开局、沉浸闯关。完成一局即可自动提交成绩，冲榜体验顺滑。
+              </p>
+              <div class="hero-actions">
+                <button class="primary-btn" id="ctaStart">立即开玩</button>
+                <button class="ghost-btn" data-panel-link="rank">查看排行榜</button>
+              </div>
+              <div class="hero-metrics">
+                <div class="metric-card">
+                  <h3>450K+</h3>
+                  <p>日均挑战次数</p>
+                </div>
+                <div class="metric-card">
+                  <h3>00:32.481</h3>
+                  <p>当前世界纪录</p>
+                </div>
+                <div class="metric-card">
+                  <h3>98%</h3>
+                  <p>激励广告完成率</p>
+                </div>
+              </div>
             </div>
-            <div class="grid-board">
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile floor"></div>
-              <div class="tile floor"></div>
-              <div class="tile box"></div>
-              <div class="tile floor"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile floor"></div>
-              <div class="tile player"></div>
-              <div class="tile floor"></div>
-              <div class="tile target"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile floor"></div>
-              <div class="tile floor"></div>
-              <div class="tile floor"></div>
-              <div class="tile floor"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-              <div class="tile wall"></div>
-            </div>
-            <div class="hud-bottom">
-              <div class="joystick"></div>
-              <div class="actions">
-                <button class="round-btn gray">↺</button>
-                <button class="round-btn orange">提示</button>
+            <div class="phone-preview">
+              <div class="preview-shine"></div>
+              <div class="inner">
+                <div class="hud">
+                  <div>
+                    <div style="font-size: 12px; color: var(--muted)">计时</div>
+                    <strong>00:24</strong>
+                  </div>
+                  <div>
+                    <div style="font-size: 12px; color: var(--muted)">步数</div>
+                    <strong>14</strong>
+                  </div>
+                  <div>
+                    <div style="font-size: 12px; color: var(--muted)">撤销</div>
+                    <strong>1</strong>
+                  </div>
+                </div>
+                <div class="preview-grid">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <div class="control-pad" style="justify-content: space-between">
+                  <button>↺</button>
+                  <button>▶︎</button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <!-- Result Overlay -->
-      <section class="screen result-screen">
-        <h2>结算覆盖层</h2>
-        <div class="phone" style="background: #0f172a">
-          <div class="safe-area overlay">
-            <div>🎉 通关成功</div>
-            <div class="result-card">
-              <div class="stats">
-                <div>
-                  <strong>00:45</strong>
-                  <p>本次耗时</p>
+        <!-- PLAY -->
+        <section class="panel" data-panel-content="play">
+          <div class="panel-title">实时闯关</div>
+          <div class="panel-subtitle">方向键/WASD 控制，推动所有箱子到达目标点</div>
+          <div class="play-layout">
+            <div class="game-shell">
+              <div class="hud">
+                <div class="stat">
+                  <span>计时</span>
+                  <strong id="timer">00:00.000</strong>
                 </div>
-                <div>
-                  <strong>-03s</strong>
-                  <p>较最佳</p>
+                <div class="stat">
+                  <span>步数</span>
+                  <strong id="stepCount">0</strong>
                 </div>
-                <div>
-                  <strong>32 步</strong>
-                  <p>移动步数</p>
+                <div class="stat">
+                  <span>推箱</span>
+                  <strong id="pushCount">0</strong>
+                </div>
+                <div style="display: flex; gap: 8px">
+                  <button class="secondary-btn" id="undoBtn">撤销</button>
+                  <button class="secondary-btn" id="resetBtn">重开</button>
                 </div>
               </div>
-              <button class="primary-btn" style="background: #ff7b3f; color: #fff">
-                下一关
-              </button>
-              <button class="primary-btn" style="border: 2px solid #ff7b3f; background: transparent; color: #ff7b3f">
-                看广告领提示
-              </button>
+              <div id="gameGrid" class="game-grid" aria-label="推箱子棋盘"></div>
+              <div class="control-pad">
+                <button data-dir="up">↑</button>
+                <div style="display: flex; flex-direction: column; gap: 12px">
+                  <button data-dir="left">←</button>
+                  <button data-dir="down">↓</button>
+                  <button data-dir="right">→</button>
+                </div>
+                <button data-dir="undo">↺</button>
+              </div>
             </div>
-            <div class="leaderboard-peek">
-              前三名：TTV小伟 00:31 | 轩宝 00:34 | 旅人 00:36
+            <div class="play-sidebar">
+              <div class="info-card">
+                <h3>关卡：冰蓝矩阵 · L08</h3>
+                <p>
+                  目标：将 3 个箱子全部推入发光传送阵。墙面不可穿越，冰面会滑行，合理规划每一步。
+                </p>
+                <div class="action-row" style="margin-top: 12px">
+                  <span class="chip">支持键盘 / 触控</span>
+                  <span class="chip">可连续撤销 20 步</span>
+                </div>
+              </div>
+              <div class="info-card">
+                <h3>个人成绩</h3>
+                <p>
+                  最佳时间：<strong id="bestTime">--</strong><br />本周排名：第 <strong id="selfRank">42</strong> 位
+                </p>
+              </div>
+              <div class="info-card">
+                <h3>广告激励</h3>
+                <p>通关后观看 1 次广告可解锁下个章节预览，并获得额外提示机会。</p>
+                <button class="primary-btn" style="width: 100%; margin-top: 14px" id="fakeAdBtn">
+                  模拟观看广告
+                </button>
+                <small style="color: var(--muted)">（演示环境仅展示交互流程）</small>
+              </div>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <!-- Leaderboard -->
-      <section class="screen leaderboard-screen">
-        <h2>排行榜</h2>
-        <div class="phone">
-          <div class="safe-area">
-            <div class="leaderboard-tabs">
-              <div class="tab active">全服</div>
-              <div class="tab">好友</div>
-              <div class="tab">历史最佳</div>
-            </div>
-            <div class="leaderboard-list">
-              <div class="entry">
-                <div class="rank-badge rank-1">1</div>
-                <div>
-                  <strong>TTV小伟</strong>
-                  <div>level 08</div>
-                </div>
-                <div>00:31</div>
-              </div>
-              <div class="entry">
-                <div class="rank-badge rank-2">2</div>
-                <div>
-                  <strong>轩宝</strong>
-                  <div>level 08</div>
-                </div>
-                <div>00:34</div>
-              </div>
-              <div class="entry">
-                <div class="rank-badge rank-3">3</div>
-                <div>
-                  <strong>旅人</strong>
-                  <div>level 08</div>
-                </div>
-                <div>00:36</div>
-              </div>
-              <div class="entry highlight">
-                <div class="rank-badge">42</div>
-                <div>
-                  <strong>我自己</strong>
-                  <div>level 08</div>
-                </div>
-                <div>00:45</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
+        <!-- RANK -->
+        <section class="panel" data-panel-content="rank">
+          <div class="panel-title">极速榜单</div>
+          <div class="panel-subtitle">榜单每 5 分钟刷新一次，自动同步抖音游客 ID</div>
+          <div class="rank-grid" id="leaderboardList"></div>
+        </section>
+      </main>
     </div>
+
+    <div class="modal hidden" id="victoryModal">
+      <div class="modal-card">
+        <div style="font-size: 42px">🏁</div>
+        <h3>通关完成</h3>
+        <p style="color: var(--muted)">成绩已提交排行榜，继续刷新记录吧！</p>
+        <div class="stat-grid">
+          <div class="stat-tile">
+            <span>耗时</span>
+            <strong id="modalTime">00:00</strong>
+          </div>
+          <div class="stat-tile">
+            <span>步数</span>
+            <strong id="modalSteps">0</strong>
+          </div>
+          <div class="stat-tile">
+            <span>推箱</span>
+            <strong id="modalPush">0</strong>
+          </div>
+        </div>
+        <button class="primary-btn" id="nextRunBtn" style="width: 100%">再来一局</button>
+        <button class="ghost-btn" data-panel-link="rank" style="width: 100%; margin-top: 12px">
+          查看排行榜
+        </button>
+      </div>
+    </div>
+
+    <script>
+      // ---------- UI 切换 ----------
+      const panelButtons = document.querySelectorAll(".nav-btn");
+      const panels = document.querySelectorAll(".panel");
+
+      function activatePanel(id) {
+        panelButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.panel === id));
+        panels.forEach((panel) => panel.classList.toggle("active", panel.dataset.panelContent === id));
+      }
+
+      panelButtons.forEach((btn) =>
+        btn.addEventListener("click", () => {
+          activatePanel(btn.dataset.panel);
+          if (btn.dataset.panel === "play") startGame();
+        })
+      );
+
+      document.querySelectorAll("[data-panel-link]").forEach((btn) =>
+        btn.addEventListener("click", () => {
+          activatePanel(btn.dataset.panelLink);
+        })
+      );
+
+      document.getElementById("ctaStart").addEventListener("click", () => {
+        activatePanel("play");
+        startGame();
+      });
+
+      // ---------- 游戏核心 ----------
+      const blueprint = [
+        "##########",
+        "#..t.....#",
+        "#.###.##.#",
+        "#p.b..t..#",
+        "#..b.....#",
+        "#..t..##.#",
+        "#......t.#",
+        "##########"
+      ];
+
+      const state = {
+        width: blueprint[0].length,
+        height: blueprint.length,
+        player: { x: 0, y: 0 },
+        boxes: [],
+        targets: [],
+        history: [],
+        timer: null,
+        startTime: null,
+        elapsed: 0,
+        steps: 0,
+        pushes: 0,
+        finished: false
+      };
+
+      const boardBase = [];
+
+      function initBoard() {
+        state.boxes = [];
+        state.targets = [];
+        state.history = [];
+        state.steps = 0;
+        state.pushes = 0;
+        state.finished = false;
+        state.elapsed = 0;
+        boardBase.length = 0;
+
+        blueprint.forEach((row, y) => {
+          const baseRow = [];
+          row.split("").forEach((cell, x) => {
+            switch (cell) {
+              case "#":
+                baseRow.push("wall");
+                break;
+              case "t":
+                baseRow.push("target");
+                state.targets.push({ x, y });
+                break;
+              case "p":
+                baseRow.push("floor");
+                state.player = { x, y };
+                break;
+              case "b":
+                baseRow.push("floor");
+                state.boxes.push({ x, y });
+                break;
+              default:
+                baseRow.push("floor");
+            }
+          });
+          boardBase.push(baseRow);
+        });
+      }
+
+      const gridEl = document.getElementById("gameGrid");
+
+      function renderGrid() {
+        gridEl.innerHTML = "";
+        gridEl.style.setProperty("grid-template-columns", `repeat(${state.width}, minmax(0, 1fr))`);
+
+        for (let y = 0; y < state.height; y++) {
+          for (let x = 0; x < state.width; x++) {
+            const tile = document.createElement("div");
+            const base = boardBase[y][x];
+            tile.className = `tile ${base === "wall" ? "wall" : "floor"} ${base === "target" ? "target" : ""}`;
+
+            if (state.targets.some((t) => t.x === x && t.y === y)) {
+              tile.classList.add("glow");
+            }
+            if (state.boxes.some((b) => b.x === x && b.y === y)) {
+              tile.classList.add("box");
+            }
+            if (state.player.x === x && state.player.y === y) {
+              tile.classList.add("player");
+            }
+
+            gridEl.appendChild(tile);
+          }
+        }
+        updateStats();
+      }
+
+      function isWall(x, y) {
+        return boardBase[y][x] === "wall";
+      }
+      function isInside(x, y) {
+        return x >= 0 && x < state.width && y >= 0 && y < state.height;
+      }
+      function boxIndexAt(x, y) {
+        return state.boxes.findIndex((b) => b.x === x && b.y === y);
+      }
+
+      const historyLimit = 30;
+
+      function pushHistory() {
+        state.history.push({
+          player: { ...state.player },
+          boxes: state.boxes.map((b) => ({ ...b })),
+          steps: state.steps,
+          pushes: state.pushes,
+          elapsed: state.elapsed
+        });
+        if (state.history.length > historyLimit) state.history.shift();
+      }
+
+      function undoMove() {
+        const snapshot = state.history.pop();
+        if (!snapshot) return;
+        state.player = snapshot.player;
+        state.boxes = snapshot.boxes;
+        state.steps = snapshot.steps;
+        state.pushes = snapshot.pushes;
+        state.elapsed = snapshot.elapsed;
+        state.finished = false;
+        renderGrid();
+      }
+
+      function movePlayer(dx, dy) {
+        if (state.finished) return;
+        if (!state.startTime) startTimer();
+        const nextX = state.player.x + dx;
+        const nextY = state.player.y + dy;
+        if (!isInside(nextX, nextY) || isWall(nextX, nextY)) return;
+
+        const boxIdx = boxIndexAt(nextX, nextY);
+        pushHistory();
+
+        if (boxIdx > -1) {
+          const pushX = nextX + dx;
+          const pushY = nextY + dy;
+          if (!isInside(pushX, pushY) || isWall(pushX, pushY) || boxIndexAt(pushX, pushY) > -1) {
+            state.history.pop();
+            return;
+          }
+          state.boxes[boxIdx] = { x: pushX, y: pushY };
+          state.pushes += 1;
+        }
+
+        state.player = { x: nextX, y: nextY };
+        state.steps += 1;
+        renderGrid();
+        if (isWin()) handleWin();
+      }
+
+      function isWin() {
+        return state.targets.every((t) => boxIndexAt(t.x, t.y) > -1);
+      }
+
+      // ---------- 计时 ----------
+      function startTimer() {
+        clearInterval(state.timer);
+        state.startTime = performance.now() - state.elapsed;
+        state.timer = setInterval(() => {
+          state.elapsed = performance.now() - state.startTime;
+          updateStats();
+        }, 32);
+      }
+
+      function stopTimer() {
+        clearInterval(state.timer);
+        state.timer = null;
+      }
+
+      function formatTime(ms) {
+        const seconds = Math.floor(ms / 1000);
+        const minutes = Math.floor(seconds / 60);
+        const remainder = seconds % 60;
+        const milliseconds = Math.floor(ms % 1000)
+          .toString()
+          .padStart(3, "0");
+        return `${minutes.toString().padStart(2, "0")}:${remainder.toString().padStart(2, "0")}.${milliseconds}`;
+      }
+
+      function updateStats() {
+        document.getElementById("timer").textContent = formatTime(state.elapsed);
+        document.getElementById("stepCount").textContent = state.steps;
+        document.getElementById("pushCount").textContent = state.pushes;
+      }
+
+      let personalBest = null;
+      function updateBest(time) {
+        if (!personalBest || time < personalBest) {
+          personalBest = time;
+          document.getElementById("bestTime").textContent = formatTime(personalBest);
+        }
+      }
+
+      // ---------- 胜利 ----------
+      const modal = document.getElementById("victoryModal");
+      function handleWin() {
+        state.finished = true;
+        stopTimer();
+        updateBest(state.elapsed);
+        document.getElementById("modalTime").textContent = formatTime(state.elapsed);
+        document.getElementById("modalSteps").textContent = state.steps;
+        document.getElementById("modalPush").textContent = state.pushes;
+        modal.classList.remove("hidden");
+        appendLeaderboardEntry("游客-我的手速", state.elapsed, "L08");
+      }
+
+      document.getElementById("nextRunBtn").addEventListener("click", () => {
+        modal.classList.add("hidden");
+        startGame();
+      });
+
+      modal.addEventListener("click", (event) => {
+        if (event.target === modal) modal.classList.add("hidden");
+      });
+
+      // ---------- 交互绑定 ----------
+      document.getElementById("undoBtn").addEventListener("click", undoMove);
+      document.getElementById("resetBtn").addEventListener("click", startGame);
+
+      document.querySelectorAll(".control-pad button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const dir = btn.dataset.dir;
+          const map = {
+            up: { dx: 0, dy: -1 },
+            down: { dx: 0, dy: 1 },
+            left: { dx: -1, dy: 0 },
+            right: { dx: 1, dy: 0 }
+          };
+          if (dir === "undo") undoMove();
+          else if (map[dir]) movePlayer(map[dir].dx, map[dir].dy);
+        });
+      });
+
+      document.addEventListener("keydown", (event) => {
+        const activePlay = document.querySelector('[data-panel-content="play"]').classList.contains("active");
+        if (!activePlay) return;
+        const keyMap = {
+          ArrowUp: { dx: 0, dy: -1 },
+          ArrowDown: { dx: 0, dy: 1 },
+          ArrowLeft: { dx: -1, dy: 0 },
+          ArrowRight: { dx: 1, dy: 0 },
+          w: { dx: 0, dy: -1 },
+          s: { dx: 0, dy: 1 },
+          a: { dx: -1, dy: 0 },
+          d: { dx: 1, dy: 0 }
+        };
+        if (keyMap[event.key]) {
+          event.preventDefault();
+          movePlayer(keyMap[event.key].dx, keyMap[event.key].dy);
+        } else if (event.key === "z") {
+          undoMove();
+        } else if (event.key === "r") {
+          startGame();
+        }
+      });
+
+      // ---------- 排行榜 ----------
+      const leaderboardList = document.getElementById("leaderboardList");
+      const leaderboardData = [
+        { name: "TTV 小伟", time: 32481, level: "L09", city: "长沙" },
+        { name: "旅人 77", time: 34639, level: "L10", city: "成都" },
+        { name: "轩宝", time: 36212, level: "L08", city: "青岛" },
+        { name: "无影脚", time: 38504, level: "L07", city: "哈尔滨" },
+        { name: "复古像素猫", time: 39480, level: "L12", city: "北京" },
+        { name: "星驰", time: 40112, level: "L11", city: "上海" },
+        { name: "我的手速", time: 45211, level: "L08", city: "深圳", self: true }
+      ];
+
+      function renderLeaderboard() {
+        const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        leaderboardList.innerHTML = leaderboardData
+          .sort((a, b) => a.time - b.time)
+          .map(
+            (entry, idx) => `
+            <article class="rank-card ${entry.self ? "self" : ""}">
+              <div class="rank-header">
+                <div class="rank-num">${(idx + 1).toString().padStart(2, "0")}</div>
+                <div>
+                  <div class="rank-name">${entry.name}</div>
+                  <small style="color:${entry.self ? "var(--brand)" : "var(--muted)"}">
+                    ${entry.city} · ${entry.level}
+                  </small>
+                </div>
+              </div>
+              <div class="rank-time">${formatTime(entry.time)}</div>
+              <div class="rank-footer">
+                <span>最后更新：${now}</span>
+                <span>${entry.self ? "我的记录" : "抖音游客"}</span>
+              </div>
+            </article>
+          `
+          )
+          .join("");
+      }
+
+      function appendLeaderboardEntry(name, time, level) {
+        leaderboardData.push({ name, time, level, city: "在线", self: true });
+        leaderboardData.forEach((entry) => {
+          if (entry.name !== name) entry.self = false;
+        });
+        const rank =
+          leaderboardData
+            .sort((a, b) => a.time - b.time)
+            .findIndex((entry) => entry.name === name && entry.time === time) + 1;
+        document.getElementById("selfRank").textContent = rank;
+        renderLeaderboard();
+      }
+
+      // ---------- 假广告流程 ----------
+      document.getElementById("fakeAdBtn").addEventListener("click", (event) => {
+        const btn = event.currentTarget;
+        btn.disabled = true;
+        const prevText = btn.textContent;
+        btn.textContent = "播放中...";
+        setTimeout(() => {
+          btn.textContent = "奖励已发放";
+          btn.style.background = "linear-gradient(120deg, var(--accent), #2ec4b6)";
+          setTimeout(() => {
+            btn.disabled = false;
+            btn.textContent = prevText;
+            btn.style.background = "";
+          }, 2500);
+        }, 1800);
+      });
+
+      // ---------- 初始化 ----------
+      function startGame() {
+        modal.classList.add("hidden");
+        stopTimer();
+        state.startTime = null;
+        initBoard();
+        renderGrid();
+      }
+
+      renderLeaderboard();
+      startGame();
+    </script>
   </body>
 </html>
