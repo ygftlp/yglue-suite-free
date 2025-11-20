@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>推箱子小游戏界面布局示意</title>
+    <style>
+      :root {
+        font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+        color: #1b2a41;
+        background: #eef3fb;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 40px;
+      }
+      h1 {
+        text-align: center;
+        margin-bottom: 32px;
+        font-size: 28px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        gap: 32px;
+      }
+      .screen {
+        background: #ffffff;
+        border-radius: 24px;
+        padding: 16px;
+        box-shadow: 0 20px 40px rgba(30, 60, 120, 0.15);
+      }
+      .screen h2 {
+        margin: 0 0 12px;
+        font-size: 20px;
+      }
+      .phone {
+        width: 100%;
+        aspect-ratio: 9 / 16;
+        border-radius: 32px;
+        padding: 16px;
+        background: linear-gradient(180deg, #f6f8fb 0%, #d8e8ff 100%);
+        position: relative;
+        overflow: hidden;
+      }
+      .safe-area {
+        width: 100%;
+        height: 100%;
+        border-radius: 24px;
+        padding: 12px;
+        position: relative;
+      }
+      .top-bar,
+      .bottom-nav,
+      .hud-top,
+      .hud-bottom,
+      .result-card,
+      .leaderboard-tabs,
+      .leaderboard-list {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-radius: 16px;
+      }
+      .top-bar {
+        background: rgba(255, 255, 255, 0.85);
+        padding: 12px 16px;
+        font-weight: 600;
+        color: #334;
+      }
+      .top-bar .actions {
+        display: flex;
+        gap: 12px;
+        font-size: 14px;
+      }
+      .main-card {
+        margin: 16px 0;
+        background: #fff;
+        border-radius: 24px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .main-illustration {
+        flex: 1;
+        background: repeating-linear-gradient(
+            45deg,
+            #e6eefc,
+            #e6eefc 12px,
+            #cedff8 12px,
+            #cedff8 24px
+          ),
+          url("data:image/svg+xml,%3Csvg width='120' height='120' viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='120' height='120' fill='none' stroke='%234265c1' stroke-opacity='0.1' stroke-width='2'/%3E%3C/svg%3E");
+        border-radius: 16px;
+      }
+      .cta-row {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .btn {
+        border: none;
+        border-radius: 16px;
+        padding: 12px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .btn-primary {
+        background: #ff7b3f;
+        color: #fff;
+      }
+      .btn-secondary {
+        background: transparent;
+        color: #ff7b3f;
+        border: 2px solid #ff7b3f;
+      }
+      .bottom-nav {
+        background: rgba(255, 255, 255, 0.92);
+        padding: 10px 12px;
+        gap: 12px;
+      }
+      .nav-item {
+        flex: 1;
+        padding: 10px;
+        border-radius: 12px;
+        text-align: center;
+        font-size: 12px;
+        background: rgba(255, 255, 255, 0.6);
+        color: #4a5b7c;
+      }
+      .nav-item.active {
+        background: #ffebd6;
+        color: #ff7b3f;
+        font-weight: 600;
+      }
+      /* Game HUD */
+      .hud-top,
+      .hud-bottom {
+        background: rgba(16, 26, 46, 0.75);
+        color: #f2f5ff;
+        padding: 10px 14px;
+      }
+      .hud-top {
+        font-size: 14px;
+      }
+      .grid-board {
+        margin: 12px 0;
+        flex: 1;
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 4px;
+        background: #99a9c2;
+        padding: 8px;
+        border-radius: 16px;
+      }
+      .tile {
+        width: 100%;
+        aspect-ratio: 1;
+        border-radius: 6px;
+      }
+      .tile.wall {
+        background: #1f3658;
+      }
+      .tile.floor {
+        background: #dfe8fb;
+      }
+      .tile.target {
+        background: radial-gradient(circle, #ffe8d6 40%, #f5c099 90%);
+      }
+      .tile.box {
+        background: #f68f4b;
+        border: 4px solid #c96a26;
+      }
+      .tile.player {
+        background: #4cc3c7;
+        border: 4px solid #1a8c8f;
+      }
+      .hud-bottom {
+        justify-content: space-between;
+        font-size: 12px;
+      }
+      .joystick {
+        width: 70px;
+        height: 70px;
+        border-radius: 50%;
+        border: 2px dashed rgba(255, 255, 255, 0.6);
+      }
+      .actions {
+        display: flex;
+        gap: 10px;
+      }
+      .round-btn {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        border: none;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .round-btn.orange {
+        background: #ff7b3f;
+        color: #fff;
+      }
+      .round-btn.gray {
+        background: #d4dae6;
+        color: #334;
+      }
+      /* Result overlay */
+      .overlay {
+        background: linear-gradient(180deg, rgba(9, 17, 39, 0.8), rgba(30, 54, 96, 0.9));
+        padding: 20px;
+        border-radius: 24px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        gap: 16px;
+        color: #fff;
+      }
+      .result-card {
+        flex-direction: column;
+        gap: 12px;
+        background: #fff;
+        padding: 20px;
+        color: #1b2a41;
+        width: 100%;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        text-align: center;
+      }
+      .primary-btn {
+        width: 100%;
+        padding: 12px;
+        border-radius: 14px;
+        border: none;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .leaderboard-peek {
+        width: 100%;
+        background: rgba(255, 255, 255, 0.1);
+        padding: 12px;
+        border-radius: 18px;
+      }
+      /* Leaderboard */
+      .leaderboard-screen .phone {
+        background: url("data:image/svg+xml,%3Csvg width='8' height='8' viewBox='0 0 8 8' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 0h4v4H0zM4 4h4v4H4z' fill='%23bcd1ff' fill-opacity='0.4'/%3E%3C/svg%3E"),
+          rgba(46, 72, 130, 0.8);
+      }
+      .leaderboard-screen .safe-area {
+        backdrop-filter: blur(8px);
+        background: rgba(255, 255, 255, 0.15);
+        color: #fff;
+      }
+      .leaderboard-tabs {
+        gap: 8px;
+        background: rgba(255, 255, 255, 0.2);
+        padding: 6px;
+      }
+      .tab {
+        flex: 1;
+        text-align: center;
+        padding: 8px;
+        border-radius: 12px;
+        font-size: 13px;
+      }
+      .tab.active {
+        background: #ff7b3f;
+      }
+      .leaderboard-list {
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .entry {
+        display: grid;
+        grid-template-columns: 48px 1fr 70px;
+        padding: 10px;
+        background: rgba(255, 255, 255, 0.18);
+        border-radius: 14px;
+        align-items: center;
+        font-size: 13px;
+      }
+      .entry.highlight {
+        background: rgba(255, 123, 63, 0.5);
+      }
+      .rank-badge {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+      }
+      .rank-1 {
+        background: #ffd166;
+        color: #a15c00;
+      }
+      .rank-2 {
+        background: #d2ddeb;
+        color: #5b6480;
+      }
+      .rank-3 {
+        background: #f3bba7;
+        color: #703617;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>推箱子小游戏界面布局示意</h1>
+    <div class="grid">
+      <!-- Lobby -->
+      <section class="screen lobby-screen">
+        <h2>大厅 Lobby</h2>
+        <div class="phone">
+          <div class="safe-area">
+            <div class="top-bar">
+              <span>Box Rush</span>
+              <div class="actions">
+                <span>⚙ 设置</span>
+                <span>🔊</span>
+              </div>
+            </div>
+            <div class="main-card">
+              <div class="main-illustration"></div>
+              <div class="cta-row">
+                <button class="btn btn-primary">开始</button>
+                <button class="btn btn-secondary">排行榜</button>
+              </div>
+            </div>
+            <div class="bottom-nav">
+              <div class="nav-item active">关卡</div>
+              <div class="nav-item">自我挑战</div>
+              <div class="nav-item">广告奖励</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Game HUD -->
+      <section class="screen game-screen">
+        <h2>游戏内 HUD</h2>
+        <div class="phone" style="background: #263657">
+          <div class="safe-area">
+            <div class="hud-top">
+              <div>计时 00:32</div>
+              <div>步数 18 | 撤销 2</div>
+              <div>⏸ ⟳</div>
+            </div>
+            <div class="grid-board">
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile floor"></div>
+              <div class="tile floor"></div>
+              <div class="tile box"></div>
+              <div class="tile floor"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile floor"></div>
+              <div class="tile player"></div>
+              <div class="tile floor"></div>
+              <div class="tile target"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile floor"></div>
+              <div class="tile floor"></div>
+              <div class="tile floor"></div>
+              <div class="tile floor"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+              <div class="tile wall"></div>
+            </div>
+            <div class="hud-bottom">
+              <div class="joystick"></div>
+              <div class="actions">
+                <button class="round-btn gray">↺</button>
+                <button class="round-btn orange">提示</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Result Overlay -->
+      <section class="screen result-screen">
+        <h2>结算覆盖层</h2>
+        <div class="phone" style="background: #0f172a">
+          <div class="safe-area overlay">
+            <div>🎉 通关成功</div>
+            <div class="result-card">
+              <div class="stats">
+                <div>
+                  <strong>00:45</strong>
+                  <p>本次耗时</p>
+                </div>
+                <div>
+                  <strong>-03s</strong>
+                  <p>较最佳</p>
+                </div>
+                <div>
+                  <strong>32 步</strong>
+                  <p>移动步数</p>
+                </div>
+              </div>
+              <button class="primary-btn" style="background: #ff7b3f; color: #fff">
+                下一关
+              </button>
+              <button class="primary-btn" style="border: 2px solid #ff7b3f; background: transparent; color: #ff7b3f">
+                看广告领提示
+              </button>
+            </div>
+            <div class="leaderboard-peek">
+              前三名：TTV小伟 00:31 | 轩宝 00:34 | 旅人 00:36
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Leaderboard -->
+      <section class="screen leaderboard-screen">
+        <h2>排行榜</h2>
+        <div class="phone">
+          <div class="safe-area">
+            <div class="leaderboard-tabs">
+              <div class="tab active">全服</div>
+              <div class="tab">好友</div>
+              <div class="tab">历史最佳</div>
+            </div>
+            <div class="leaderboard-list">
+              <div class="entry">
+                <div class="rank-badge rank-1">1</div>
+                <div>
+                  <strong>TTV小伟</strong>
+                  <div>level 08</div>
+                </div>
+                <div>00:31</div>
+              </div>
+              <div class="entry">
+                <div class="rank-badge rank-2">2</div>
+                <div>
+                  <strong>轩宝</strong>
+                  <div>level 08</div>
+                </div>
+                <div>00:34</div>
+              </div>
+              <div class="entry">
+                <div class="rank-badge rank-3">3</div>
+                <div>
+                  <strong>旅人</strong>
+                  <div>level 08</div>
+                </div>
+                <div>00:36</div>
+              </div>
+              <div class="entry highlight">
+                <div class="rank-badge">42</div>
+                <div>
+                  <strong>我自己</strong>
+                  <div>level 08</div>
+                </div>
+                <div>00:45</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>
