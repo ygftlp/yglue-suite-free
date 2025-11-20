@@ -106,14 +106,23 @@ export function normalizeEntrypoint(input?: Partial<FlowEntrypoint> | null): Flo
   const path = (input.path || "").trim()
   if (!path) return null
   const method = (input.method || "").trim().toUpperCase()
-  const requestSchema =
-    typeof input.requestSchema === "string" ? input.requestSchema : input.requestSchema ? JSON.stringify(input.requestSchema) : null
+  // 统一使用 requestSchemaJson 命名
+  const requestSchemaJson =
+    typeof input.requestSchemaJson === "string" 
+      ? input.requestSchemaJson 
+      : input.requestSchemaJson 
+        ? JSON.stringify(input.requestSchemaJson) 
+        : (typeof (input as any).requestSchema === "string" 
+            ? (input as any).requestSchema 
+            : (input as any).requestSchema 
+              ? JSON.stringify((input as any).requestSchema) 
+              : null)
   return {
     path,
     method,
     replaceResponse: Boolean(input.replaceResponse),
     enabled: input.enabled !== false,
-    requestSchema: requestSchema ?? null,
+    requestSchemaJson: requestSchemaJson ?? null,
   }
 }
 
@@ -124,7 +133,7 @@ export function serializeEntrypointPayload(entrypoint: FlowEntrypoint | null) {
     method: entrypoint.method || null,
     replaceResponse: Boolean(entrypoint.replaceResponse),
     enabled: entrypoint.enabled !== false,
-    requestSchema: entrypoint.requestSchema ?? null,
+    requestSchemaJson: entrypoint.requestSchemaJson ?? null,
   }
 }
 

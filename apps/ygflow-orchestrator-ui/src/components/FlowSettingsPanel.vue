@@ -61,7 +61,7 @@ function closePanel() {
 }
 
 function createEntrypoint(): FlowEntrypoint {
-  return { path: "", method: "GET", replaceResponse: false, enabled: true, requestSchema: null }
+  return { path: "", method: "GET", replaceResponse: false, enabled: true, requestSchemaJson: null }
 }
 
 function toggleEntrypoint(enabled: boolean) {

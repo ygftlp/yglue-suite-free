@@ -48,7 +48,7 @@ public class FlowEntryPointService {
             entry.setFlowCode(flowCode);
             entry.setPath(normalizePath(request.getPath()));
             entry.setHttpMethod(normalizeMethod(request.getMethod()));
-            entry.setRequestSchemaJson(normalizeSchemaJson(request.getRequestSchema()));
+            entry.setRequestSchemaJson(normalizeSchemaJson(request.getRequestSchemaJson()));
             entry.setReplaceResponse(request.getReplaceResponse() == null
                     ? Boolean.TRUE
                     : request.getReplaceResponse());
@@ -60,7 +60,7 @@ public class FlowEntryPointService {
         } else {
             existing.setPath(normalizePath(request.getPath()));
             existing.setHttpMethod(normalizeMethod(request.getMethod()));
-            existing.setRequestSchemaJson(normalizeSchemaJson(request.getRequestSchema()));
+            existing.setRequestSchemaJson(normalizeSchemaJson(request.getRequestSchemaJson()));
             existing.setReplaceResponse(request.getReplaceResponse() == null
                     ? Boolean.TRUE
                     : request.getReplaceResponse());
@@ -74,6 +74,15 @@ public class FlowEntryPointService {
     public List<FlowEntryPoint> listByProject(String projectKey) {
         Project project = projectService.requireProject(projectKey);
         return new ArrayList<>(mapper.selectByProject(project.getId()));
+    }
+
+    public FlowEntryPoint getByProjectAndFlow(String projectKey, String flowCode) {
+        Project project = projectService.requireProject(projectKey);
+        FlowEntryPoint entryPoint = mapper.selectByProjectAndFlow(project.getId(), flowCode);
+        if (entryPoint != null && (entryPoint.getDelFlag() == null || entryPoint.getDelFlag() == 0)) {
+            return entryPoint;
+        }
+        return null;
     }
 
     @Transactional

@@ -60,12 +60,28 @@ public class RestEntryPointResponse {
         this.flowCode = flowCode;
     }
 
-    public String getRequestSchema() {
-        return requestSchema;
+    public String getRequestSchemaJson() {
+        return requestSchemaJson;
     }
 
+    public void setRequestSchemaJson(String requestSchemaJson) {
+        this.requestSchemaJson = requestSchemaJson;
+    }
+
+    /**
+     * @deprecated use {@link #getRequestSchemaJson()} instead.
+     */
+    @Deprecated
+    public String getRequestSchema() {
+        return requestSchemaJson;
+    }
+
+    /**
+     * @deprecated use {@link #setRequestSchemaJson(String)} instead.
+     */
+    @Deprecated
     public void setRequestSchema(String requestSchema) {
-        this.requestSchema = requestSchema;
+        this.requestSchemaJson = requestSchema;
     }
 
     /**

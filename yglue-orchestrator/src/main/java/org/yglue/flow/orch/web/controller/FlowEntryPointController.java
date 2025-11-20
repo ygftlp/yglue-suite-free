@@ -35,6 +35,16 @@ public class FlowEntryPointController {
         return new EntryPointsResponse(rests);
     }
 
+    @GetMapping("/flows/{flowCode}")
+    public RestEntryPointResponse getByFlowCode(@PathVariable("projectKey") String projectKey,
+                                                 @PathVariable("flowCode") String flowCode) {
+        FlowEntryPoint entryPoint = flowEntryPointService.getByProjectAndFlow(projectKey, flowCode);
+        if (entryPoint == null) {
+            return null;
+        }
+        return toResponse(entryPoint);
+    }
+
     @PatchMapping("/{entrypointId}")
     public RestEntryPointResponse toggle(@PathVariable("projectKey") String projectKey,
                                          @PathVariable("entrypointId") Long entrypointId,

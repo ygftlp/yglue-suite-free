@@ -48,9 +48,10 @@ public class FlowLoader {
      * 解析流程定义
      * 支持两种格式：
      * 1. 旧格式：{ "vars": {...}, "steps": [...] }
-     * 2. 新格式：{ "nodes": [...], "edges": [...] } （前端保存的格式）
+     * 2. 新格式：{ "nodes": [...], "edges": [...], "settings": {...} } （前端保存的格式）
      * 
      * 对于新格式，会根据 edges 对节点进行拓扑排序，确保执行顺序正确
+     * settings 中包含 logPolicy 等配置信息（注意：entrypoint 不在此处，存储在 FlowEntryPoint 表中）
      * 
      * @param ruleId 规则ID
      * @param root JSON根节点
@@ -59,6 +60,14 @@ public class FlowLoader {
     public FlowDefinition parse(String ruleId, JsonNode root) {
         Map<String, Object> vars = JsonUtils.toMap(root.path("vars"));
         List<NodeDefinition> nodes = new ArrayList<>();
+        Map<String, Object> settings = JsonUtils.toMap(root.path("settings"));
+        
+        // 从 settings 中移除 entrypoint（如果存在），entrypoint 存储在 FlowEntryPoint 表中
+        if (settings.containsKey("entrypoint")) {
+            Map<String, Object> settingsWithoutEntrypoint = new LinkedHashMap<>(settings);
+            settingsWithoutEntrypoint.remove("entrypoint");
+            settings = settingsWithoutEntrypoint;
+        }
         
         // 优先使用 steps 字段（旧格式）
         JsonNode steps = root.path("steps");
@@ -67,6 +76,7 @@ public class FlowLoader {
             for (JsonNode node : steps) {
                 nodes.add(parseNode(ruleId, index++, node));
             }
+            return new FlowDefinition(ruleId, vars, nodes, null, settings);
         } else {
             // 如果没有 steps，尝试使用 nodes 字段（新格式，前端保存的格式）
             JsonNode nodesArray = root.path("nodes");
@@ -96,12 +106,12 @@ public class FlowLoader {
                     nodes = new ArrayList<>(nodeMap.values());
                 }
                 
-                // 返回包含 edges 的 FlowDefinition
-                return new FlowDefinition(ruleId, vars, nodes, edges);
+                // 返回包含 edges 和 settings 的 FlowDefinition
+                return new FlowDefinition(ruleId, vars, nodes, edges, settings);
             }
         }
         
-        return new FlowDefinition(ruleId, vars, nodes);
+        return new FlowDefinition(ruleId, vars, nodes, null, settings);
     }
     
     /**

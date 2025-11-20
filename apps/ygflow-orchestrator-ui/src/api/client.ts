@@ -122,7 +122,7 @@ export interface FlowSavePayload {
 export interface FlowEntrypointPayload {
   path: string
   method?: string | null
-  requestSchema?: string | null
+  requestSchemaJson?: string | null
   replaceResponse?: boolean
   enabled?: boolean
   flowCode?: string | null
@@ -393,6 +393,12 @@ export const api = {
   listFlowVersions(projectKey: string, flowCode: string): Promise<FlowVersion[]> {
     return request<FlowVersion[]>(
       `/projects/${encodeURIComponent(projectKey)}/flows/${encodeURIComponent(flowCode)}/versions`
+    )
+  },
+
+  getFlowEntrypoint(projectKey: string, flowCode: string): Promise<FlowEntrypointPayload | null> {
+    return request<FlowEntrypointPayload | null>(
+      `/projects/${encodeURIComponent(projectKey)}/entrypoints/flows/${encodeURIComponent(flowCode)}`
     )
   },
 

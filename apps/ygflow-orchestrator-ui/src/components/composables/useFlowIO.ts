@@ -63,10 +63,13 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
     flowState.setGraph(loadedNodes, loadedEdges)
     const defaults = createDefaultFlowSettings()
     const loadedSettings = payload.settings && typeof payload.settings === "object" ? payload.settings : {}
+    // 从 settings 中移除 entrypoint（如果存在），entrypoint 从 FlowEntryPoint 表加载
+    const { entrypoint: _, ...settingsWithoutEntrypoint } = loadedSettings as FlowSettings
     flowSettings.value = {
       ...defaults,
-      ...loadedSettings,
+      ...settingsWithoutEntrypoint,
       code: (loadedSettings as FlowSettings).code || flowCode || defaults.code,
+      entrypoint: null, // entrypoint 从 FlowEntryPoint 表单独加载
     }
     applyEntrypointHintIfNeeded()
     if (!flowSettings.value.name) {
@@ -96,6 +99,17 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
         return
       }
       applyLoadedVersion(versions[0], code)
+      
+      // 从 FlowEntryPoint 表加载 entrypoint
+      try {
+        const entrypoint = await api.getFlowEntrypoint(props.projectKey, code)
+        if (entrypoint) {
+          flowSettings.value.entrypoint = normalizeEntrypoint(entrypoint)
+        }
+      } catch (err) {
+        // 如果 entrypoint 不存在，忽略错误（可能还没有发布过）
+        console.debug("未找到 entrypoint:", err)
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : ""
       if (message.includes("404")) {
@@ -149,7 +163,9 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
       window.alert("事务节点需要成对存在，请检查是否缺少开始或结束节点")
       return
     }
+    // 清理节点数据：移除 UI 相关字段（position 等）
     const normalizedNodes = flowState.nodes.value.map((node: any) => {
+      const { position, ...nodeWithoutPosition } = node
       const data = node.data ? { ...node.data } : {}
       if (data.inputs) {
         data.inputs = data.inputs.map((input: any) => ({
@@ -179,19 +195,27 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
           contextKey: data.output.contextKey || generateContextKey(),
         }
       }
-      return { ...node, data }
+      return { ...nodeWithoutPosition, data }
     })
+    
+    // 清理边数据：移除 UI 相关字段
+    const normalizedEdges = flowState.edges.value.map((edge: any) => {
+      const { sourcePosition, targetPosition, ...edgeWithoutUI } = edge
+      return edgeWithoutUI
+    })
+    
     flowSettings.value.code = code
     flowSettings.value.name = name
-    const normalizedEntrypoint = normalizeEntrypoint(flowSettings.value.entrypoint)
-    flowSettings.value.entrypoint = normalizedEntrypoint ?? null
+    
+    // 从 settings 中移除 entrypoint，entrypoint 只存储在 FlowEntryPoint 表中
+    const { entrypoint, ...settingsWithoutEntrypoint } = flowSettings.value
     const payload = {
       code,
       name,
       contentJson: JSON.stringify({
         nodes: normalizedNodes,
-        edges: flowState.edges.value,
-        settings: { ...flowSettings.value, code, name, entrypoint: normalizedEntrypoint },
+        edges: normalizedEdges,
+        settings: { ...settingsWithoutEntrypoint, code, name },
       }),
       createdBy: flowSettings.value.owner?.trim() || undefined,
     }

@@ -16,7 +16,7 @@ export type FlowEntrypoint = {
   method: string
   replaceResponse: boolean
   enabled?: boolean
-  requestSchema?: string | null
+  requestSchemaJson?: string | null
 }
 
 export type FlowSettings = {
