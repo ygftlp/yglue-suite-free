@@ -33,13 +33,21 @@ public class LiteFlowRuleEngine {
      */
     private final Map<String, FlowDefinition> definitionCache = new ConcurrentHashMap<>();
 
+    /**
+     * 构造函数
+     * 
+     * @param applicationContext Spring 应用上下文（已废弃，不再使用）
+     * @param liteFlowExecutor LiteFlow 执行器
+     * @param eventBus 事件总线（已废弃，不再使用）
+     * @param reloadOnExecution 是否在执行时重新加载规则
+     */
     public LiteFlowRuleEngine(ApplicationContext applicationContext,
                               FlowExecutor liteFlowExecutor,
                               EventBus eventBus,
                               boolean reloadOnExecution) {
         this.loader = new FlowLoader();
         this.liteFlowExecutor = liteFlowExecutor;
-        this.converter = new FlowDefinitionToLiteFlowConverter(applicationContext);
+        this.converter = new FlowDefinitionToLiteFlowConverter();
         this.reloadOnExecution = reloadOnExecution;
     }
 

@@ -14,8 +14,14 @@ import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.yglue.flow.runtime.RuleEngine;
 import org.yglue.flow.runtime.core.ExecutionInterceptor;
+import org.yglue.flow.runtime.core.NodeExecutor;
+import org.yglue.flow.runtime.core.NodeExecutorRegistry;
+import org.yglue.flow.runtime.core.executors.*;
 import org.yglue.flow.runtime.events.EventBus;
 import org.yglue.flow.runtime.interceptors.LoggingInterceptor;
+import org.yglue.flow.runtime.rest.BeanRestInvocationStrategy;
+import org.yglue.flow.runtime.rest.HttpRestInvocationStrategy;
+import org.yglue.flow.runtime.rest.RestInvocationRegistry;
 
 import java.util.List;
 
@@ -80,10 +86,33 @@ public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
 
     @Bean
     @ConditionalOnMissingBean
+    public NodeExecutorRegistry nodeExecutorRegistry(ApplicationContext applicationContext) {
+        ServiceNodeExecutor serviceExecutor = new ServiceNodeExecutor(applicationContext);
+        NodeExecutorRegistry registry = new NodeExecutorRegistry()
+                .register("log", new LogNodeExecutor())
+                .register("delay", new DelayNodeExecutor())
+                .register("set", new SetNodeExecutor())
+                .register("if", new IfNodeExecutor())
+                .register("branch", new BranchNodeExecutor())
+                .register("call", new CallNodeExecutor(applicationContext))
+                .register("transformer", new TransformerNodeExecutor())
+                .register("service", serviceExecutor);
+        
+        RestInvocationRegistry restRegistry = new RestInvocationRegistry()
+                .register(new BeanRestInvocationStrategy())
+                .register(new HttpRestInvocationStrategy());
+        
+        registry.register("rest", new RestNodeExecutor(restRegistry, applicationContext));
+        
+        return registry;
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public FlowOrchestratedAspect flowOrchestratedAspect(RuleEngine ruleEngine,
-                                                          ObjectMapper objectMapper,
-                                                          RequestSchemaValidator requestSchemaValidator,
-                                                          RestEntryPointRegistry entryPointRegistry) {
+                                                      ObjectMapper objectMapper,
+                                                      RequestSchemaValidator requestSchemaValidator,
+                                                      RestEntryPointRegistry entryPointRegistry) {
         return new FlowOrchestratedAspect(ruleEngine, objectMapper, requestSchemaValidator, entryPointRegistry);
     }
 

@@ -5,7 +5,7 @@ public class RestEntryPointResponse {
     private String path;
     private String method;
     private String flowCode;
-    private String requestSchema;
+    private String requestSchemaJson;
     private boolean replaceResponse;
     private boolean enabled;
 
@@ -16,14 +16,14 @@ public class RestEntryPointResponse {
                                   String path,
                                   String method,
                                   String flowCode,
-                                  String requestSchema,
+                                  String requestSchemaJson,
                                   boolean replaceResponse,
                                   boolean enabled) {
         this.id = id;
         this.path = path;
         this.method = method;
         this.flowCode = flowCode;
-        this.requestSchema = requestSchema;
+        this.requestSchemaJson = requestSchemaJson;
         this.replaceResponse = replaceResponse;
         this.enabled = enabled;
     }
@@ -66,38 +66,6 @@ public class RestEntryPointResponse {
 
     public void setRequestSchemaJson(String requestSchemaJson) {
         this.requestSchemaJson = requestSchemaJson;
-    }
-
-    /**
-     * @deprecated use {@link #getRequestSchemaJson()} instead.
-     */
-    @Deprecated
-    public String getRequestSchema() {
-        return requestSchemaJson;
-    }
-
-    /**
-     * @deprecated use {@link #setRequestSchemaJson(String)} instead.
-     */
-    @Deprecated
-    public void setRequestSchema(String requestSchema) {
-        this.requestSchemaJson = requestSchema;
-    }
-
-    /**
-     * @deprecated use {@link #getFlowCode()} instead.
-     */
-    @Deprecated
-    public String getRuleId() {
-        return flowCode;
-    }
-
-    /**
-     * @deprecated use {@link #setFlowCode(String)} instead.
-     */
-    @Deprecated
-    public void setRuleId(String ruleId) {
-        this.flowCode = ruleId;
     }
 
     public boolean isReplaceResponse() {

@@ -14,7 +14,7 @@ export function useFlowState() {
   const contextMenu = ref<ContextMenuState>({ visible: false, x: 0, y: 0, nodeId: null, label: "" })
 
   const nodeTypes = {
-    task: TaskNode,
+    service: TaskNode,  // service 节点使用 TaskNode 组件
     branch: BranchNode,
     transaction: TransactionNode,
     transformer: TransformerNode,
@@ -247,7 +247,7 @@ export function useFlowState() {
               if (!item.configJson) return item.bean || null
               try {
                 const config = typeof item.configJson === "string" ? JSON.parse(item.configJson) : item.configJson
-                return config.flowApiBeanName || null
+                return config.serviceBean || null
               } catch {
                 return item.bean || null
               }

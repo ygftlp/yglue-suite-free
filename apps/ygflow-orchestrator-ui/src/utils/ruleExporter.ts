@@ -22,19 +22,7 @@ function getNodeComponentName(node: ExportNode): string {
 
   // 服务节点：使用 bean.method 格式（本地服务调用）
   if (type === "service" && data?.comp) {
-    const bean = data.comp.bean || data.comp.flowApiBeanName
-    const method = data.comp.method
-    if (bean && method) {
-      return `${bean}.${method}`
-    }
-    if (bean) {
-      return bean
-    }
-  }
-  
-  // 兼容旧的 task 节点类型
-  if (type === "task" && data?.comp) {
-    const bean = data.comp.bean || data.comp.flowApiBeanName
+    const bean = data.comp.bean || data.comp.serviceBean
     const method = data.comp.method
     if (bean && method) {
       return `${bean}.${method}`

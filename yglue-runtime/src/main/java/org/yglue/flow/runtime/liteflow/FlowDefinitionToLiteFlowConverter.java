@@ -3,25 +3,35 @@ package org.yglue.flow.runtime.liteflow;
 import com.yomahub.liteflow.builder.el.LiteFlowChainELBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.ApplicationContext;
 import org.yglue.flow.runtime.core.definition.FlowDefinition;
 import org.yglue.flow.runtime.core.definition.NodeDefinition;
 import org.yglue.flow.runtime.liteflow.adapter.ServiceNodeComponent;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 将 FlowDefinition 转换为 LiteFlow 规则
+ * <p>
+ * 负责将流程定义转换为 LiteFlow EL 表达式并注册到 LiteFlow 引擎中。
+ * </p>
+ * 
+ * @author yglue
+ * @since 1.0
  */
 public class FlowDefinitionToLiteFlowConverter {
 
     private static final Logger log = LoggerFactory.getLogger(FlowDefinitionToLiteFlowConverter.class);
 
-    private final ApplicationContext applicationContext;
+    /** 已注册的链映射，key 为链名称，value 为 EL 表达式 */
     private final Map<String, String> registeredChains = new ConcurrentHashMap<>();
 
-    public FlowDefinitionToLiteFlowConverter(ApplicationContext applicationContext) {
-        this.applicationContext = applicationContext;
+    /**
+     * 构造函数
+     */
+    public FlowDefinitionToLiteFlowConverter() {
     }
 
     /**
@@ -113,12 +123,11 @@ public class FlowDefinitionToLiteFlowConverter {
      * 将节点转换为 LiteFlow EL 表达式
      */
     private String convertNodeToEl(NodeDefinition node) {
-        String nodeId = node.getId();
-        String type = node.getType();
-        
         // 根据节点类型生成对应的 LiteFlow 组件调用
         String componentId = getComponentId(node);
         String componentRef = getComponentRef(componentId);
+        
+        String type = node.getType();
         
         // 处理条件节点
         if ("if".equalsIgnoreCase(type)) {
@@ -263,5 +272,3 @@ public class FlowDefinitionToLiteFlowConverter {
         // TODO: 清除 LiteFlow 中的所有规则
     }
 }
-
-

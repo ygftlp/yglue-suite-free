@@ -35,6 +35,23 @@
          #{createBy}, #{updateBy})
     </insert>
 
+    <insert id="insertOrUpdate" parameterType="org.yglue.flow.orch.domain.ProjectEndpoint"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO yglue_project_endpoint
+        (project_id, endpoint_type, component_type, method, path, name, description, config_json, create_by, update_by, del_flag)
+        VALUES
+        (#{projectId}, #{endpointType}, #{componentType}, #{method}, #{path}, #{name}, #{description}, #{configJson},
+         #{createBy}, #{updateBy}, #{delFlag})
+        ON DUPLICATE KEY UPDATE
+            name = VALUES(name),
+            description = VALUES(description),
+            config_json = VALUES(config_json),
+            component_type = VALUES(component_type),
+            del_flag = VALUES(del_flag),
+            update_by = VALUES(update_by),
+            update_time = NOW()
+    </insert>
+
     <select id="selectById" resultMap="ProjectEndpointResultMap">
         SELECT <include refid="EndpointColumns"/>
         FROM yglue_project_endpoint

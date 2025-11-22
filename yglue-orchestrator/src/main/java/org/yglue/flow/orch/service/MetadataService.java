@@ -135,113 +135,42 @@ public class MetadataService {
         if (root == null || root.isMissingNode()) {
             return endpoints;
         }
-        JsonNode apis = root.path("apis");
-        if (!apis.isArray()) {
+        JsonNode services = root.path("services");
+        if (!services.isArray()) {
             return endpoints;
         }
-        for (JsonNode apiNode : apis) {
-            String apiClass = textOrDefault(apiNode, "class", "");
-            String apiName = textOrDefault(apiNode, "name", apiClass);
-            String apiVersion = textOrDefault(apiNode, "version", "");
-            String apiDescription = textOrDefault(apiNode, "description", "");
-            String apiDisplay = apiName.isBlank() ? apiClass : apiName;
-            if (!apiVersion.isBlank()) {
-                apiDisplay = apiDisplay + " v" + apiVersion;
+        for (JsonNode serviceNode : services) {
+            String serviceClass = textOrDefault(serviceNode, "class", "");
+            String serviceName = textOrDefault(serviceNode, "name", serviceClass);
+            String bean = textOrDefault(serviceNode, "bean", "");
+            String serviceVersion = textOrDefault(serviceNode, "version", "");
+            String serviceDescription = textOrDefault(serviceNode, "description", "");
+            String serviceDisplay = serviceName.isBlank() ? serviceClass : serviceName;
+            if (!serviceVersion.isBlank()) {
+                serviceDisplay = serviceDisplay + " v" + serviceVersion;
             }
-            if (apiDisplay.isBlank()) {
-                apiDisplay = "Flow API";
+            if (serviceDisplay.isBlank()) {
+                serviceDisplay = "Flow Service";
             }
-            String apiMethodKey = apiName.isBlank() ? apiClass : apiName;
-            if (apiMethodKey.isBlank()) {
-                apiMethodKey = "flow-api:" + Integer.toHexString(apiNode.toString().hashCode());
+            String serviceMethodKey = serviceName.isBlank() ? serviceClass : serviceName;
+            if (serviceMethodKey.isBlank()) {
+                serviceMethodKey = "flow-service:" + Integer.toHexString(serviceNode.toString().hashCode());
             }
-            String apiPathKey = apiClass.isBlank()
-                    ? apiMethodKey
-                    : (apiVersion.isBlank() ? apiClass : apiClass + ":" + apiVersion);
+            String servicePathKey = serviceClass.isBlank()
+                    ? serviceMethodKey
+                    : (serviceVersion.isBlank() ? serviceClass : serviceClass + ":" + serviceVersion);
 
+            // 只创建 SERVICE 记录，operations 信息包含在 configJson 中
+            // 前端可以从 SERVICE 的 configJson 中解析 operations
             endpoints.add(new ProjectEndpointService.EndpointPayload(
-                    "FLOW_API",
+                    "SERVICE",
                     "BUSINESS",
-                    apiMethodKey,
-                    apiPathKey,
-                    apiDisplay,
-                    apiDescription.isBlank() ? ("Flow API " + apiDisplay) : apiDescription,
-                    apiNode.toString()
+                    serviceMethodKey,
+                    servicePathKey,
+                    serviceDisplay,
+                    serviceDescription.isBlank() ? ("Flow Service " + serviceDisplay) : serviceDescription,
+                    serviceNode.toString()
             ));
-
-            JsonNode operations = apiNode.path("operations");
-            if (!operations.isArray()) {
-                continue;
-            }
-            for (JsonNode opNode : operations) {
-                String opName = textOrDefault(opNode, "name", "");
-                String opMethod = textOrDefault(opNode, "method", "");
-                String opDescription = textOrDefault(opNode, "description", "");
-                String opDisplay = !opName.isBlank() ? opName : opMethod;
-                if (opDisplay.isBlank()) {
-                    opDisplay = "operation";
-                }
-                /**
-                 * methodKey 应该始终使用实际的方法名（opMethod），而不是显示名称（opName）
-                 * 因为运行时需要通过实际方法名来查找和调用方法
-                 * opName 仅用于显示，不应该用于方法查找
-                 */
-                String opMethodKey = !opMethod.isBlank() ? opMethod : opName;
-                if (opMethodKey.isBlank()) {
-                    opMethodKey = "flow-operation:" + Integer.toHexString(opNode.toString().hashCode());
-                }
-                String opPathKey;
-                if (!apiClass.isBlank() && !opMethod.isBlank()) {
-                    opPathKey = apiClass + "#" + opMethod;
-                } else if (!apiClass.isBlank()) {
-                    opPathKey = apiClass + "#" + opMethodKey;
-                } else {
-                    opPathKey = opMethodKey;
-                }
-                String description = opDescription.isBlank() ? ("Flow Operation " + opDisplay) : opDescription;
-                
-                // 为 FlowOperation 的 configJson 添加所属 flowApi 的 bean 名称（Service name）
-                // 优先使用插件导出的 flowApiBeanName（从 Spring 注解获取），如果没有则使用 flowApiName 或 apiName
-                String opConfigJson = opNode.toString();
-                try {
-                    ObjectNode opConfig = (ObjectNode) OBJECT_MAPPER.readTree(opConfigJson);
-                    // 优先使用插件导出的 flowApiBeanName（从 @Service/@Component 获取的 bean 名称）
-                    String flowApiBeanName = null;
-                    if (opConfig.has("flowApiBeanName") && !opConfig.get("flowApiBeanName").asText().isBlank()) {
-                        flowApiBeanName = opConfig.get("flowApiBeanName").asText();
-                    } else if (opConfig.has("flowApiName") && !opConfig.get("flowApiName").asText().isBlank()) {
-                        // 回退到使用 flowApiName
-                        flowApiBeanName = opConfig.get("flowApiName").asText();
-                    } else {
-                        // 最后使用当前解析的 apiName
-                        flowApiBeanName = apiName;
-                    }
-                    String flowApiName = opConfig.has("flowApiName") && !opConfig.get("flowApiName").asText().isBlank()
-                            ? opConfig.get("flowApiName").asText()
-                            : apiName;
-                    String flowApiClassValue = opConfig.has("flowApiClass") && !opConfig.get("flowApiClass").asText().isBlank()
-                            ? opConfig.get("flowApiClass").asText()
-                            : apiClass;
-                    // 确保 flowApiBeanName、flowApiName 和 flowApiClass 字段存在
-                    opConfig.put("flowApiBeanName", flowApiBeanName);
-                    opConfig.put("flowApiName", flowApiName);
-                    opConfig.put("flowApiClass", flowApiClassValue);
-                    opConfigJson = OBJECT_MAPPER.writeValueAsString(opConfig);
-                } catch (Exception e) {
-                    // 如果解析失败，使用原始的 configJson
-                    log.warn("Failed to enrich FlowOperation configJson with flowApi bean name: {}", e.getMessage());
-                }
-
-                endpoints.add(new ProjectEndpointService.EndpointPayload(
-                        "FLOW_OPERATION",
-                        "BUSINESS",
-                        opMethodKey,
-                        opPathKey,
-                        opDisplay,
-                        description,
-                        opConfigJson
-                ));
-            }
         }
         return endpoints;
     }

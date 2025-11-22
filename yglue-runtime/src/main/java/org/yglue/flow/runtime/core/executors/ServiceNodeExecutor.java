@@ -1,6 +1,8 @@
 package org.yglue.flow.runtime.core.executors;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import groovy.lang.Binding;
+import groovy.lang.GroovyShell;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.aop.framework.AopProxyUtils;
@@ -8,7 +10,6 @@ import org.springframework.beans.factory.BeanFactory;
 import org.springframework.context.ApplicationContext;
 import org.yglue.flow.runtime.core.NodeExecutionContext;
 import org.yglue.flow.runtime.core.NodeExecutor;
-import org.yglue.flow.runtime.core.util.ParamResolver;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -17,43 +18,81 @@ import java.util.Map;
 
 /**
  * 服务节点执行器
- * 用于执行本地服务调用（通过反射调用 Spring Bean 方法）
+ * <p>
+ * 用于执行本地服务调用，通过反射调用 Spring Bean 方法。
+ * 所有入参值统一通过 Groovy 脚本执行获取，确保参数赋值的统一化。
+ * </p>
  * 
- * 节点配置格式：
+ * <p>节点配置格式：</p>
+ * <pre>{@code
  * {
  *   "type": "service",
  *   "comp": {
  *     "bean": "bean名称（Service name）",
  *     "method": "方法名",
- *     "configJson": "...", // 可选，包含 flowApiBeanName 等信息
- *     "endpointType": "FLOW_OPERATION"
+ *     "configJson": {
+ *       "bean": "bean名称",
+ *       "method": "方法名"
+ *     }
  *   },
- *   "inputs": [ // 输入参数配置
+ *   "inputs": [
  *     {
  *       "name": "参数名",
- *       "resolver": { // 参数解析器配置
- *         "type": "request|context|constant|expression",
- *         "path": "...",
- *         "constant": "...",
- *         "expression": "...",
- *         "default": "..."
- *       }
+ *       "valueType": "STRING",
+ *       "typeName": "",
+ *       "script": "ctx.request.path.projectKey"  // Groovy 脚本，用于获取参数值
  *     }
- *   ]
+ *   ],
+ *   "as": "result"  // 可选，将结果保存到上下文的 key
  * }
+ * }</pre>
+ * 
+ * <p>脚本执行环境：</p>
+ * <ul>
+ *   <li>{@code ctx} - 流程上下文数据（Map），可通过 {@code ctx.request.path.xxx}、{@code ctx['key']} 等方式访问</li>
+ * </ul>
+ * 
+ * @author yglue
+ * @since 1.0
  */
 public class ServiceNodeExecutor implements NodeExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(ServiceNodeExecutor.class);
 
+    /** Spring 应用上下文，用于获取 Bean 实例 */
     private final ApplicationContext applicationContext;
+    
+    /** JSON 对象映射器，用于配置对象的转换 */
     private final ObjectMapper objectMapper;
 
+    /**
+     * 构造函数
+     * 
+     * @param applicationContext Spring 应用上下文，不能为 null
+     */
     public ServiceNodeExecutor(ApplicationContext applicationContext) {
         this.applicationContext = applicationContext;
         this.objectMapper = new ObjectMapper();
     }
 
+    /**
+     * 执行服务节点
+     * <p>
+     * 执行流程：
+     * <ol>
+     *   <li>解析节点配置，获取 bean 名称和方法名</li>
+     *   <li>从 Spring 容器获取 bean 实例和实际类型</li>
+     *   <li>解析输入参数，统一通过脚本执行获取参数值</li>
+     *   <li>查找匹配的方法（根据方法名和参数数量）</li>
+     *   <li>转换参数类型并调用方法</li>
+     *   <li>将结果保存到流程上下文（如果配置了 as 字段）</li>
+     * </ol>
+     * </p>
+     * 
+     * @param context 节点执行上下文，包含节点定义和流程上下文
+     * @return 方法调用的返回值
+     * @throws Exception 如果执行过程中出现错误
+     */
     @Override
     @SuppressWarnings("unchecked")
     public Object execute(NodeExecutionContext context) throws Exception {
@@ -83,11 +122,11 @@ public class ServiceNodeExecutor implements NodeExecutor {
         
         if (beanName == null || beanName.isBlank()) {
             log.error("[ServiceNodeExecutor] bean 名称为空: nodeId={}, comp={}", nodeId, comp);
-            throw new IllegalArgumentException("Task node 'comp.bean' or 'comp.configJson.flowApiBeanName' is required");
+            throw new IllegalArgumentException("Service node 'comp.bean' or 'comp.configJson.bean' is required");
         }
         if (methodName == null || methodName.isBlank()) {
             log.error("[ServiceNodeExecutor] 方法名为空: nodeId={}, comp={}", nodeId, comp);
-            throw new IllegalArgumentException("Task node 'comp.method' is required");
+            throw new IllegalArgumentException("Service node 'comp.method' or 'comp.configJson.method' is required");
         }
         
         // 从 Spring 容器中获取 bean 的实际类型
@@ -135,7 +174,7 @@ public class ServiceNodeExecutor implements NodeExecutor {
                 nodeId, targetClass.getName(), bean.getClass().getName());
         }
         
-        // 解析输入参数
+        // 解析输入参数 - 统一通过脚本执行获取参数值
         log.debug("[ServiceNodeExecutor] 开始解析输入参数: nodeId={}", nodeId);
         List<Object> arguments = new ArrayList<>();
         Object inputsConfig = config.get("inputs");
@@ -147,10 +186,8 @@ public class ServiceNodeExecutor implements NodeExecutor {
                     ? (Map<String, Object>) inputObj
                     : objectMapper.convertValue(inputObj, Map.class);
                 
-                // 使用 ParamResolver 解析参数值
-                Object resolverConfig = input.get("resolver");
-                log.debug("[ServiceNodeExecutor] 解析参数 [{}]: nodeId={}, resolver={}", i, nodeId, resolverConfig);
-                Object value = ParamResolver.resolve(resolverConfig, context.getContext());
+                // 统一通过脚本执行获取参数值
+                Object value = resolveInputValue(input, context.getContext(), i, nodeId);
                 log.debug("[ServiceNodeExecutor] 参数 [{}] 解析结果: nodeId={}, value={}, valueType={}", 
                     i, nodeId, value, value != null ? value.getClass().getName() : "null");
                 arguments.add(value);
@@ -199,7 +236,18 @@ public class ServiceNodeExecutor implements NodeExecutor {
 
     /**
      * 获取方法名
-     * 固定从 configJson.method 获取，确保是实际的 Java 方法名
+     * <p>
+     * 从组件配置的 configJson.method 字段获取方法名。
+     * 支持多种配置格式：
+     * <ul>
+     *   <li>configJson 为字符串：解析 JSON 字符串</li>
+     *   <li>configJson 为 Map：直接获取</li>
+     *   <li>configJson 为其他类型：通过 ObjectMapper 转换</li>
+     * </ul>
+     * </p>
+     * 
+     * @param comp 组件配置 Map
+     * @return 方法名，如果未找到则返回 null
      */
     @SuppressWarnings("unchecked")
     private String getMethodName(Map<String, Object> comp) {
@@ -238,15 +286,35 @@ public class ServiceNodeExecutor implements NodeExecutor {
 
     /**
      * 获取 bean 名称
-     * 固定从 configJson.flowApiBeanName 获取，确保是准确的 Spring bean 名称
+     * <p>
+     * 按照以下优先级顺序查找 bean 名称：
+     * <ol>
+     *   <li>comp.bean（直接字段）</li>
+     *   <li>configJson.bean（新字段名）</li>
+     *   <li>configJson.serviceBean（向后兼容）</li>
+     *   <li>configJson.flowApiBeanName（向后兼容，已废弃）</li>
+     * </ol>
+     * </p>
+     * 
+     * @param comp 组件配置 Map
+     * @return bean 名称，如果未找到则返回 null
      */
     @SuppressWarnings("unchecked")
     private String getBeanName(Map<String, Object> comp) {
         log.debug("[ServiceNodeExecutor] 开始获取 bean 名称: comp={}", comp);
         
+        // 优先级1：直接字段 comp.bean
+        Object beanObj = comp.get("bean");
+        if (beanObj != null && !String.valueOf(beanObj).isBlank()) {
+            String beanName = String.valueOf(beanObj);
+            log.debug("[ServiceNodeExecutor] 从 comp.bean 获取 bean 名称: beanName={}", beanName);
+            return beanName;
+        }
+        
+        // 优先级2-4：从 configJson 中获取
         Object configJsonObj = comp.get("configJson");
         if (configJsonObj == null) {
-            log.warn("[ServiceNodeExecutor] configJson 为空，无法获取 bean 名称");
+            log.warn("[ServiceNodeExecutor] configJson 为空，且 comp.bean 也为空，无法获取 bean 名称");
             return null;
         }
         
@@ -260,14 +328,31 @@ public class ServiceNodeExecutor implements NodeExecutor {
                 configJson = (Map<String, Object>) (Map<?, ?>) objectMapper.convertValue(configJsonObj, Map.class);
             }
             
-            Object flowApiBeanName = configJson.get("flowApiBeanName");
-            if (flowApiBeanName != null && !String.valueOf(flowApiBeanName).isBlank()) {
-                String beanName = String.valueOf(flowApiBeanName);
-                log.debug("[ServiceNodeExecutor] 从 configJson.flowApiBeanName 获取 bean 名称: beanName={}", beanName);
+            // 优先级2：configJson.bean（新字段名）
+            Object bean = configJson.get("bean");
+            if (bean != null && !String.valueOf(bean).isBlank()) {
+                String beanName = String.valueOf(bean);
+                log.debug("[ServiceNodeExecutor] 从 configJson.bean 获取 bean 名称: beanName={}", beanName);
                 return beanName;
             }
             
-            log.warn("[ServiceNodeExecutor] configJson 中未找到 flowApiBeanName 字段");
+            // 优先级3：configJson.serviceBean（向后兼容）
+            Object serviceBean = configJson.get("serviceBean");
+            if (serviceBean != null && !String.valueOf(serviceBean).isBlank()) {
+                String beanName = String.valueOf(serviceBean);
+                log.debug("[ServiceNodeExecutor] 从 configJson.serviceBean 获取 bean 名称: beanName={}", beanName);
+                return beanName;
+            }
+            
+            // 优先级4：configJson.flowApiBeanName（向后兼容，已废弃）
+            Object flowApiBeanName = configJson.get("flowApiBeanName");
+            if (flowApiBeanName != null && !String.valueOf(flowApiBeanName).isBlank()) {
+                String beanName = String.valueOf(flowApiBeanName);
+                log.debug("[ServiceNodeExecutor] 从 configJson.flowApiBeanName 获取 bean 名称（已废弃）: beanName={}", beanName);
+                return beanName;
+            }
+            
+            log.warn("[ServiceNodeExecutor] configJson 中未找到 bean、serviceBean 或 flowApiBeanName 字段");
             return null;
         } catch (Exception e) {
             log.error("[ServiceNodeExecutor] 解析 configJson 失败: error={}", e.getMessage(), e);
@@ -277,12 +362,22 @@ public class ServiceNodeExecutor implements NodeExecutor {
 
     /**
      * 解析方法
-     * 根据方法名和参数数量查找匹配的方法
+     * <p>
+     * 根据方法名和参数数量查找匹配的方法。
+     * </p>
      * 
-     * 查找策略：
-     * 1. 先查找 public 方法（包括继承的方法）
-     * 2. 如果找不到，再查找所有声明的方法（包括 private、protected、package-private）
-     * 3. 如果还是找不到，列出所有可用的方法名和参数数量，便于调试
+     * <p>查找策略：</p>
+     * <ol>
+     *   <li>先查找 public 方法（包括继承的方法）</li>
+     *   <li>如果找不到，再查找所有声明的方法（包括 private、protected、package-private）</li>
+     *   <li>如果还是找不到，抛出异常并列出所有可用的方法名和参数数量，便于调试</li>
+     * </ol>
+     * 
+     * @param clazz 目标类
+     * @param name 方法名
+     * @param argc 参数数量
+     * @return 匹配的方法
+     * @throws IllegalArgumentException 如果找不到匹配的方法
      */
     private Method resolveMethod(Class<?> clazz, String name, int argc) {
         log.debug("[ServiceNodeExecutor] 查找方法: clazz={}, name={}, argc={}", clazz.getName(), name, argc);
@@ -348,7 +443,14 @@ public class ServiceNodeExecutor implements NodeExecutor {
 
     /**
      * 转换参数类型
-     * 将参数值转换为方法参数类型
+     * <p>
+     * 将参数值列表转换为方法参数类型数组。
+     * 如果参数值数量少于方法参数数量，缺失的参数会被设置为 null。
+     * </p>
+     * 
+     * @param parameterTypes 方法参数类型数组
+     * @param args 参数值列表
+     * @return 转换后的参数数组
      */
     private Object[] convertArgs(Class<?>[] parameterTypes, List<Object> args) {
         log.debug("[ServiceNodeExecutor] 转换参数类型: parameterTypes={}, args={}", parameterTypes, args);
@@ -367,7 +469,19 @@ public class ServiceNodeExecutor implements NodeExecutor {
 
     /**
      * 类型转换
-     * 将值转换为目标类型
+     * <p>
+     * 将值转换为目标类型。支持以下类型的转换：
+     * <ul>
+     *   <li>基本类型：int、long、double、boolean</li>
+     *   <li>包装类型：Integer、Long、Double、Boolean</li>
+     *   <li>String 类型</li>
+     *   <li>其他类型：如果值已经是目标类型的实例，直接返回</li>
+     * </ul>
+     * </p>
+     * 
+     * @param value 要转换的值
+     * @param targetType 目标类型
+     * @return 转换后的值，如果 value 为 null 则返回 null
      */
     private Object convert(Object value, Class<?> targetType) {
         if (value == null) {
@@ -393,5 +507,68 @@ public class ServiceNodeExecutor implements NodeExecutor {
         }
         return value;
     }
-}
 
+    /**
+     * 统一通过脚本执行解析输入参数值
+     * <p>
+     * 确保所有入参都通过脚本执行一次，实现参数赋值的统一化。
+     * 服务节点的入参直接使用 script 字段存储 Groovy 脚本，统一执行脚本获取参数值。
+     * </p>
+     * 
+     * <p>脚本执行环境：</p>
+     * <ul>
+     *   <li>{@code ctx} - 流程上下文数据（Map），可通过 {@code ctx.request.path.xxx}、{@code ctx['key']} 等方式访问</li>
+     * </ul>
+     * 
+     * <p>向后兼容：</p>
+     * <ul>
+     *   <li>如果 script 字段不存在或为空，会尝试使用 transformer 字段（向后兼容旧数据）</li>
+     * </ul>
+     * 
+     * @param input 输入参数配置 Map，应包含 script 字段
+     * @param flowContext 流程上下文
+     * @param index 参数索引，用于日志记录
+     * @param nodeId 节点ID，用于日志记录
+     * @return 解析后的参数值，如果 script 不存在或为空则返回 null
+     * @throws RuntimeException 如果脚本执行失败
+     */
+    private Object resolveInputValue(Map<String, Object> input, 
+                                     org.yglue.flow.runtime.FlowContext flowContext, 
+                                     int index, 
+                                     String nodeId) {
+        // 获取 script 字段（优先使用 script，如果没有则使用 transformer 向后兼容）
+        Object scriptObj = input.get("script");
+        if (scriptObj == null || String.valueOf(scriptObj).trim().isEmpty()) {
+            // 向后兼容：检查 transformer 字段
+            scriptObj = input.get("transformer");
+        }
+        
+        // 检查脚本是否为空
+        if (scriptObj == null || String.valueOf(scriptObj).trim().isEmpty()) {
+            log.warn("[ServiceNodeExecutor] 参数 [{}] 没有 script 配置，返回 null: nodeId={}", index, nodeId);
+            return null;
+        }
+        
+        String script = String.valueOf(scriptObj).trim();
+        
+        log.debug("[ServiceNodeExecutor] 执行参数脚本 [{}]: nodeId={}, script={}", index, nodeId, script);
+        
+        // 统一通过 Groovy 脚本执行获取值
+        try {
+            // 创建 Groovy 绑定，注入流程上下文
+            Binding binding = new Binding();
+            binding.setVariable("ctx", flowContext.data());
+            
+            // 执行脚本
+            GroovyShell shell = new GroovyShell(binding);
+            Object result = shell.evaluate(script);
+            log.debug("[ServiceNodeExecutor] 脚本执行结果 [{}]: nodeId={}, result={}, resultType={}", 
+                index, nodeId, result, result != null ? result.getClass().getName() : "null");
+            return result;
+        } catch (Exception e) {
+            log.error("[ServiceNodeExecutor] 脚本执行失败 [{}]: nodeId={}, script={}, error={}", 
+                index, nodeId, script, e.getMessage(), e);
+            throw new RuntimeException("Failed to execute script for input parameter [" + index + "]: " + e.getMessage(), e);
+        }
+    }
+}

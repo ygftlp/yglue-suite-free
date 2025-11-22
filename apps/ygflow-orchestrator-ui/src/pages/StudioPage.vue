@@ -100,7 +100,7 @@ function extractEndpointSchema(endpoint: ProjectEndpoint) {
   if (schemaNode && schemaJson) {
     schemaJson = JSON.stringify(schemaNode, null, 2)
   }
-  let requestSchemaFields = schemaNode ? flattenSchemaFields(schemaNode) : normalizeRequestSchema(endpoint.requestSchema)
+  let requestSchemaFields = schemaNode ? flattenSchemaFields(schemaNode) : null
   let responseSchema = normalizeResponseSchema(endpoint.responseSchema)
 
   if (((requestSchemaFields?.length ?? 0) === 0 || !schemaJson) || !responseSchema) {
@@ -116,8 +116,6 @@ function extractEndpointSchema(endpoint: ProjectEndpoint) {
       if (!requestSchemaFields || requestSchemaFields.length === 0) {
         if (schemaNode) {
           requestSchemaFields = flattenSchemaFields(schemaNode)
-        } else {
-          requestSchemaFields = normalizeRequestSchema(config.requestSchema)
         }
       }
       if (!responseSchema) {

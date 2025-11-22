@@ -104,12 +104,12 @@ public class ExportMetadataAction extends AnAction {
 
     private static JSONObject scanProject(Project project) {
         JSONObject result = new JSONObject();
-        JSONArray apis = new JSONArray();
+        JSONArray services = new JSONArray();
         JSONArray restEndpoints = new JSONArray();
         JSONArray models = new JSONArray();
         JSONArray resolvers = new JSONArray();
         result.put("project", project.getName());
-        result.put("apis", apis);
+        result.put("services", services);
         result.put("rests", restEndpoints);
         result.put("models", models);
         result.put("resolvers", resolvers);
@@ -125,7 +125,7 @@ public class ExportMetadataAction extends AnAction {
                 if (!(psi instanceof PsiJavaFile psiJavaFile)) continue;
 
                 for (PsiClass clazz : psiJavaFile.getClasses()) {
-                    handleFlowApiClass(clazz, apis);
+                    handleFlowApiClass(clazz, services);
                     handleFlowModelClass(clazz, models);
                     handleFlowResolverClass(clazz, resolvers);
                     collectRestEndpoints(clazz, restEndpoints);
@@ -188,38 +188,39 @@ public class ExportMetadataAction extends AnAction {
         return Character.toLowerCase(className.charAt(0)) + className.substring(1);
     }
 
-    private static void handleFlowApiClass(PsiClass aClass, JSONArray apis) {
+    private static void handleFlowApiClass(PsiClass aClass, JSONArray services) {
         PsiAnnotation apiAnno = findAnnotation(aClass, API_ANNOTATIONS);
         if (apiAnno != null) {
-            JSONObject apiObj = new JSONObject();
+            JSONObject serviceObj = new JSONObject();
             String qualifiedName = aClass.getQualifiedName();
-            apiObj.put("class", qualifiedName != null ? qualifiedName : aClass.getName());
+            serviceObj.put("class", qualifiedName != null ? qualifiedName : aClass.getName());
 
             // 获取 bean 名称（Service name）：优先从 Spring 注解获取，其次从 @FlowApi 的 value 获取，最后从 name 获取
-            String beanName = extractBeanNameFromSpringAnnotation(aClass);
-            if (beanName == null || beanName.isBlank()) {
+            String bean = extractBeanNameFromSpringAnnotation(aClass);
+            if (bean == null || bean.isBlank()) {
                 // 从 @FlowApi 的 value 获取
-                beanName = getAttr(apiAnno, "value");
-                if (beanName.isBlank()) {
+                bean = getAttr(apiAnno, "value");
+                if (bean.isBlank()) {
                     // 从 @FlowApi 的 name 获取
-                    beanName = getAttr(apiAnno, "name");
-                    if (beanName.isBlank()) {
+                    bean = getAttr(apiAnno, "name");
+                    if (bean.isBlank()) {
                         // 默认使用类名首字母小写
                         String className = aClass.getName();
-                        beanName = generateDefaultBeanName(className);
+                        bean = generateDefaultBeanName(className);
                     }
                 }
             }
             
-            // API 显示名称：从 @FlowApi 的 name 获取，如果没有则使用类名
-            String apiName = emptyToDefault(getAttr(apiAnno, "name"), aClass.getName());
-            apiObj.put("name", apiName);
-            apiObj.put("beanName", beanName);  // 添加 bean 名称字段
-            apiObj.put("description", getAttr(apiAnno, "description"));
+            // Service 显示名称：从 @FlowApi 的 name 获取，如果没有则使用类名
+            String serviceName = emptyToDefault(getAttr(apiAnno, "name"), aClass.getName());
+            serviceObj.put("name", serviceName);
+            serviceObj.put("bean", bean);  // bean 名称字段
+            serviceObj.put("description", getAttr(apiAnno, "description"));
 
             String version = getAttr(apiAnno, "version");
-            apiObj.put("version", version.isBlank() ? "1.0.0" : version);
+            serviceObj.put("version", version.isBlank() ? "1.0.0" : version);
 
+            // 只统计带有 @FlowOperation 注解的方法
             JSONArray ops = new JSONArray();
             for (PsiMethod m : aClass.getMethods()) {
                 PsiAnnotation opAnno = findAnnotation(m, OPERATION_ANNOTATIONS);
@@ -230,13 +231,6 @@ public class ExportMetadataAction extends AnAction {
                 opObj.put("name", getAttr(opAnno, "name"));
                 opObj.put("description", getAttr(opAnno, "description"));
                 opObj.put("tags", toJsonArray(getStringArray(opAnno, "tags")));
-                
-                // 添加所属 flowApi 的信息，便于前端显示 Service name
-                // bean 名称（Service name）：优先从 Spring 注解获取，其次从 @FlowApi 的 value/name 获取
-                opObj.put("flowApiBeanName", beanName);  // flowApi 的 bean 名称（Service name）
-                opObj.put("flowApiName", apiName);  // flowApi 的显示名称
-                String apiClass = qualifiedName != null ? qualifiedName : aClass.getName();
-                opObj.put("flowApiClass", apiClass);  // flowApi 的类名
 
                 JSONArray params = new JSONArray();
                 for (PsiParameter p : m.getParameterList().getParameters()) {
@@ -250,13 +244,13 @@ public class ExportMetadataAction extends AnAction {
                 opObj.put("returnType", returnType != null ? renderType(returnType) : "void");
                 ops.put(opObj);
             }
-            apiObj.put("operations", ops);
+            serviceObj.put("operations", ops);
             if (!ops.isEmpty()) {
-                apis.put(apiObj);
+                services.put(serviceObj);
             }
         }
         for (PsiClass inner : aClass.getInnerClasses()) {
-            handleFlowApiClass(inner, apis);
+            handleFlowApiClass(inner, services);
         }
     }
 
@@ -386,7 +380,9 @@ public class ExportMetadataAction extends AnAction {
                               endpoint.put("description", docSummary);
                           }
                           
-                          endpoint.put("requestSchema", SchemaGenerator.generateRequestSchema(method));
+                          // 统一使用 requestSchemaJson（字符串形式），与后端 FlowEntryPoint 保持一致
+                          JSONObject requestSchemaObj = SchemaGenerator.generateRequestSchema(method);
+                          endpoint.put("requestSchemaJson", requestSchemaObj.toString());
                           endpoint.put("responseSchema", buildResponseSchema(method));
                           sink.put(endpoint);
                       }

@@ -10,6 +10,12 @@ import java.util.List;
 public interface ProjectEndpointMapper {
     void insert(ProjectEndpoint endpoint);
 
+    /**
+     * 插入或更新端点
+     * 如果违反唯一约束，则更新现有记录
+     */
+    void insertOrUpdate(ProjectEndpoint endpoint);
+
     ProjectEndpoint selectById(@Param("id") Long id);
 
     List<ProjectEndpoint> selectByProjectId(@Param("projectId") Long projectId);

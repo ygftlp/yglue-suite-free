@@ -35,7 +35,10 @@ public final class ExpressionEvaluationContext {
         Objects.requireNonNull(flowContext, "flowContext must not be null");
         Builder builder = new Builder();
         Map<String, Object> data = flowContext.data();
-        builder.variable("ctx", data);
+        // 创建一个新的 HashMap 副本，确保 SpEL 可以正确访问 Map 的键
+        Map<String, Object> ctxMap = new HashMap<>(data);
+        builder.variable("ctx", ctxMap);
+        // 同时将 data 中的所有键值对都设置为顶级变量，方便直接访问
         data.forEach(builder::variable);
         builder.attribute("flowContext", flowContext);
         return builder.build();

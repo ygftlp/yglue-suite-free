@@ -82,6 +82,7 @@ public class RuleEngine {
         this.reloadOnExecution = reloadOnExecution;
         this.loader = new FlowLoader();
         
+        ServiceNodeExecutor serviceExecutor = new ServiceNodeExecutor(applicationContext);
         NodeExecutorRegistry registry = new NodeExecutorRegistry()
                 .register("log", new LogNodeExecutor())
                 .register("delay", new DelayNodeExecutor())
@@ -90,7 +91,7 @@ public class RuleEngine {
                 .register("branch", new BranchNodeExecutor())
                 .register("call", new CallNodeExecutor(applicationContext))
                 .register("transformer", new TransformerNodeExecutor())
-                .register("service", new ServiceNodeExecutor(applicationContext));
+                .register("service", serviceExecutor);
 
         RestInvocationRegistry restRegistry = new RestInvocationRegistry()
                 .register(new BeanRestInvocationStrategy())

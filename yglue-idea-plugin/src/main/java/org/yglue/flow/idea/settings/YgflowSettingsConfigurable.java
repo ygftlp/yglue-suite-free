@@ -1,10 +1,16 @@
 package org.yglue.flow.idea.settings;
 
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.fileChooser.FileChooser;
+import com.intellij.openapi.fileChooser.FileChooserDescriptor;
+import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory;
 import com.intellij.openapi.options.Configurable;
 import com.intellij.openapi.options.ConfigurationException;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectManager;
+import com.intellij.openapi.ui.TextComponentAccessor;
+import com.intellij.openapi.ui.TextFieldWithBrowseButton;
+import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.ui.DocumentAdapter;
 import com.intellij.ui.components.JBLabel;
 import com.intellij.ui.components.JBTextField;
@@ -13,6 +19,7 @@ import com.intellij.util.concurrency.EdtExecutorService;
 import com.intellij.util.ui.FormBuilder;
 import com.intellij.util.ui.JBFont;
 import com.intellij.util.ui.JBUI;
+import java.util.function.Consumer;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -50,7 +57,7 @@ public class YgflowSettingsConfigurable implements Configurable {
     private JBTextField projectKeyField;
     private JBLabel projectKeySourceLabel;
     private JBTextField instanceKeyField;
-    private JBTextField rulesDirField;
+    private TextFieldWithBrowseButton rulesDirField;
     private JCheckBox autoUploadCheck;
     private JBTextField autoUploadIntervalField;
     private JCheckBox autoRuleSyncCheck;
@@ -150,8 +157,53 @@ public class YgflowSettingsConfigurable implements Configurable {
             instancePanel.add(instanceKeyField, BorderLayout.CENTER);
             instancePanel.add(regenerateButton, BorderLayout.EAST);
 
-            rulesDirField = new JBTextField();
-            rulesDirField.getEmptyText().setText(DEFAULT_RULES_DIR);
+            rulesDirField = new TextFieldWithBrowseButton();
+            // 设置占位符文本
+            javax.swing.JTextField textField = rulesDirField.getTextField();
+            if (textField instanceof JBTextField) {
+                ((JBTextField) textField).getEmptyText().setText(DEFAULT_RULES_DIR);
+            } else {
+                textField.setToolTipText("默认: " + DEFAULT_RULES_DIR);
+            }
+            
+            // 配置文件夹选择器
+            FileChooserDescriptor folderDescriptor = FileChooserDescriptorFactory.createSingleFolderDescriptor();
+            folderDescriptor.setTitle("Select Rules Directory");
+            folderDescriptor.setDescription("Choose the directory where flow rules will be stored");
+            
+            rulesDirField.addBrowseFolderListener(
+                    "Select Rules Directory",
+                    "Choose the directory where flow rules will be stored",
+                    currentProject(),
+                    folderDescriptor,
+                    new Consumer<VirtualFile>() {
+                        @Override
+                        public void accept(VirtualFile file) {
+                            if (file != null && file.isDirectory()) {
+                                Project project = currentProject();
+                                String selectedPath = file.getPath();
+                                if (selectedPath != null) {
+                                    if (project != null && project.getBasePath() != null) {
+                                        String basePath = project.getBasePath();
+                                        if (selectedPath.startsWith(basePath)) {
+                                            // 转换为相对路径
+                                            String relativePath = basePath.length() == selectedPath.length()
+                                                    ? "."
+                                                    : selectedPath.substring(basePath.length() + 1);
+                                            rulesDirField.setText(relativePath.replace('\\', '/'));
+                                        } else {
+                                            // 使用绝对路径
+                                            rulesDirField.setText(selectedPath.replace('\\', '/'));
+                                        }
+                                    } else {
+                                        // 使用绝对路径
+                                        rulesDirField.setText(selectedPath.replace('\\', '/'));
+                                    }
+                                }
+                            }
+                        }
+                    }
+            );
 
             autoUploadCheck = new JCheckBox("Enable automatic metadata upload");
             autoUploadCheck.addActionListener(e -> updateAutoUploadControls());

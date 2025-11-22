@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue"
-import { Book, ChevronDown, GitBranch, Layers } from "lucide-vue-next"
+import { Book, ChevronDown, GitBranch, Layers, Search } from "lucide-vue-next"
 import { api, type EndpointComponent, type EndpointComponentGroup } from "../api/client"
 
 const LABELS = {
@@ -19,7 +19,7 @@ const typeLabelMap: Record<string, string> = {
  * 用于在业务组件中进一步细分显示
  */
 const endpointTypeLabelMap: Record<string, string> = {
-  FLOW_API: "API 类",
+  SERVICE: "服务",
   FLOW_OPERATION: "操作方法",
 }
 
@@ -46,6 +46,7 @@ const expanded = ref<Record<string, boolean>>({})
 const loading = ref(false)
 const errorMessage = ref<string | null>(null)
 const componentGroups = ref<EndpointComponentGroup[]>([])
+const searchKeyword = ref("")
 
 const logicItems: LogicItem[] = [
   { id: "branch-node", title: "条件分支", description: LABELS.branchDesc, nodeType: "branch" },
@@ -59,7 +60,7 @@ function normalizeType(value?: string | null) {
 }
 
 /**
- * 从 FlowOperation 的 path 中提取所属的 API 类名
+ * 从 FlowOperation 的 path 中提取所属的服务类名
  * path 格式：className#methodName 或 className:version
  */
 function extractApiClassFromPath(path?: string): string | null {
@@ -69,7 +70,7 @@ function extractApiClassFromPath(path?: string): string | null {
   if (hashIndex > 0) {
     return path.substring(0, hashIndex)
   }
-  // 处理 FlowApi：className:version（去除版本号）
+  // 处理 Service：className:version（去除版本号）
   const colonIndex = path.indexOf(":")
   if (colonIndex > 0) {
     return path.substring(0, colonIndex)
@@ -78,7 +79,7 @@ function extractApiClassFromPath(path?: string): string | null {
 }
 
 /**
- * 从组件的 configJson 中提取类名（如果 path 无法提取）
+ * 从组件的 configJson 中提取服务类名（如果 path 无法提取）
  */
 function extractApiClassFromConfig(item: EndpointComponent): string | null {
   try {
@@ -96,8 +97,8 @@ function extractApiClassFromConfig(item: EndpointComponent): string | null {
 /**
  * 组件分组计算属性
  * 对于业务组件（BUSINESS），采用层级结构：
- * - FLOW_API 作为类别分组（不可拖拽，仅用于组织）
- * - FLOW_OPERATION 作为子项显示在对应的 API 类下面
+ * - SERVICE 作为类别分组（不可拖拽，仅用于组织）
+ * - FLOW_OPERATION 作为子项显示在对应的服务下面
  */
 const componentSections = computed(() => {
   const sections: Array<{
@@ -119,129 +120,110 @@ const componentSections = computed(() => {
     const filteredItems = (group.items ?? []).filter((item) => normalizeType(item.endpointType) !== "REST")
     if (!filteredItems.length) return
 
-    // 如果是业务组件，采用层级结构
+    // 如果是业务组件，统一采用两级结构：第一级是服务，第二级是操作
     if (type === "BUSINESS") {
-      const apiItems = filteredItems.filter((item) => normalizeType(item.endpointType) === "FLOW_API")
-      const operationItems = filteredItems.filter((item) => normalizeType(item.endpointType) === "FLOW_OPERATION")
+      const serviceItems = filteredItems.filter((item) => normalizeType(item.endpointType) === "SERVICE")
       const otherItems = filteredItems.filter(
-        (item) =>
-          normalizeType(item.endpointType) !== "FLOW_API" && normalizeType(item.endpointType) !== "FLOW_OPERATION"
+        (item) => normalizeType(item.endpointType) !== "SERVICE"
       )
 
-      // 如果有 API 类和操作方法，采用层级结构
-      if (apiItems.length > 0 && operationItems.length > 0) {
-        // 按 API 类分组操作方法
-        const apiClassMap = new Map<string, EndpointComponent[]>()
+      // 统一采用两级结构：从 SERVICE 的 configJson 中解析 operations
+      if (serviceItems.length > 0) {
+        // 按服务分组操作方法
+        const serviceMap = new Map<string, { service: EndpointComponent; operations: EndpointComponent[] }>()
         
-        apiItems.forEach((apiItem) => {
-          const apiClass =
-            extractApiClassFromPath(apiItem.path) ||
-            extractApiClassFromConfig(apiItem) ||
-            apiItem.bean ||
-            apiItem.displayName ||
-            "未知类"
-          if (!apiClassMap.has(apiClass)) {
-            apiClassMap.set(apiClass, [])
-          }
-        })
-
-        // 将操作方法分配到对应的 API 类
-        operationItems.forEach((opItem) => {
-          const apiClass =
-            extractApiClassFromPath(opItem.path) || extractApiClassFromConfig(opItem)
-          if (apiClass && apiClassMap.has(apiClass)) {
-            apiClassMap.get(apiClass)!.push(opItem)
-          } else {
-            // 如果找不到对应的 API 类，创建一个"未分类"分组
-            if (!apiClassMap.has("未分类")) {
-              apiClassMap.set("未分类", [])
+        // 从每个 SERVICE 中解析 operations
+        serviceItems.forEach((serviceItem) => {
+          const serviceName =
+            extractApiClassFromPath(serviceItem.path) ||
+            extractApiClassFromConfig(serviceItem) ||
+            serviceItem.bean ||
+            serviceItem.displayName ||
+            "未知服务"
+          
+          // 从 SERVICE 的 configJson 中解析 operations
+          const operations: EndpointComponent[] = []
+          try {
+            const configJson = serviceItem.configJson
+            if (typeof configJson === "string" && configJson) {
+              const serviceConfig = JSON.parse(configJson)
+              if (serviceConfig.operations && Array.isArray(serviceConfig.operations)) {
+                // 将每个 operation 转换为 EndpointComponent
+                serviceConfig.operations.forEach((op: any) => {
+                  operations.push({
+                    id: `${serviceItem.id}-${op.method}`,
+                    type: "BUSINESS",
+                    displayName: op.name || op.method || "操作",
+                    description: op.description || "",
+                    bean: serviceConfig.bean || serviceItem.bean,
+                    method: op.method,
+                    endpointType: "FLOW_OPERATION",
+                    configJson: JSON.stringify({
+                      ...op,
+                      serviceBean: serviceConfig.bean,
+                      serviceName: serviceConfig.name,
+                      serviceClass: serviceConfig.class,
+                    }),
+                    path: serviceConfig.class ? `${serviceConfig.class}#${op.method}` : undefined,
+                  })
+                })
+              }
             }
-            apiClassMap.get("未分类")!.push(opItem)
+          } catch (e) {
+            console.warn("Failed to parse service configJson:", e)
+          }
+          
+          if (operations.length > 0) {
+            serviceMap.set(serviceName, { service: serviceItem, operations })
           }
         })
 
-        // 为每个 API 类创建一个分组
-        apiClassMap.forEach((operations, apiClass) => {
-          if (operations.length === 0) return // 跳过没有操作方法的 API 类
+        // 为每个服务创建一个分组（两级结构）
+        serviceMap.forEach(({ service, operations }, serviceName) => {
+          if (operations.length === 0) return // 跳过没有操作的服务
           
-          const apiItem = apiItems.find(
-            (item) =>
-              extractApiClassFromPath(item.path) === apiClass ||
-              extractApiClassFromConfig(item) === apiClass ||
-              item.bean === apiClass ||
-              item.displayName === apiClass
-          )
-          
-          const key = `components-business-api-${apiClass}-${groupIndex}`
+          const key = `components-business-service-${serviceName}-${groupIndex}`
           if (!(key in expanded.value)) expanded.value[key] = true
           
           sections.push({
             key,
             type: "BUSINESS",
-            label: apiItem?.displayName || apiItem?.name || apiClass,
+            label: service?.displayName || service?.name || serviceName,
             color: typeColorMap[type] ?? paletteColors[groupIndex % paletteColors.length],
             icon: Layers,
-            items: [apiItem].filter(Boolean) as EndpointComponent[], // API 类本身（不可拖拽）
+            items: service ? [service] : [], // 服务本身（如果有，不可拖拽）
             isCategory: true,
             children: [
               {
-                apiClass,
+                apiClass: serviceName,
                 items: operations, // 操作方法（可拖拽）
               },
             ],
           })
         })
 
-        // 如果有独立的 API 类（没有操作方法），单独显示
-        apiItems.forEach((apiItem) => {
-          const apiClass =
-            extractApiClassFromPath(apiItem.path) ||
-            extractApiClassFromConfig(apiItem) ||
-            apiItem.bean ||
-            apiItem.displayName ||
-            "未知类"
-          if (!apiClassMap.has(apiClass) || apiClassMap.get(apiClass)!.length === 0) {
-            const key = `components-business-api-solo-${apiClass}-${groupIndex}`
+        // 如果有独立的服务（没有操作方法），单独显示
+        serviceItems.forEach((serviceItem) => {
+          const serviceName =
+            extractApiClassFromPath(serviceItem.path) ||
+            extractApiClassFromConfig(serviceItem) ||
+            serviceItem.bean ||
+            serviceItem.displayName ||
+            "未知服务"
+          if (!serviceMap.has(serviceName) || serviceMap.get(serviceName)!.operations.length === 0) {
+            const key = `components-business-service-solo-${serviceName}-${groupIndex}`
             if (!(key in expanded.value)) expanded.value[key] = true
             sections.push({
               key,
               type: "BUSINESS",
-              label: apiItem.displayName || apiItem.name || apiClass,
+              label: serviceItem.displayName || serviceItem.name || serviceName,
               color: typeColorMap[type] ?? paletteColors[groupIndex % paletteColors.length],
               icon: Layers,
-              items: [apiItem],
+              items: [serviceItem],
               isCategory: true,
             })
           }
         })
-      } else {
-        // 如果没有层级关系，保持原有分组方式
-        if (apiItems.length > 0) {
-          const key = `components-business-api-${groupIndex}`
-          if (!(key in expanded.value)) expanded.value[key] = true
-          sections.push({
-            key,
-            type: "BUSINESS",
-            label: "API 类",
-            color: typeColorMap[type] ?? paletteColors[groupIndex % paletteColors.length],
-            icon: Layers,
-            items: apiItems,
-            isCategory: true,
-          })
-        }
-
-        if (operationItems.length > 0) {
-          const key = `components-business-operation-${groupIndex}`
-          if (!(key in expanded.value)) expanded.value[key] = true
-          sections.push({
-            key,
-            type: "BUSINESS",
-            label: "操作方法",
-            color: typeColorMap[type] ?? paletteColors[groupIndex % paletteColors.length],
-            icon: Layers,
-            items: operationItems,
-          })
-        }
       }
 
       // 添加其他业务组件分组
@@ -275,8 +257,72 @@ const componentSections = computed(() => {
   return sections
 })
 
+// 过滤后的组件分组（根据搜索关键词）
+const filteredComponentSections = computed(() => {
+  if (!searchKeyword.value.trim()) {
+    return componentSections.value
+  }
+  
+  const keyword = searchKeyword.value.toLowerCase().trim()
+  return componentSections.value
+    .map((section) => {
+      if (section.isCategory && section.children) {
+        // 两级结构：过滤操作项
+        const filteredChildren = section.children.map((child) => ({
+          ...child,
+          items: child.items.filter((item) => {
+            const name = displayName(item).toLowerCase()
+            const desc = displayDesc(item, section.label).toLowerCase()
+            const bean = (item.bean || "").toLowerCase()
+            const method = (item.method || "").toLowerCase()
+            return name.includes(keyword) || desc.includes(keyword) || bean.includes(keyword) || method.includes(keyword)
+          }),
+        })).filter((child) => child.items.length > 0)
+        
+        // 检查服务名称是否匹配
+        const serviceMatch = section.items.some((item) => {
+          const name = displayName(item).toLowerCase()
+          const desc = displayDesc(item, section.label).toLowerCase()
+          return name.includes(keyword) || desc.includes(keyword)
+        })
+        
+        if (filteredChildren.length > 0 || serviceMatch) {
+          return {
+            ...section,
+            children: filteredChildren.length > 0 ? filteredChildren : section.children,
+          }
+        }
+        return null
+      } else {
+        // 普通列表：过滤项
+        const filteredItems = section.items.filter((item) => {
+          if (section.key === "logic") {
+            const title = (item.title || "").toLowerCase()
+            const desc = (item.description || "").toLowerCase()
+            return title.includes(keyword) || desc.includes(keyword)
+          } else {
+            const name = displayName(item as EndpointComponent).toLowerCase()
+            const desc = displayDesc(item as EndpointComponent, section.label).toLowerCase()
+            const bean = ((item as EndpointComponent).bean || "").toLowerCase()
+            const method = ((item as EndpointComponent).method || "").toLowerCase()
+            return name.includes(keyword) || desc.includes(keyword) || bean.includes(keyword) || method.includes(keyword)
+          }
+        })
+        
+        if (filteredItems.length > 0) {
+          return {
+            ...section,
+            items: filteredItems,
+          }
+        }
+        return null
+      }
+    })
+    .filter((section) => section !== null) as typeof componentSections.value
+})
+
 const sections = computed(() => [
-  ...componentSections.value,
+  ...filteredComponentSections.value,
   { key: "logic", label: LABELS.logic, color: "#6366f1", icon: GitBranch, items: logicItems },
 ])
 
@@ -316,11 +362,11 @@ function displayDesc(item: EndpointComponent, fallback: string) {
 }
 
 /**
- * 判断是否为 FLOW_API 类型的组件
- * FLOW_API 是类级别组件，不能拖拽到画布（只有方法级别的 FlowOperation 可以拖拽）
+ * 判断是否为 SERVICE 类型的组件
+ * SERVICE 是类级别组件，不能拖拽到画布（只有方法级别的 FlowOperation 可以拖拽）
  */
-function isFlowApi(item: EndpointComponent): boolean {
-  return normalizeType(item.endpointType) === "FLOW_API"
+function isService(item: EndpointComponent): boolean {
+  return normalizeType(item.endpointType) === "SERVICE"
 }
 
 onMounted(() => {
@@ -349,6 +395,17 @@ watch(
     </div>
 
     <div v-if="nav === 'flow'" class="section-list">
+      <!-- 搜索框 -->
+      <div class="search-box">
+        <Search :size="14" class="search-icon" />
+        <input
+          v-model="searchKeyword"
+          type="text"
+          class="search-input"
+          placeholder="搜索服务或操作..."
+        />
+      </div>
+      
       <div v-if="loading" class="placeholder">正在加载组件...</div>
       <div v-else-if="errorMessage" class="placeholder error">加载失败：{{ errorMessage }}</div>
       <template v-else>
@@ -361,25 +418,8 @@ watch(
           </button>
           <transition name="section">
             <div v-show="expanded[section.key]" class="item-stack">
-              <!-- 层级结构：API 类作为类别，操作方法作为子项 -->
+              <!-- 层级结构：服务名称已在顶部标题显示，这里直接显示操作方法 -->
               <template v-if="section.isCategory && section.children">
-                <!-- API 类本身（不可拖拽，仅显示） -->
-                <div
-                  v-for="item in section.items"
-                  :key="item.id ?? item.displayName ?? item.bean ?? item.method"
-                  class="item-card item-card--category"
-                >
-                  <div class="item-bullet" :style="{ background: section.color }"></div>
-                  <div class="item-content">
-                    <div class="item-title">
-                      {{ displayName(item as EndpointComponent) }}
-                      <span class="item-badge">（类别）</span>
-                    </div>
-                    <div class="item-desc">
-                      {{ displayDesc(item as EndpointComponent, section.label) }}
-                    </div>
-                  </div>
-                </div>
                 <!-- 操作方法子项（可拖拽） -->
                 <div
                   v-for="child in section.children"
@@ -414,23 +454,17 @@ watch(
                   v-for="item in section.items"
                   :key="item.id ?? item.displayName ?? item.bean ?? item.method ?? item.title"
                   class="item-card"
-                  :class="{ 'item-card--disabled': isFlowApi(item) || section.isCategory }"
-                  :draggable="!isFlowApi(item) && !section.isCategory"
+                  :class="{ 'item-card--disabled': isService(item) || section.isCategory }"
+                  :draggable="!isService(item) && !section.isCategory"
                   @dragstart="handleDragStart($event, item, section.key)"
                 >
                   <div class="item-bullet" :style="{ background: section.color }"></div>
                   <div class="item-content">
                     <div class="item-title">
                       {{ section.key === "logic" ? item.title : displayName(item as EndpointComponent) }}
-                      <span v-if="section.key !== 'logic' && (isFlowApi(item) || section.isCategory)" class="item-badge">
-                        （{{ section.isCategory ? "类别" : "类定义" }}）
-                      </span>
                     </div>
                     <div class="item-desc">
                       {{ section.key === "logic" ? item.description : displayDesc(item as EndpointComponent, section.label) }}
-                      <span v-if="section.key !== 'logic' && (isFlowApi(item) || section.isCategory)" class="item-hint">
-                        （仅查看，请使用操作方法）
-                      </span>
                     </div>
                     <div
                       v-if="section.key !== 'logic' && (item as EndpointComponent).bean"
@@ -492,8 +526,38 @@ watch(
   border-color: #111827;
 }
 
+.search-box {
+  position: relative;
+  margin: 12px;
+  margin-bottom: 8px;
+}
+
+.search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #94a3b8;
+  pointer-events: none;
+}
+
+.search-input {
+  width: 100%;
+  padding: 8px 10px 8px 32px;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  border-radius: 6px;
+  font-size: 12px;
+  background: #fff;
+  transition: border-color 0.2s;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: #2563eb;
+}
+
 .section-list {
-  padding: 12px;
+  padding: 0 12px 12px;
   overflow: auto;
   flex: 1;
   display: flex;
@@ -510,20 +574,28 @@ watch(
 
 .section-header {
   width: 100%;
-  padding: 10px 14px;
+  padding: 12px 14px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   border: none;
   background: transparent;
   cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.section-header:hover {
+  background: rgba(148, 163, 184, 0.05);
+  border-radius: 14px 14px 0 0;
 }
 
 .section-title {
   font-weight: 600;
+  font-size: 13px;
   flex: 1;
   text-align: left;
-  color: #1f2937;
+  color: #1e293b;
+  line-height: 1.4;
 }
 
 .section-count {
@@ -543,18 +615,20 @@ watch(
 .item-stack {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 0 12px 12px;
+  gap: 6px;
+  padding: 8px 14px 14px;
+  position: relative;
 }
 
 .item-card {
   display: flex;
   gap: 10px;
   border: 1px solid rgba(226, 232, 240, 0.8);
-  border-radius: 12px;
-  padding: 10px;
+  border-radius: 8px;
+  padding: 10px 12px;
   cursor: grab;
-  transition: border-color 0.2s ease, transform 0.2s ease;
+  background: #fff;
+  transition: all 0.2s ease;
 }
 
 .item-card:active {
@@ -563,7 +637,8 @@ watch(
 
 .item-card:hover {
   border-color: #2563eb;
-  transform: translateX(2px);
+  background: #f8fafc;
+  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.1);
 }
 
 .item-card--disabled {
@@ -592,18 +667,34 @@ watch(
 
 .item-title {
   font-size: 13px;
-  font-weight: 600;
-  color: #0f172a;
+  font-weight: 500;
+  color: #1e293b;
+  line-height: 1.4;
+}
+
+.item-card--child .item-title {
+  font-weight: 500;
+  color: #334155;
 }
 
 .item-desc {
-  font-size: 12px;
-  color: #475569;
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.4;
+  margin-top: 2px;
+}
+
+.item-card--child .item-desc {
+  color: #64748b;
 }
 
 .item-meta {
-  font-size: 11px;
+  font-size: 10px;
   color: #94a3b8;
+  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(226, 232, 240, 0.5);
 }
 
 .item-tag {
@@ -647,23 +738,29 @@ watch(
 }
 
 .item-card--child {
-  margin-left: 20px;
-  border-left: 2px solid rgba(148, 163, 184, 0.3);
-  padding-left: 12px;
+  margin-left: 0;
+  border-left: 3px solid rgba(148, 163, 184, 0.2);
+  padding-left: 14px;
+  background: #fafbfc;
+}
+
+.item-card--child:hover {
+  border-left-color: #2563eb;
+  background: #f1f5f9;
 }
 
 .category-children {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 4px;
-  margin-bottom: 8px;
+  gap: 4px;
+  margin-top: 2px;
 }
 
 .item-bullet--child {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   margin-top: 6px;
+  flex-shrink: 0;
 }
 
 .placeholder {

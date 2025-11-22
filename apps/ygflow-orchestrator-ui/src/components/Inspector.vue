@@ -230,30 +230,29 @@ function updateEdgeField(partial: Record<string, any>) {
 }
 
 /**
- * 获取 FlowApi 的 Service name（bean 名称）
+ * 获取 Service 的 bean 名称
  * bean 名称的优先级：
  * 1. 从 Spring 注解（@Service、@Component）的 value 属性获取
  * 2. 从 @FlowApi 注解的 value 属性获取
  * 3. 从 @FlowApi 注解的 name 属性获取
  * 4. 默认使用类名首字母小写
  * 
- * 对于 FLOW_API 类型：从 configJson 中解析 beanName 字段
- * 对于 FLOW_OPERATION 类型：从 configJson 中解析 flowApiBeanName 字段（优先）或 flowApiName 字段
+ * 对于 SERVICE 类型：从 configJson 中解析 bean 字段
+ * 对于 FLOW_OPERATION 类型：从 configJson 中解析 serviceBean 字段
  */
 function getServiceName(comp: any): string | null {
   if (!comp) return null
   
   const endpointType = comp.endpointType
   
-  // 如果是 FLOW_API 类型，从 configJson 中解析 beanName
-  if (endpointType === "FLOW_API") {
+  // 如果是 SERVICE 类型，从 configJson 中解析 bean
+  if (endpointType === "SERVICE") {
     try {
       const configJson = comp.configJson
       if (typeof configJson === "string" && configJson) {
         const config = JSON.parse(configJson)
-        // 优先使用 beanName（从 Spring 注解获取）
-        if (config.beanName && typeof config.beanName === "string") {
-          return config.beanName
+        if (config.bean && typeof config.bean === "string") {
+          return config.bean
         }
         // 回退到使用 name
         if (config.name && typeof config.name === "string") {
@@ -265,20 +264,19 @@ function getServiceName(comp: any): string | null {
     }
   }
   
-  // 如果是 FLOW_OPERATION 类型，从 configJson 中解析 flowApiBeanName
-  // 后端已经在 FlowOperation 的 configJson 中添加了 flowApiBeanName 字段（从 Spring 注解获取）
+  // 如果是 FLOW_OPERATION 类型，从 configJson 中解析 serviceBean
+  // 后端已经在 FlowOperation 的 configJson 中添加了 serviceBean 字段（从父级 service 对象获取）
   if (endpointType === "FLOW_OPERATION") {
     try {
       const configJson = comp.configJson
       if (typeof configJson === "string" && configJson) {
         const config = JSON.parse(configJson)
-        // 优先使用 flowApiBeanName（从 @Service/@Component 获取的 bean 名称）
-        if (config.flowApiBeanName && typeof config.flowApiBeanName === "string") {
-          return config.flowApiBeanName
+        if (config.serviceBean && typeof config.serviceBean === "string") {
+          return config.serviceBean
         }
-        // 回退到使用 flowApiName
-        if (config.flowApiName && typeof config.flowApiName === "string") {
-          return config.flowApiName
+        // 回退到使用 serviceName
+        if (config.serviceName && typeof config.serviceName === "string") {
+          return config.serviceName
         }
       }
     } catch {
@@ -287,8 +285,6 @@ function getServiceName(comp: any): string | null {
   }
   
   // 回退到使用 bean 字段
-  // 注意：对于 FlowOperation，bean 字段可能不是 flowApi 的 Service name
-  // 但如果没有其他方式获取，暂时使用 bean 作为显示
   return comp.bean || null
 }
 </script>
@@ -448,17 +444,17 @@ function getServiceName(comp: any): string | null {
                   <div v-else class="type-display">
                     <span class="pill-text type-text">{{ formatInputType(input) }}</span>
                   </div>
-                  <!-- 脚本值显示 -->
-                  <div class="script-value-preview">
-                    <div class="muted small" style="margin-bottom: 4px;">取值</div>
-                    <textarea
-                      class="input script-value-input"
-                      :value="getInputScript(input)"
-                      placeholder="点击此处打开脚本编辑器..."
-                      readonly
-                      @click="scriptEditorRefs[index]?.openCodeEditor()"
-                    ></textarea>
-                  </div>
+                </div>
+                <!-- 值字段：独立显示在类型下方 -->
+                <div class="input-label">
+                  <div class="muted small">值</div>
+                  <textarea
+                    class="input script-value-input"
+                    :value="getInputScript(input)"
+                    placeholder="点击此处打开脚本编辑器配置参数值..."
+                    readonly
+                    @click="scriptEditorRefs[index]?.openCodeEditor()"
+                  ></textarea>
                 </div>
               </div>
               <div class="input-actions">

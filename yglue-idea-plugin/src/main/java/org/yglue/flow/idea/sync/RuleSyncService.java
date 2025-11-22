@@ -54,38 +54,158 @@ public class RuleSyncService {
 
         boolean needSync = heartbeat.optBoolean("needSync", false);
         JSONArray pending = heartbeat.optJSONArray("pendingFlows");
-        if (!needSync || pending == null || pending.length() == 0) {
-            downloadEntryPoints();
-            return SyncResult.upToDate();
-        }
-
+        
         Files.createDirectories(rulesDirectory);
-
+        
         List<SyncResult.Entry> entries = new ArrayList<>();
-        indicator.setIndeterminate(false);
+        
+        // 处理待同步的流程
+        if (needSync && pending != null && pending.length() > 0) {
+            indicator.setIndeterminate(false);
+            for (int i = 0; i < pending.length(); i++) {
+                indicator.checkCanceled();
+                JSONObject flow = pending.getJSONObject(i);
+                String flowCode = flow.optString("flowCode");
+                int versionNo = flow.optInt("latestVersion", -1);
+                indicator.setText("Downloading " + flowCode + " v" + versionNo);
 
-        for (int i = 0; i < pending.length(); i++) {
-            indicator.checkCanceled();
-            JSONObject flow = pending.getJSONObject(i);
-            String flowCode = flow.optString("flowCode");
-            int versionNo = flow.optInt("latestVersion", -1);
-            indicator.setText("Downloading " + flowCode + " v" + versionNo);
+                if (flowCode.isBlank() || versionNo < 0) {
+                    continue;
+                }
 
-            if (flowCode.isBlank() || versionNo < 0) {
-                continue;
+                String json = fetchFlowContent(flowCode, versionNo);
+                Path file = writeRuleFile(flowCode, json);
+                indicator.setText2(file.toString());
+                sendAck(flowCode, versionNo);
+                entries.add(new SyncResult.Entry(flowCode, versionNo, file));
+                indicator.setFraction((double) (i + 1) / pending.length());
             }
-
-            String json = fetchFlowContent(flowCode, versionNo);
-            Path file = writeRuleFile(flowCode, json);
-            indicator.setText2(file.toString());
-            sendAck(flowCode, versionNo);
-            entries.add(new SyncResult.Entry(flowCode, versionNo, file));
-            indicator.setFraction((double) (i + 1) / pending.length());
         }
-
+        
+        // 检查本地文件是否存在，如果缺失则重新下载
+        indicator.setIndeterminate(true);
+        indicator.setText("Checking local rule files...");
+        List<SyncResult.Entry> missingFiles = checkAndDownloadMissingFiles(indicator);
+        entries.addAll(missingFiles);
+        
         indicator.setFraction(1.0);
         downloadEntryPoints();
-        return SyncResult.synced(entries);
+        
+        if (entries.isEmpty()) {
+            return SyncResult.upToDate();
+        } else {
+            return SyncResult.synced(entries);
+        }
+    }
+    
+    /**
+     * 检查本地规则文件是否存在，如果缺失则重新下载
+     */
+    private List<SyncResult.Entry> checkAndDownloadMissingFiles(@NotNull ProgressIndicator indicator) throws Exception {
+        List<SyncResult.Entry> entries = new ArrayList<>();
+        
+        // 获取所有流程列表
+        JSONArray allFlows = fetchAllFlows();
+        if (allFlows == null || allFlows.length() == 0) {
+            return entries;
+        }
+        
+        indicator.setIndeterminate(false);
+        indicator.setText("Checking missing local files...");
+        
+        for (int i = 0; i < allFlows.length(); i++) {
+            indicator.checkCanceled();
+            JSONObject flowObj = allFlows.getJSONObject(i);
+            String flowCode = flowObj.optString("code");
+            if (flowCode.isBlank()) {
+                continue;
+            }
+            
+            // 检查本地文件是否存在
+            String fileName = sanitizeFileName(flowCode) + ".json";
+            Path localFile = rulesDirectory.resolve(fileName);
+            if (Files.exists(localFile)) {
+                continue; // 文件存在，跳过
+            }
+            
+            // 文件不存在，获取已发布的版本并下载
+            try {
+                JSONArray versions = fetchFlowVersions(flowCode);
+                if (versions == null || versions.length() == 0) {
+                    continue;
+                }
+                
+                // 查找已发布的版本
+                Integer publishedVersionNo = null;
+                for (int j = 0; j < versions.length(); j++) {
+                    JSONObject version = versions.getJSONObject(j);
+                    if (version.optBoolean("published", false)) {
+                        publishedVersionNo = version.optInt("versionNo", -1);
+                        break;
+                    }
+                }
+                
+                // 如果没有已发布的版本，使用最新版本
+                if (publishedVersionNo == null || publishedVersionNo < 0) {
+                    JSONObject latestVersion = versions.getJSONObject(0);
+                    publishedVersionNo = latestVersion.optInt("versionNo", -1);
+                }
+                
+                if (publishedVersionNo != null && publishedVersionNo > 0) {
+                    indicator.setText("Downloading missing file: " + flowCode + " v" + publishedVersionNo);
+                    String json = fetchFlowContent(flowCode, publishedVersionNo);
+                    Path file = writeRuleFile(flowCode, json);
+                    indicator.setText2(file.toString());
+                    sendAck(flowCode, publishedVersionNo);
+                    entries.add(new SyncResult.Entry(flowCode, publishedVersionNo, file));
+                }
+            } catch (Exception ex) {
+                // 如果获取版本失败，记录日志但继续处理其他流程
+                // 这里可以添加日志记录
+                continue;
+            }
+            
+            indicator.setFraction((double) (i + 1) / allFlows.length());
+        }
+        
+        return entries;
+    }
+    
+    /**
+     * 获取所有流程列表
+     */
+    private JSONArray fetchAllFlows() throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(endpoint + "/api/projects/" + encode(projectKey) + "/flows"))
+                .timeout(Duration.ofSeconds(15))
+                .GET()
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() == 404) {
+            return new JSONArray();
+        }
+        ensureSuccess(response, "Fetch all flows failed");
+        return new JSONArray(response.body());
+    }
+    
+    /**
+     * 获取指定流程的所有版本
+     */
+    private JSONArray fetchFlowVersions(String flowCode) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(endpoint + "/api/projects/" + encode(projectKey)
+                        + "/flows/" + encode(flowCode) + "/versions"))
+                .timeout(Duration.ofSeconds(15))
+                .GET()
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() == 404) {
+            return new JSONArray();
+        }
+        ensureSuccess(response, "Fetch flow versions failed for " + flowCode);
+        return new JSONArray(response.body());
     }
 
     private JSONObject sendHeartbeat() throws Exception {

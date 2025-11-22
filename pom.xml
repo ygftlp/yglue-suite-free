@@ -37,6 +37,12 @@
                 <artifactId>slf4j-api</artifactId>
                 <version>${slf4j.version}</version>
             </dependency>
+            <!-- AspectJ 版本管理（Spring Boot 3.3.4 使用 1.9.22） -->
+            <dependency>
+                <groupId>org.aspectj</groupId>
+                <artifactId>aspectjrt</artifactId>
+                <version>1.9.22</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
