@@ -14,7 +14,7 @@
   </extensions>
 
   <actions>
-    <group id="org.yglue.flow.actions" text="yglue" description="yglue Tools" popup="true">
+    <group id="org.yglue.flow.actions" text="Yglue" description="yglue Tools" popup="true">
       <add-to-group group-id="ToolsMenu" anchor="last"/>
       <action id="org.yglue.flow.ExportAction"
               class="org.yglue.flow.idea.ExportMetadataAction"
