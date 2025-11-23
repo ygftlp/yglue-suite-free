@@ -195,20 +195,35 @@ function updateDataResponseFormat() {
   })
 }
 
-// 构建示例响应
+// 构建示例响应（成功和错误两种场景）
 function buildExampleResponse() {
-  const response: Record<string, any> = {
-    [dataResponseFormatConfig.value.errorCodeField]: "VALIDATION_FAILED",
-    [dataResponseFormatConfig.value.errorMessageField]: "参数 'userId' 校验失败",
+  const successResponse: Record<string, any> = {
+    [dataResponseFormatConfig.value.errorCodeField]: dataResponseFormatConfig.value.successCode,
+    [dataResponseFormatConfig.value.errorMessageField]: "操作成功",
+    data: {
+      id: 1,
+      name: "张三",
+      email: "zhangsan@example.com"
+    }
   }
   
+  const errorResponse: Record<string, any> = {
+    [dataResponseFormatConfig.value.errorCodeField]: dataResponseFormatConfig.value.defaultErrorCode,
+    [dataResponseFormatConfig.value.errorMessageField]: "参数 'userId' 校验失败"
+  }
+  
+  // 添加自定义字段（仅成功响应）
   dataResponseFormatConfig.value.customFields.forEach(field => {
     if (field.fieldName.trim()) {
-      response[field.fieldName] = { field: "userId", errorCode: "REQUIRED_MISSING" }
+      successResponse[field.fieldName] = "示例值"
+      // 错误响应不包含自定义字段（因为错误响应不包含 data）
     }
   })
   
-  return response
+  return {
+    success: successResponse,
+    error: errorResponse
+  }
 }
 
 function toggleEntrypoint(enabled: boolean) {
@@ -588,15 +603,25 @@ function getTypeTooltip(item: SchemaField): string | null {
                 </div>
               </div>
             </div>
-            
-            <div class="format-example">
-              <div class="example-title">示例响应：</div>
-              <pre class="example-code">{{
-                JSON.stringify(buildExampleResponse(), null, 2)
-              }}</pre>
-            </div>
           </div>
         </section>
+        
+        <!-- 示例响应（放在边框外） -->
+        <div class="format-example">
+          <div class="example-title">示例响应：</div>
+          <div class="example-section">
+            <div class="example-label">成功响应：</div>
+            <pre class="example-code">{{
+              JSON.stringify(buildExampleResponse().success, null, 2)
+            }}</pre>
+          </div>
+          <div class="example-section">
+            <div class="example-label">错误响应：</div>
+            <pre class="example-code">{{
+              JSON.stringify(buildExampleResponse().error, null, 2)
+            }}</pre>
+          </div>
+        </div>
 
         <section class="panel-section">
           <div class="section-title">REST 数据结构</div>
@@ -771,10 +796,10 @@ function getTypeTooltip(item: SchemaField): string | null {
 }
 
 .format-example {
-  margin-top: 12px;
-  padding: 12px;
+  margin-top: 0;
+  padding: 16px;
   background: #f9fafb;
-  border-radius: 6px;
+  border-radius: 8px;
   border: 1px solid #e5e7eb;
 }
 
@@ -783,6 +808,21 @@ function getTypeTooltip(item: SchemaField): string | null {
   font-weight: 500;
   color: #6b7280;
   margin-bottom: 8px;
+}
+
+.example-section {
+  margin-top: 12px;
+}
+
+.example-section:first-child {
+  margin-top: 0;
+}
+
+.example-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: #4b5563;
+  margin-bottom: 6px;
 }
 
 .example-code {
