@@ -10,11 +10,17 @@ import org.springframework.beans.factory.BeanFactory;
 import org.springframework.context.ApplicationContext;
 import org.yglue.flow.runtime.core.NodeExecutionContext;
 import org.yglue.flow.runtime.core.NodeExecutor;
+import org.yglue.flow.runtime.core.expression.ExpressionEngines;
+import org.yglue.flow.runtime.core.validator.*;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 服务节点执行器
@@ -64,6 +70,9 @@ public class ServiceNodeExecutor implements NodeExecutor {
     
     /** JSON 对象映射器，用于配置对象的转换 */
     private final ObjectMapper objectMapper;
+    
+    /** 校验引擎，用于执行参数校验 */
+    private final ValidatorEngine validatorEngine;
 
     /**
      * 构造函数
@@ -73,6 +82,7 @@ public class ServiceNodeExecutor implements NodeExecutor {
     public ServiceNodeExecutor(ApplicationContext applicationContext) {
         this.applicationContext = applicationContext;
         this.objectMapper = new ObjectMapper();
+        this.validatorEngine = new DefaultValidatorEngine();
     }
 
     /**
@@ -134,15 +144,11 @@ public class ServiceNodeExecutor implements NodeExecutor {
         Object bean;
         Class<?> beanType;
         try {
-            // 先通过 BeanFactory 获取 bean 的实际类型（处理代理类的情况）
-            if (applicationContext instanceof BeanFactory) {
-                BeanFactory beanFactory = (BeanFactory) applicationContext;
-                beanType = beanFactory.getType(beanName);
-                log.debug("[ServiceNodeExecutor] 从 BeanFactory 获取 bean 类型: nodeId={}, beanName={}, beanType={}", 
-                    nodeId, beanName, beanType != null ? beanType.getName() : "null");
-            } else {
-                beanType = null;
-            }
+            // 通过 BeanFactory 获取 bean 的实际类型（处理代理类的情况）
+            // ApplicationContext 继承自 BeanFactory，所以可以直接使用
+            beanType = applicationContext.getType(beanName);
+            log.debug("[ServiceNodeExecutor] 从 BeanFactory 获取 bean 类型: nodeId={}, beanName={}, beanType={}", 
+                nodeId, beanName, beanType != null ? beanType.getName() : "null");
             
             // 获取 bean 实例
             bean = applicationContext.getBean(beanName);
@@ -174,7 +180,7 @@ public class ServiceNodeExecutor implements NodeExecutor {
                 nodeId, targetClass.getName(), bean.getClass().getName());
         }
         
-        // 解析输入参数 - 统一通过脚本执行获取参数值
+        // 解析输入参数 - 统一通过脚本执行获取参数值，并执行校验
         log.debug("[ServiceNodeExecutor] 开始解析输入参数: nodeId={}", nodeId);
         List<Object> arguments = new ArrayList<>();
         Object inputsConfig = config.get("inputs");
@@ -190,6 +196,10 @@ public class ServiceNodeExecutor implements NodeExecutor {
                 Object value = resolveInputValue(input, context.getContext(), i, nodeId);
                 log.debug("[ServiceNodeExecutor] 参数 [{}] 解析结果: nodeId={}, value={}, valueType={}", 
                     i, nodeId, value, value != null ? value.getClass().getName() : "null");
+                
+                // 执行参数校验
+                validateInput(value, input, context, i, nodeId, config);
+                
                 arguments.add(value);
             }
         } else {
@@ -409,17 +419,17 @@ public class ServiceNodeExecutor implements NodeExecutor {
         log.error("[ServiceNodeExecutor] 未找到方法: clazz={}, name={}, argc={}", clazz.getName(), name, argc);
         
         // 收集所有可用的方法名和参数数量
-        java.util.Set<String> availableMethods = new java.util.LinkedHashSet<>();
+        Set<String> availableMethods = new LinkedHashSet<>();
         for (Method method : clazz.getMethods()) {
             if (method.getName().equals(name)) {
                 availableMethods.add(method.getName() + "/" + method.getParameterCount() + 
-                    " (" + java.util.Arrays.toString(method.getParameterTypes()) + ")");
+                    " (" + Arrays.toString(method.getParameterTypes()) + ")");
             }
         }
         for (Method method : clazz.getDeclaredMethods()) {
             if (method.getName().equals(name) && !availableMethods.contains(method.getName() + "/" + method.getParameterCount())) {
                 availableMethods.add(method.getName() + "/" + method.getParameterCount() + 
-                    " (" + java.util.Arrays.toString(method.getParameterTypes()) + ")");
+                    " (" + Arrays.toString(method.getParameterTypes()) + ")");
             }
         }
         
@@ -428,7 +438,7 @@ public class ServiceNodeExecutor implements NodeExecutor {
             errorMsg += ". Available methods with name '" + name + "': " + String.join(", ", availableMethods);
         } else {
             // 如果连同名方法都没有，列出所有方法
-            java.util.Set<String> allMethods = new java.util.LinkedHashSet<>();
+            Set<String> allMethods = new LinkedHashSet<>();
             for (Method method : clazz.getMethods()) {
                 allMethods.add(method.getName() + "/" + method.getParameterCount());
             }
@@ -517,12 +527,16 @@ public class ServiceNodeExecutor implements NodeExecutor {
      * 
      * <p>脚本执行环境：</p>
      * <ul>
-     *   <li>{@code ctx} - 流程上下文数据（Map），可通过 {@code ctx.request.path.xxx}、{@code ctx['key']} 等方式访问</li>
-     * </ul>
-     * 
-     * <p>向后兼容：</p>
-     * <ul>
-     *   <li>如果 script 字段不存在或为空，会尝试使用 transformer 字段（向后兼容旧数据）</li>
+     *   <li>{@code ctx} - 流程上下文数据（Map），包含完整的上下文数据，包括：
+     *     <ul>
+     *       <li>{@code ctx.request} - REST 请求参数对象（如果流程由 REST 请求触发）</li>
+     *       <li>{@code ctx.request.path.xxx} - 路径变量</li>
+     *       <li>{@code ctx.request.query.xxx} - 查询参数</li>
+     *       <li>{@code ctx.request.body.xxx} - 请求体字段</li>
+     *       <li>{@code ctx.request.headers.xxx} - 请求头</li>
+     *       <li>{@code ctx['key']} - 其他流程上下文数据</li>
+     *     </ul>
+     *   </li>
      * </ul>
      * 
      * @param input 输入参数配置 Map，应包含 script 字段
@@ -536,14 +550,8 @@ public class ServiceNodeExecutor implements NodeExecutor {
                                      org.yglue.flow.runtime.FlowContext flowContext, 
                                      int index, 
                                      String nodeId) {
-        // 获取 script 字段（优先使用 script，如果没有则使用 transformer 向后兼容）
+        // 获取 script 字段
         Object scriptObj = input.get("script");
-        if (scriptObj == null || String.valueOf(scriptObj).trim().isEmpty()) {
-            // 向后兼容：检查 transformer 字段
-            scriptObj = input.get("transformer");
-        }
-        
-        // 检查脚本是否为空
         if (scriptObj == null || String.valueOf(scriptObj).trim().isEmpty()) {
             log.warn("[ServiceNodeExecutor] 参数 [{}] 没有 script 配置，返回 null: nodeId={}", index, nodeId);
             return null;
@@ -556,6 +564,9 @@ public class ServiceNodeExecutor implements NodeExecutor {
         // 统一通过 Groovy 脚本执行获取值
         try {
             // 创建 Groovy 绑定，注入流程上下文
+            // ctx 包含完整的流程上下文数据，包括：
+            // - request: REST 请求参数（request.path.xxx, request.query.xxx, request.body.xxx 等）
+            // - 其他流程上下文数据
             Binding binding = new Binding();
             binding.setVariable("ctx", flowContext.data());
             
@@ -568,7 +579,381 @@ public class ServiceNodeExecutor implements NodeExecutor {
         } catch (Exception e) {
             log.error("[ServiceNodeExecutor] 脚本执行失败 [{}]: nodeId={}, script={}, error={}", 
                 index, nodeId, script, e.getMessage(), e);
-            throw new RuntimeException("Failed to execute script for input parameter [" + index + "]: " + e.getMessage(), e);
+            
+            // 检测常见的拼写错误，提供更友好的错误提示
+            String errorMessage = e.getMessage();
+            String helpfulHint = "";
+            if (errorMessage != null) {
+                if (errorMessage.contains("retrun") && errorMessage.contains("No signature of method")) {
+                    helpfulHint = " (提示：可能是拼写错误，请检查是否将 'return' 写成了 'retrun')";
+                } else if (errorMessage.contains("retun") && errorMessage.contains("No signature of method")) {
+                    helpfulHint = " (提示：可能是拼写错误，请检查是否将 'return' 写成了 'retun')";
+                }
+            }
+            
+            throw new RuntimeException("Failed to execute script for input parameter [" + index + "]: " 
+                + errorMessage + helpfulHint + "\n脚本内容: " + script, e);
+        }
+    }
+    
+    /**
+     * 校验输入参数
+     * <p>
+     * 根据输入参数配置中的 validators 列表执行校验。
+     * 如果校验失败，根据 failPolicy 决定是否抛出异常。
+     * </p>
+     *
+     * @param value 参数值
+     * @param input 输入参数配置
+     * @param context 节点执行上下文
+     * @param index 参数索引
+     * @param nodeId 节点ID
+     * @param nodeConfig 节点配置
+     * @throws RuntimeException 如果校验失败且 failPolicy 为 throw
+     */
+    private void validateInput(Object value, 
+                               Map<String, Object> input, 
+                               NodeExecutionContext context,
+                               int index,
+                               String nodeId,
+                               Map<String, Object> nodeConfig) {
+        // 获取输入参数名称和类型
+        String inputName = getString(input, "name");
+        if (inputName == null || inputName.isBlank()) {
+            inputName = "参数[" + index + "]";
+        }
+        String valueType = getString(input, "valueType");
+        if (valueType == null || valueType.isBlank()) {
+            valueType = value != null ? inferValueType(value) : "STRING";
+        }
+        
+        // 解析校验规则
+        List<ValidationRule> rules = ValidationRuleParser.parseFromInput(input);
+        
+        // 如果是对象类型且有 typeName，尝试从 Bean Validation 注解中提取校验规则
+        String typeName = getString(input, "typeName");
+        if ("OBJECT".equals(valueType) && typeName != null && !typeName.isBlank() && rules.isEmpty()) {
+            // 如果用户没有手动配置校验规则，尝试从 Bean Validation 注解中提取
+            List<BeanValidationExtractor.ObjectFieldValidation> beanValidations = 
+                BeanValidationExtractor.extractFieldValidations(typeName);
+            
+            // 如果提取到了 Bean Validation 规则，对对象字段进行校验
+            if (!beanValidations.isEmpty() && value != null) {
+                validateObjectFields(value, beanValidations, context, inputName, nodeId, input, nodeConfig);
+            }
+        }
+        
+        if (rules.isEmpty()) {
+            return; // 没有校验规则，跳过
+        }
+        
+        log.debug("[ServiceNodeExecutor] 开始校验参数 [{}]: nodeId={}, ruleCount={}", 
+            index, nodeId, rules.size());
+        
+        // 创建校验上下文
+        ValidationContext validationContext = new ValidationContext(
+            context.getContext(),
+            ExpressionEngines.getDefault(),
+            inputName,
+            valueType
+        );
+        
+        // 执行校验
+        List<ValidationResult> results = validatorEngine.validate(value, rules, validationContext);
+        
+        // 收集所有校验失败的结果
+        List<ValidationException.ValidationError> validationErrors = new ArrayList<>();
+        for (ValidationResult result : results) {
+            if (!result.isPassed()) {
+                String errorCode = mapValidatorTypeToErrorCode(result.getValidatorType());
+                String message = result.getMessage() != null 
+                    ? result.getMessage() 
+                    : "参数 '" + inputName + "' 校验失败";
+                validationErrors.add(new ValidationException.ValidationError(inputName, message, errorCode));
+            }
+        }
+        
+        // 如果有校验失败，根据 failPolicy 处理
+        if (!validationErrors.isEmpty()) {
+            String errorCode = validationErrors.size() == 1 
+                ? validationErrors.get(0).getErrorCode() 
+                : ValidationException.ERROR_CODE_VALIDATION_FAILED;
+            String message = validationErrors.size() == 1
+                ? validationErrors.get(0).getMessage()
+                : "参数 '" + inputName + "' 校验失败，共 " + validationErrors.size() + " 个错误";
+            
+            log.warn("[ServiceNodeExecutor] 参数校验失败 [{}]: nodeId={}, errorCount={}, message={}", 
+                index, nodeId, validationErrors.size(), message);
+            
+            // 获取 failPolicy（默认 throw）
+            String failPolicy = getFailPolicy(input, nodeConfig);
+            
+            if ("throw".equals(failPolicy)) {
+                throw new ValidationException(errorCode, message, inputName, validationErrors);
+            } else if ("skip".equals(failPolicy)) {
+                log.info("[ServiceNodeExecutor] 参数校验失败，跳过节点: nodeId={}, message={}", 
+                    nodeId, message);
+                throw new ValidationException(errorCode, "参数校验失败，跳过节点: " + message, inputName, validationErrors);
+            }
+            // failPolicy 为 "default" 时，继续执行（使用默认值）
+        }
+        
+        log.debug("[ServiceNodeExecutor] 参数校验通过 [{}]: nodeId={}", index, nodeId);
+    }
+    
+    /**
+     * 获取校验失败策略
+     * <p>
+     * 优先级：input.failPolicy > node.validation.failPolicy > 默认 "throw"
+     * </p>
+     *
+     * @param input 输入参数配置
+     * @param nodeConfig 节点配置
+     * @return 失败策略
+     */
+    @SuppressWarnings("unchecked")
+    private String getFailPolicy(Map<String, Object> input, Map<String, Object> nodeConfig) {
+        // 优先级1：input.failPolicy
+        String inputFailPolicy = getString(input, "failPolicy");
+        if (inputFailPolicy != null && !inputFailPolicy.isBlank()) {
+            return inputFailPolicy;
+        }
+        
+        // 优先级2：node.validation.failPolicy
+        Object validationObj = nodeConfig.get("validation");
+        if (validationObj != null) {
+            Map<String, Object> validation;
+            if (validationObj instanceof Map) {
+                validation = (Map<String, Object>) validationObj;
+            } else {
+                try {
+                    validation = objectMapper.convertValue(validationObj, Map.class);
+                } catch (Exception e) {
+                    validation = null;
+                }
+            }
+            if (validation != null) {
+                String nodeFailPolicy = getString(validation, "failPolicy");
+                if (nodeFailPolicy != null && !nodeFailPolicy.isBlank()) {
+                    return nodeFailPolicy;
+                }
+            }
+        }
+        
+        // 默认策略
+        return "throw";
+    }
+    
+    private String getString(Map<String, Object> map, String key) {
+        Object value = map.get(key);
+        return value != null ? String.valueOf(value) : null;
+    }
+    
+    private String inferValueType(Object value) {
+        if (value instanceof String) {
+            return "STRING";
+        } else if (value instanceof Number) {
+            return "NUMBER";
+        } else if (value instanceof Boolean) {
+            return "BOOLEAN";
+        } else if (value.getClass().isArray()) {
+            return "ARRAY";
+        } else {
+            return "OBJECT";
+        }
+    }
+    
+    /**
+     * 将校验器类型映射为错误码
+     *
+     * @param validatorType 校验器类型
+     * @return 错误码
+     */
+    private String mapValidatorTypeToErrorCode(String validatorType) {
+        if (validatorType == null) {
+            return ValidationException.ERROR_CODE_VALIDATION_FAILED;
+        }
+        return switch (validatorType) {
+            case "required" -> ValidationException.ERROR_CODE_REQUIRED_MISSING;
+            case "type" -> ValidationException.ERROR_CODE_TYPE_MISMATCH;
+            case "regex" -> ValidationException.ERROR_CODE_FORMAT_INVALID;
+            case "range" -> ValidationException.ERROR_CODE_OUT_OF_RANGE;
+            case "length" -> ValidationException.ERROR_CODE_LENGTH_INVALID;
+            case "expression" -> ValidationException.ERROR_CODE_EXPRESSION_FAILED;
+            default -> ValidationException.ERROR_CODE_VALIDATION_FAILED;
+        };
+    }
+    
+    /**
+     * 校验对象字段
+     *
+     * @param object 对象实例
+     * @param fieldValidations 字段校验规则列表
+     * @param context 节点执行上下文
+     * @param inputName 输入参数名称
+     * @param nodeId 节点ID
+     * @param input 输入参数配置（用于获取 failPolicy）
+     * @param nodeConfig 节点配置（用于获取 failPolicy）
+     */
+    private void validateObjectFields(Object object,
+                                      List<BeanValidationExtractor.ObjectFieldValidation> fieldValidations,
+                                      NodeExecutionContext context,
+                                      String inputName,
+                                      String nodeId,
+                                      Map<String, Object> input,
+                                      Map<String, Object> nodeConfig) {
+        List<ValidationException.ValidationError> validationErrors = new ArrayList<>();
+        
+        for (BeanValidationExtractor.ObjectFieldValidation fieldValidation : fieldValidations) {
+            String fieldPath = fieldValidation.getFieldPath();
+            List<ValidationRule> rules = fieldValidation.getRules();
+            
+            // 获取字段值
+            Object fieldValue = getFieldValue(object, fieldPath);
+            
+            // 创建字段校验上下文
+            ValidationContext fieldContext = new ValidationContext(
+                context.getContext(),
+                ExpressionEngines.getDefault(),
+                inputName + "." + fieldPath,
+                inferValueType(fieldValue)
+            );
+            
+            // 执行字段校验
+            List<ValidationResult> results = validatorEngine.validate(fieldValue, rules, fieldContext);
+            
+            // 收集校验失败的结果
+            for (ValidationResult result : results) {
+                if (!result.isPassed()) {
+                    String errorCode = mapValidatorTypeToErrorCode(result.getValidatorType());
+                    String message = result.getMessage() != null 
+                        ? result.getMessage() 
+                        : "字段 '" + fieldPath + "' 校验失败";
+                    validationErrors.add(new ValidationException.ValidationError(
+                        inputName + "." + fieldPath, message, errorCode));
+                }
+            }
+        }
+        
+        // 如果有校验失败，根据 failPolicy 处理
+        if (!validationErrors.isEmpty()) {
+            String errorCode = validationErrors.size() == 1 
+                ? validationErrors.get(0).getErrorCode() 
+                : ValidationException.ERROR_CODE_VALIDATION_FAILED;
+            String message = validationErrors.size() == 1
+                ? validationErrors.get(0).getMessage()
+                : "对象字段校验失败，共 " + validationErrors.size() + " 个错误";
+            
+            log.warn("[ServiceNodeExecutor] 对象字段校验失败: nodeId={}, inputName={}, errorCount={}", 
+                nodeId, inputName, validationErrors.size());
+            
+            // 获取 failPolicy（默认 throw）
+            String failPolicy = getFailPolicy(input, nodeConfig);
+            
+            if ("throw".equals(failPolicy)) {
+                throw new ValidationException(errorCode, message, inputName, validationErrors);
+            } else if ("skip".equals(failPolicy)) {
+                log.info("[ServiceNodeExecutor] 对象字段校验失败，跳过节点: nodeId={}, message={}", 
+                    nodeId, message);
+                throw new ValidationException(errorCode, "对象字段校验失败，跳过节点: " + message, inputName, validationErrors);
+            }
+            // failPolicy 为 "default" 时，继续执行（使用默认值）
+        }
+    }
+    
+    /**
+     * 获取对象字段值（支持嵌套字段和数组索引）
+     *
+     * @param object 对象实例
+     * @param fieldPath 字段路径（如 "name"、"user.email"、"items[0].id"）
+     * @return 字段值
+     */
+    private Object getFieldValue(Object object, String fieldPath) {
+        if (object == null || fieldPath == null || fieldPath.isBlank()) {
+            return null;
+        }
+        
+        try {
+            String[] parts = fieldPath.split("\\.");
+            Object current = object;
+            
+            for (String part : parts) {
+                if (current == null) {
+                    return null;
+                }
+                
+                // 处理数组索引（如 items[0]）
+                if (part.contains("[") && part.contains("]")) {
+                    int bracketIndex = part.indexOf('[');
+                    String fieldName = part.substring(0, bracketIndex);
+                    String indexStr = part.substring(bracketIndex + 1, part.indexOf(']'));
+                    int index = Integer.parseInt(indexStr);
+                    
+                    // 获取字段
+                    Object fieldObj = getFieldValueByReflection(current, fieldName);
+                    if (fieldObj == null) {
+                        return null;
+                    }
+                    
+                    // 获取数组元素
+                    if (fieldObj.getClass().isArray()) {
+                        current = java.lang.reflect.Array.get(fieldObj, index);
+                    } else if (fieldObj instanceof java.util.List) {
+                        current = ((java.util.List<?>) fieldObj).get(index);
+                    } else {
+                        return null;
+                    }
+                } else {
+                    current = getFieldValueByReflection(current, part);
+                }
+            }
+            
+            return current;
+        } catch (Exception e) {
+            log.debug("Failed to get field value for path {}: {}", fieldPath, e.getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * 通过反射或 Map 获取字段值
+     * <p>
+     * 支持两种方式：
+     * 1. 如果对象是 Map，通过 key 获取值
+     * 2. 否则通过反射获取字段值或调用 getter 方法
+     * </p>
+     *
+     * @param object 对象实例
+     * @param fieldName 字段名称
+     * @return 字段值
+     */
+    private Object getFieldValueByReflection(Object object, String fieldName) {
+        // 如果对象是 Map，直接通过 key 获取
+        if (object instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> map = (Map<String, Object>) object;
+            return map.get(fieldName);
+        }
+        
+        // 否则通过反射获取字段值
+        try {
+            Class<?> clazz = object.getClass();
+            Field field = clazz.getDeclaredField(fieldName);
+            field.setAccessible(true);
+            return field.get(object);
+        } catch (NoSuchFieldException e) {
+            // 尝试通过 getter 方法获取
+            try {
+                String getterName = "get" + fieldName.substring(0, 1).toUpperCase() + fieldName.substring(1);
+                Method getter = object.getClass().getMethod(getterName);
+                return getter.invoke(object);
+            } catch (Exception ex) {
+                log.debug("Failed to get field {} via getter: {}", fieldName, ex.getMessage());
+                return null;
+            }
+        } catch (Exception e) {
+            log.debug("Failed to get field {}: {}", fieldName, e.getMessage());
+            return null;
         }
     }
 }

@@ -19,5 +19,4 @@ public class ProjectComponentItemResponse {
     private Long entrypointId;
     private String flowCode;
     private Boolean enabled;
-    private Boolean replaceResponse;
 }

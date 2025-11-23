@@ -33,6 +33,7 @@ import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
+import javax.swing.JTextField;
 import javax.swing.event.DocumentEvent;
 import java.awt.BorderLayout;
 import java.net.http.HttpClient;
@@ -45,6 +46,21 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * YGlue 插件设置配置界面
+ * <p>
+ * 提供插件设置的图形化配置界面，包括：
+ * - 服务器地址配置
+ * - 项目标识配置
+ * - 实例标识配置
+ * - 规则目录配置
+ * - 自动上传和同步设置
+ * - 连接状态检查
+ * </p>
+ *
+ * @author yglue
+ * @since 1.0
+ */
 public class YgflowSettingsConfigurable implements Configurable {
 
     private static final String DEFAULT_BASE_URL = "http://localhost:8090";
@@ -176,29 +192,31 @@ public class YgflowSettingsConfigurable implements Configurable {
                     "Choose the directory where flow rules will be stored",
                     currentProject(),
                     folderDescriptor,
-                    new Consumer<VirtualFile>() {
+                    new TextComponentAccessor<JTextField>() {
                         @Override
-                        public void accept(VirtualFile file) {
-                            if (file != null && file.isDirectory()) {
+                        public String getText(JTextField component) {
+                            return component.getText();
+                        }
+
+                        @Override
+                        public void setText(JTextField component, String text) {
+                            if (text != null && !text.isEmpty()) {
                                 Project project = currentProject();
-                                String selectedPath = file.getPath();
-                                if (selectedPath != null) {
-                                    if (project != null && project.getBasePath() != null) {
-                                        String basePath = project.getBasePath();
-                                        if (selectedPath.startsWith(basePath)) {
-                                            // 转换为相对路径
-                                            String relativePath = basePath.length() == selectedPath.length()
-                                                    ? "."
-                                                    : selectedPath.substring(basePath.length() + 1);
-                                            rulesDirField.setText(relativePath.replace('\\', '/'));
-                                        } else {
-                                            // 使用绝对路径
-                                            rulesDirField.setText(selectedPath.replace('\\', '/'));
-                                        }
+                                if (project != null && project.getBasePath() != null) {
+                                    String basePath = project.getBasePath();
+                                    if (text.startsWith(basePath)) {
+                                        // 转换为相对路径
+                                        String relativePath = basePath.length() == text.length()
+                                                ? "."
+                                                : text.substring(basePath.length() + 1);
+                                        component.setText(relativePath.replace('\\', '/'));
                                     } else {
                                         // 使用绝对路径
-                                        rulesDirField.setText(selectedPath.replace('\\', '/'));
+                                        component.setText(text.replace('\\', '/'));
                                     }
+                                } else {
+                                    // 使用绝对路径
+                                    component.setText(text.replace('\\', '/'));
                                 }
                             }
                         }

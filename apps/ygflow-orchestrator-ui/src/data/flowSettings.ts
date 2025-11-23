@@ -11,12 +11,30 @@
   redactKeys: string
 }
 
+/**
+ * 自定义字段配置
+ */
+export type CustomField = {
+  fieldName: string
+}
+
+/**
+ * 数据响应格式配置
+ */
+export type DataResponseFormatConfig = {
+  errorCodeField: string
+  errorMessageField: string
+  successCode?: number // 成功时的错误码值（默认 1）
+  defaultErrorCode?: number // 失败时的默认错误码值（默认 -1）
+  customFields?: CustomField[] // 自定义数据字段列表
+}
+
 export type FlowEntrypoint = {
   path: string
   method: string
-  replaceResponse: boolean
   enabled?: boolean
   requestSchemaJson?: string | null
+  dataResponseFormat?: DataResponseFormatConfig | null
 }
 
 export type FlowSettings = {

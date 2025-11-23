@@ -29,8 +29,17 @@ public final class MetadataChangeListener implements BulkFileListener, Disposabl
 
     private final Project project;
     private final AtomicLong lastTriggerTime = new AtomicLong(0);
-    private static final long DEBOUNCE_MS = 2000; // 防抖：2秒内的多次变化只触发一次
+    /** 防抖时间：2秒内的多次变化只触发一次 */
+    private static final long DEBOUNCE_MS = 2000;
 
+    /**
+     * 构造函数
+     * <p>
+     * 注册文件变化监听器，监听项目文件变化事件。
+     * </p>
+     *
+     * @param project 项目对象
+     */
     public MetadataChangeListener(@NotNull Project project) {
         this.project = project;
         // 注册文件变化监听器
@@ -38,6 +47,14 @@ public final class MetadataChangeListener implements BulkFileListener, Disposabl
         LOG.debug("Metadata change listener registered for project {}", project.getName());
     }
 
+    /**
+     * 文件变化后处理
+     * <p>
+     * 检查是否有相关的 Java 文件变化，如果有则触发元数据上传。
+     * </p>
+     *
+     * @param events 文件变化事件列表
+     */
     @Override
     public void after(@NotNull List<? extends VFileEvent> events) {
         // 检查是否启用了自动上传
@@ -80,7 +97,13 @@ public final class MetadataChangeListener implements BulkFileListener, Disposabl
 
     /**
      * 判断文件是否与元数据相关
-     * 检查是否为 Java 文件，并且可能包含 FlowApi 或 RestController 注解
+     * <p>
+     * 检查是否为 Java 文件，并且可能包含 FlowApi 或 RestController 注解。
+     * 排除测试代码和生成的代码。
+     * </p>
+     *
+     * @param file 虚拟文件对象
+     * @return 如果文件与元数据相关则返回 true
      */
     private boolean isRelevantFile(@NotNull VirtualFile file) {
         // 只处理 Java 文件
@@ -110,12 +133,12 @@ public final class MetadataChangeListener implements BulkFileListener, Disposabl
         return false;
     }
 
+    /**
+     * 释放资源
+     */
     @Override
     public void dispose() {
         LOG.debug("Metadata change listener disposed for project {}", project.getName());
     }
 }
-
-
-
 

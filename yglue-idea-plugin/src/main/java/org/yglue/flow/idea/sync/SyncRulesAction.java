@@ -18,8 +18,22 @@ import org.yglue.flow.idea.util.YgflowConfigurationResolver;
 import java.nio.file.Path;
 import java.util.Objects;
 
+/**
+ * 同步规则操作
+ * <p>
+ * 从 YGlue 编排器服务器同步流程规则文件到本地项目。
+ * </p>
+ *
+ * @author yglue
+ * @since 1.0
+ */
 public class SyncRulesAction extends AnAction {
 
+    /**
+     * 执行同步操作
+     *
+     * @param e 操作事件
+     */
     @Override
     public void actionPerformed(@NotNull AnActionEvent e) {
         Project project = e.getProject();
@@ -94,11 +108,22 @@ public class SyncRulesAction extends AnAction {
         });
     }
 
+    /**
+     * 更新操作状态
+     *
+     * @param e 操作事件
+     */
     @Override
     public void update(@NotNull AnActionEvent e) {
         e.getPresentation().setEnabledAndVisible(e.getProject() != null);
     }
 
+    /**
+     * 获取默认的基础 URL
+     *
+     * @param configured 配置的 URL
+     * @return 基础 URL
+     */
     private static String defaultBaseUrl(String configured) {
         if (configured != null && !configured.isBlank()) {
             return configured.trim();
@@ -106,6 +131,16 @@ public class SyncRulesAction extends AnAction {
         return "http://localhost:8090";
     }
 
+    /**
+     * 解析规则目录路径
+     * <p>
+     * 如果路径是相对路径，则相对于项目根目录解析。
+     * </p>
+     *
+     * @param basePath 项目根路径
+     * @param rulesDir 规则目录路径（相对或绝对）
+     * @return 规范化后的规则目录路径
+     */
     private static Path resolveRulesDirectory(String basePath, String rulesDir) {
         Path path = Path.of(rulesDir);
         if (!path.isAbsolute()) {

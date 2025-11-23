@@ -12,7 +12,14 @@ import java.math.BigDecimal;
 import java.util.*;
 
 /**
- * 负责根据 Psi 信息生成请求入参的 JSON Schema。
+ * Schema 生成器
+ * <p>
+ * 根据 IntelliJ IDEA 的 PSI（Program Structure Interface）信息生成 JSON Schema。
+ * 支持生成请求参数 Schema 和模型 Schema，包括类型推断、约束提取等功能。
+ * </p>
+ *
+ * @author yglue
+ * @since 1.0
  */
 public class SchemaGenerator {
 
@@ -51,9 +58,21 @@ public class SchemaGenerator {
             "javax.validation.constraints.DecimalMax"
     );
 
+    /**
+     * 私有构造函数，防止实例化
+     */
     private SchemaGenerator() {
     }
 
+    /**
+     * 生成请求参数 Schema
+     * <p>
+     * 根据方法的参数列表生成 JSON Schema，包括参数类型、来源（path/query/body等）、约束等信息。
+     * </p>
+     *
+     * @param method 方法对象
+     * @return 请求参数 Schema JSON 对象
+     */
     public static JSONObject generateRequestSchema(PsiMethod method) {
         JSONObject schema = new JSONObject();
         schema.put("$schema", JSON_SCHEMA_DRAFT_7);
@@ -82,6 +101,15 @@ public class SchemaGenerator {
         return schema;
     }
 
+    /**
+     * 生成模型 Schema
+     * <p>
+     * 根据 POJO 类生成 JSON Schema，包括字段类型、约束等信息。
+     * </p>
+     *
+     * @param psiClass 类对象
+     * @return 模型 Schema JSON 对象
+     */
     public static JSONObject generateModelSchema(PsiClass psiClass) {
         JSONObject schema = buildPojoSchema(psiClass, psiClass.getProject(), new HashSet<>());
         schema.put("$schema", JSON_SCHEMA_DRAFT_7);
@@ -126,6 +154,17 @@ public class SchemaGenerator {
         return new ParameterSchema(schema, required);
     }
 
+    /**
+     * 根据类型构建 Schema
+     * <p>
+     * 支持的类型包括：基本类型、包装类型、数组、集合、Map、POJO、枚举等。
+     * </p>
+     *
+     * @param type 类型对象
+     * @param project 项目对象
+     * @param visited 已访问的类型集合（用于防止循环引用）
+     * @return Schema JSON 对象
+     */
     private static JSONObject buildSchemaForType(PsiType type, Project project, Set<String> visited) {
         if (type instanceof PsiArrayType arrayType) {
             JSONObject schema = new JSONObject();
@@ -190,6 +229,17 @@ public class SchemaGenerator {
         return schema;
     }
 
+    /**
+     * 构建 POJO Schema
+     * <p>
+     * 根据类的字段生成 Schema，包括字段类型、约束、必填字段等信息。
+     * </p>
+     *
+     * @param psiClass 类对象
+     * @param project 项目对象
+     * @param visited 已访问的类型集合（用于防止循环引用）
+     * @return Schema JSON 对象
+     */
     private static JSONObject buildPojoSchema(PsiClass psiClass, Project project, Set<String> visited) {
         String qName = psiClass.getQualifiedName();
         if (qName != null && !visited.add(qName)) {
@@ -247,6 +297,13 @@ public class SchemaGenerator {
         return schema;
     }
 
+    /**
+     * 构建枚举 Schema
+     *
+     * @param enumClass 枚举类对象
+     * @param canonical 规范类型名称
+     * @return Schema JSON 对象
+     */
     private static JSONObject buildEnumSchema(PsiClass enumClass, String canonical) {
         JSONObject schema = new JSONObject();
         schema.put("type", "string");
@@ -261,6 +318,12 @@ public class SchemaGenerator {
         return schema;
     }
 
+    /**
+     * 判断是否为文件上传类型
+     *
+     * @param canonical 规范类型名称
+     * @return 如果是文件上传类型则返回 true
+     */
     private static boolean isMultipartFile(String canonical) {
         if (canonical == null) {
             return false;
@@ -270,6 +333,12 @@ public class SchemaGenerator {
                 || canonical.equals("javax.servlet.http.Part");
     }
 
+    /**
+     * 判断是否为基本类型或包装类型
+     *
+     * @param canonical 规范类型名称
+     * @return 如果是基本类型或包装类型则返回 true
+     */
     private static boolean isPrimitiveOrWrapper(String canonical) {
         if (canonical == null) return false;
         return canonical.equals("byte") || canonical.equals("java.lang.Byte")
@@ -290,6 +359,12 @@ public class SchemaGenerator {
                 || canonical.equals("java.util.Date");
     }
 
+    /**
+     * 构建基本类型 Schema
+     *
+     * @param canonical 规范类型名称
+     * @return Schema JSON 对象
+     */
     private static JSONObject primitiveSchema(String canonical) {
         JSONObject schema = new JSONObject();
         schema.put("x-javaType", canonical);
@@ -342,6 +417,15 @@ public class SchemaGenerator {
         return schema;
     }
 
+    /**
+     * 提取约束信息
+     * <p>
+     * 从注解中提取验证约束，如 @NotNull、@Size、@Min、@Max、@Pattern 等。
+     * </p>
+     *
+     * @param owner 修饰符列表所有者（参数或字段）
+     * @return 约束信息对象
+     */
     private static Constraints extractConstraints(PsiModifierListOwner owner) {
         boolean required = false;
         Integer minLength = null;
@@ -407,6 +491,12 @@ public class SchemaGenerator {
         return new Constraints(required, minLength, maxLength, minItems, maxItems, minimum, maximum, pattern);
     }
 
+    /**
+     * 应用约束到 Schema
+     *
+     * @param schema Schema JSON 对象
+     * @param constraints 约束信息
+     */
     private static void applyConstraints(JSONObject schema, Constraints constraints) {
         if (constraints.pattern() != null && isStringSchema(schema)) {
             schema.put("pattern", constraints.pattern());
@@ -431,6 +521,17 @@ public class SchemaGenerator {
         }
     }
 
+    /**
+     * 确定参数是否必填
+     * <p>
+     * 根据参数来源、注解和约束信息判断参数是否必填。
+     * </p>
+     *
+     * @param parameter 参数对象
+     * @param sourceInfo 参数来源信息
+     * @param constraints 约束信息
+     * @return 如果必填则返回 true
+     */
     private static boolean determineRequired(PsiParameter parameter, ParameterSourceInfo sourceInfo, Constraints constraints) {
         if (constraints.required()) {
             return true;
@@ -471,19 +572,46 @@ public class SchemaGenerator {
         return false;
     }
 
+    /**
+     * 判断 Schema 是否为字符串类型
+     *
+     * @param schema Schema JSON 对象
+     * @return 如果是字符串类型则返回 true
+     */
     private static boolean isStringSchema(JSONObject schema) {
         return "string".equals(schema.optString("type"));
     }
 
+    /**
+     * 判断 Schema 是否为数组类型
+     *
+     * @param schema Schema JSON 对象
+     * @return 如果是数组类型则返回 true
+     */
     private static boolean isArraySchema(JSONObject schema) {
         return "array".equals(schema.optString("type"));
     }
 
+    /**
+     * 判断 Schema 是否为数字类型
+     *
+     * @param schema Schema JSON 对象
+     * @return 如果是数字类型则返回 true
+     */
     private static boolean isNumberSchema(JSONObject schema) {
         String type = schema.optString("type");
         return "number".equals(type) || "integer".equals(type);
     }
 
+    /**
+     * 检测参数来源
+     * <p>
+     * 根据参数上的 Spring MVC 注解判断参数来源：path、query、header、body、form。
+     * </p>
+     *
+     * @param parameter 参数对象
+     * @return 参数来源信息，如果无法确定则返回 null
+     */
     private static ParameterSourceInfo detectParameterSource(PsiParameter parameter) {
         if (hasAnnotation(parameter, "org.springframework.web.bind.annotation.PathVariable")) {
             String name = extractAttr(parameter, "org.springframework.web.bind.annotation.PathVariable", "value");
@@ -532,14 +660,35 @@ public class SchemaGenerator {
         return null;
     }
 
+    /**
+     * 判断是否为简单类型
+     *
+     * @param canonical 规范类型名称
+     * @return 如果是简单类型则返回 true
+     */
     private static boolean isSimpleType(String canonical) {
         return isPrimitiveOrWrapper(canonical);
     }
 
+    /**
+     * 检查是否有指定注解
+     *
+     * @param owner 修饰符列表所有者
+     * @param annotationFqn 注解全限定名
+     * @return 如果有注解则返回 true
+     */
     private static boolean hasAnnotation(PsiModifierListOwner owner, String annotationFqn) {
         return owner.getAnnotation(annotationFqn) != null;
     }
 
+    /**
+     * 从注解中提取属性值
+     *
+     * @param owner 修饰符列表所有者
+     * @param annotationFqn 注解全限定名
+     * @param attr 属性名
+     * @return 属性值字符串，如果不存在则返回 null
+     */
     private static String extractAttr(PsiModifierListOwner owner, String annotationFqn, String attr) {
         PsiAnnotation annotation = owner.getAnnotation(annotationFqn);
         if (annotation == null) {
@@ -552,6 +701,15 @@ public class SchemaGenerator {
         return extractString(value);
     }
 
+    /**
+     * 提取请求参数名称
+     * <p>
+     * 从 @RequestParam 注解中提取参数名称，优先使用 value 属性，其次使用 name 属性。
+     * </p>
+     *
+     * @param parameter 参数对象
+     * @return 参数名称，如果不存在则返回 null
+     */
     private static String extractRequestParamName(PsiParameter parameter) {
         String value = extractAttr(parameter, "org.springframework.web.bind.annotation.RequestParam", "value");
         if (value != null && !value.isBlank()) {
@@ -564,6 +722,13 @@ public class SchemaGenerator {
         return null;
     }
 
+    /**
+     * 解析整数属性值
+     *
+     * @param annotation 注解对象
+     * @param attr 属性名
+     * @return 整数值，如果解析失败则返回 null
+     */
     private static Integer parseIntegerAttribute(PsiAnnotation annotation, String attr) {
         String value = extractAttribute(annotation, attr);
         if (value == null || value.isBlank()) {
@@ -576,6 +741,13 @@ public class SchemaGenerator {
         }
     }
 
+    /**
+     * 解析小数属性值
+     *
+     * @param annotation 注解对象
+     * @param attr 属性名
+     * @return 小数值，如果解析失败则返回 null
+     */
     private static BigDecimal parseDecimalAttribute(PsiAnnotation annotation, String attr) {
         String value = extractAttribute(annotation, attr);
         if (value == null || value.isBlank()) {
@@ -588,6 +760,13 @@ public class SchemaGenerator {
         }
     }
 
+    /**
+     * 从注解中提取属性值
+     *
+     * @param annotation 注解对象
+     * @param attribute 属性名
+     * @return 属性值字符串，如果不存在则返回 null
+     */
     private static String extractAttribute(PsiAnnotation annotation, String attribute) {
         PsiAnnotationMemberValue value = annotation.findAttributeValue(attribute);
         if (value == null && attribute == null) {
@@ -599,6 +778,12 @@ public class SchemaGenerator {
         return extractString(value);
     }
 
+    /**
+     * 从注解成员值中提取字符串
+     *
+     * @param value 注解成员值
+     * @return 字符串值
+     */
     private static String extractString(PsiAnnotationMemberValue value) {
         if (value instanceof PsiLiteralExpression literal) {
             Object raw = literal.getValue();
@@ -614,36 +799,79 @@ public class SchemaGenerator {
         return text;
     }
 
+    /**
+     * 合并最小值（取较大值）
+     *
+     * @param current 当前值
+     * @param candidate 候选值
+     * @return 合并后的值
+     */
     private static Integer mergeMin(Integer current, Integer candidate) {
         if (candidate == null) return current;
         if (current == null) return candidate;
         return Math.max(current, candidate);
     }
 
+    /**
+     * 合并最大值（取较小值）
+     *
+     * @param current 当前值
+     * @param candidate 候选值
+     * @return 合并后的值
+     */
     private static Integer mergeMax(Integer current, Integer candidate) {
         if (candidate == null) return current;
         if (current == null) return candidate;
         return Math.min(current, candidate);
     }
 
+    /**
+     * 合并最小小数值（取较大值）
+     *
+     * @param current 当前值
+     * @param candidate 候选值
+     * @return 合并后的值
+     */
     private static BigDecimal mergeMinDecimal(BigDecimal current, BigDecimal candidate) {
         if (candidate == null) return current;
         if (current == null) return candidate;
         return current.max(candidate);
     }
 
+    /**
+     * 合并最大小数值（取较小值）
+     *
+     * @param current 当前值
+     * @param candidate 候选值
+     * @return 合并后的值
+     */
     private static BigDecimal mergeMaxDecimal(BigDecimal current, BigDecimal candidate) {
         if (candidate == null) return current;
         if (current == null) return candidate;
         return current.min(candidate);
     }
 
+    /**
+     * 安全获取类型的规范文本
+     *
+     * @param type 类型对象
+     * @return 规范文本，如果获取失败则返回可展示文本
+     */
     private static String safeCanonicalText(PsiType type) {
         if (type == null) return "";
         String text = type.getCanonicalText();
         return text != null ? text : type.getPresentableText();
     }
 
+    /**
+     * 构建 Java 方法标识符
+     * <p>
+     * 格式：类全限定名#方法名
+     * </p>
+     *
+     * @param method 方法对象
+     * @return 方法标识符
+     */
     private static String buildJavaMethodId(PsiMethod method) {
         PsiClass containingClass = method.getContainingClass();
         String className = containingClass != null ? containingClass.getQualifiedName() : null;
@@ -653,6 +881,13 @@ public class SchemaGenerator {
         return className + "#" + method.getName();
     }
 
+    /**
+     * 判断是否为集合类
+     *
+     * @param psiClass 类对象
+     * @param project 项目对象
+     * @return 如果是集合类则返回 true
+     */
     private static boolean isCollectionClass(PsiClass psiClass, Project project) {
         if (psiClass == null) {
             return false;
@@ -662,6 +897,13 @@ public class SchemaGenerator {
         return collectionClass != null && psiClass.isInheritor(collectionClass, true);
     }
 
+    /**
+     * 判断是否为 Map 类
+     *
+     * @param psiClass 类对象
+     * @param project 项目对象
+     * @return 如果是 Map 类则返回 true
+     */
     private static boolean isMapClass(PsiClass psiClass, Project project) {
         if (psiClass == null) {
             return false;
@@ -671,10 +913,34 @@ public class SchemaGenerator {
         return mapClass != null && psiClass.isInheritor(mapClass, true);
     }
 
+    /**
+     * 参数 Schema 记录
+     *
+     * @param schema Schema JSON 对象
+     * @param required 是否必填
+     */
     private record ParameterSchema(JSONObject schema, boolean required) {}
 
+    /**
+     * 参数来源信息记录
+     *
+     * @param source 来源类型（path/query/header/body/form）
+     * @param name 参数名称
+     */
     private record ParameterSourceInfo(String source, String name) {}
 
+    /**
+     * 约束信息记录
+     *
+     * @param required 是否必填
+     * @param minLength 最小长度
+     * @param maxLength 最大长度
+     * @param minItems 最小项数
+     * @param maxItems 最大项数
+     * @param minimum 最小值
+     * @param maximum 最大值
+     * @param pattern 正则表达式模式
+     */
     private record Constraints(boolean required,
                                Integer minLength,
                                Integer maxLength,

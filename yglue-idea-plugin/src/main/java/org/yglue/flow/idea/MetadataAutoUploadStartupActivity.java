@@ -6,10 +6,24 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * 项目启动活动
- * 初始化元数据自动上传调度器、心跳调度器、规则同步调度器和文件变化监听器
+ * <p>
+ * 在项目启动时初始化以下服务：
+ * - 元数据自动上传调度器
+ * - 插件心跳调度器
+ * - 规则自动同步调度器
+ * - 文件变化监听器
+ * </p>
+ *
+ * @author yglue
+ * @since 1.0
  */
 public class MetadataAutoUploadStartupActivity implements StartupActivity.DumbAware {
 
+    /**
+     * 运行启动活动
+     *
+     * @param project 项目对象
+     */
     @Override
     public void runActivity(@NotNull Project project) {
         // 初始化元数据自动上传调度器

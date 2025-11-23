@@ -9,7 +9,7 @@ public class FlowEntryPoint {
     private String httpMethod;
     private String path;
     private String requestSchemaJson;
-    private Boolean replaceResponse;
+    private String dataResponseFormat;
     private Boolean enabled;
     private Instant createTime;
     private Instant updateTime;
@@ -65,12 +65,12 @@ public class FlowEntryPoint {
         this.requestSchemaJson = requestSchemaJson;
     }
 
-    public Boolean getReplaceResponse() {
-        return replaceResponse;
+    public String getDataResponseFormat() {
+        return dataResponseFormat;
     }
 
-    public void setReplaceResponse(Boolean replaceResponse) {
-        this.replaceResponse = replaceResponse;
+    public void setDataResponseFormat(String dataResponseFormat) {
+        this.dataResponseFormat = dataResponseFormat;
     }
 
     public Boolean getEnabled() {

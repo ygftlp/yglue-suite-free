@@ -123,9 +123,9 @@ export interface FlowEntrypointPayload {
   path: string
   method?: string | null
   requestSchemaJson?: string | null
-  replaceResponse?: boolean
   enabled?: boolean
   flowCode?: string | null
+  dataResponseFormat?: string | Record<string, any> | null
 }
 
 export interface FlowPublishPayload {
@@ -159,7 +159,6 @@ export interface EndpointComponentGroup {
 export interface EndpointEntrypointConfig {
   path?: string | null
   method?: string | null
-  replaceResponse?: boolean
   enabled?: boolean
   flowCode?: string | null
 }

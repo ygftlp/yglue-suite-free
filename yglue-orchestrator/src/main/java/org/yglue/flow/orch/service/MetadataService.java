@@ -13,6 +13,16 @@ import org.yglue.flow.orch.persistence.mapper.ProjectMetadataMapper;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 元数据服务类
+ * <p>
+ * 提供项目元数据的保存、查询等功能。
+ * 元数据包含 REST 端点、流程服务、流程模型、流程解析器等信息。
+ * </p>
+ *
+ * @author yglue
+ * @since 1.0
+ */
 @Service
 public class MetadataService {
 
@@ -25,6 +35,15 @@ public class MetadataService {
     private final FlowModelService flowModelService;
     private final FlowResolverService flowResolverService;
 
+    /**
+     * 构造函数
+     *
+     * @param projectService 项目服务
+     * @param metadataMapper 元数据数据访问对象
+     * @param projectEndpointService 项目端点服务
+     * @param flowModelService 流程模型服务
+     * @param flowResolverService 流程解析器服务
+     */
     public MetadataService(ProjectService projectService,
                            ProjectMetadataMapper metadataMapper,
                            ProjectEndpointService projectEndpointService,
@@ -37,6 +56,21 @@ public class MetadataService {
         this.flowResolverService = flowResolverService;
     }
 
+    /**
+     * 保存项目元数据
+     * <p>
+     * 解析元数据 JSON，同步更新以下内容：
+     * - REST 端点
+     * - 流程服务端点
+     * - 流程模型
+     * - 流程解析器
+     * </p>
+     *
+     * @param projectKey 项目标识
+     * @param optionalName 项目名称（可选）
+     * @param contentJson 元数据 JSON 内容
+     * @return 保存结果，包含元数据对象和项目是否新创建的标志
+     */
     @Transactional
     public SaveResult save(String projectKey, String optionalName, String contentJson) {
         ProjectService.EnsureResult ensure = projectService.ensureProjectWithFlag(projectKey, optionalName);
@@ -85,6 +119,12 @@ public class MetadataService {
         }
     }
 
+    /**
+     * 解析 REST 端点
+     *
+     * @param root JSON 根节点
+     * @return REST 端点载荷列表
+     */
     private List<ProjectEndpointService.EndpointPayload> parseRestEndpoints(JsonNode root) {
         List<ProjectEndpointService.EndpointPayload> endpoints = new ArrayList<>();
         if (root == null || root.isMissingNode()) {
@@ -130,6 +170,12 @@ public class MetadataService {
         return endpoints;
     }
 
+    /**
+     * 解析流程服务端点
+     *
+     * @param root JSON 根节点
+     * @return 流程服务端点载荷列表
+     */
     private List<ProjectEndpointService.EndpointPayload> parseFlowEndpoints(JsonNode root) {
         List<ProjectEndpointService.EndpointPayload> endpoints = new ArrayList<>();
         if (root == null || root.isMissingNode()) {
@@ -175,6 +221,12 @@ public class MetadataService {
         return endpoints;
     }
 
+    /**
+     * 解析流程模型
+     *
+     * @param root JSON 根节点
+     * @return 流程模型载荷列表
+     */
     private List<FlowModelService.ModelPayload> parseFlowModels(JsonNode root) {
         List<FlowModelService.ModelPayload> models = new ArrayList<>();
         if (root == null || root.isMissingNode()) {
@@ -229,6 +281,12 @@ public class MetadataService {
         return models;
     }
 
+    /**
+     * 解析流程解析器
+     *
+     * @param root JSON 根节点
+     * @return 流程解析器载荷列表
+     */
     private List<FlowResolverService.ResolverPayload> parseFlowResolvers(JsonNode root) {
         List<FlowResolverService.ResolverPayload> resolvers = new ArrayList<>();
         if (root == null || root.isMissingNode()) {
@@ -252,6 +310,14 @@ public class MetadataService {
         return resolvers;
     }
 
+    /**
+     * 从 JSON 节点获取文本值，如果不存在或为空则返回默认值
+     *
+     * @param node JSON 节点
+     * @param field 字段名
+     * @param fallback 默认值
+     * @return 文本值或默认值
+     */
     private static String textOrDefault(JsonNode node, String field, String fallback) {
         if (node == null) {
             return fallback;
@@ -263,6 +329,12 @@ public class MetadataService {
         return child.asText();
     }
 
+    /**
+     * 保存结果记录
+     *
+     * @param metadata 元数据对象
+     * @param projectCreated 项目是否新创建
+     */
     public record SaveResult(ProjectMetadata metadata, boolean projectCreated) {}
 }
 

@@ -10,6 +10,15 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.UUID;
 
+/**
+ * YGlue 插件设置状态
+ * <p>
+ * 存储插件的持久化配置，包括服务器地址、项目标识、实例标识、规则目录等。
+ * </p>
+ *
+ * @author yglue
+ * @since 1.0
+ */
 @Service(Service.Level.APP)
 @State(name = "YgflowSettings", storages = @Storage("ygflow_settings.xml"))
 public final class YgflowSettingsState implements PersistentStateComponent<YgflowSettingsState> {
@@ -25,24 +34,56 @@ public final class YgflowSettingsState implements PersistentStateComponent<Ygflo
     public boolean autoRuleSyncEnabled = true;
     public int autoRuleSyncIntervalSeconds = 60;
 
+    /**
+     * 获取设置实例
+     *
+     * @return 设置状态实例
+     */
     public static YgflowSettingsState getInstance() {
         return ApplicationManager.getApplication().getService(YgflowSettingsState.class);
     }
 
+    /**
+     * 检查配置是否完整
+     *
+     * @return 如果所有必需字段都已配置则返回 true
+     */
     public boolean isConfigured() {
         return isNotBlank(baseUrl) && isNotBlank(projectKey) && isNotBlank(instanceKey) && isNotBlank(rulesDir);
     }
 
+    /**
+     * 检查字符串是否非空
+     *
+     * @param v 字符串值
+     * @return 如果非空则返回 true
+     */
     private boolean isNotBlank(String v) {
         return v != null && !v.isBlank();
     }
 
+    /**
+     * 获取状态
+     * <p>
+     * 在保存状态前确保实例标识已设置。
+     * </p>
+     *
+     * @return 状态对象
+     */
     @Override
     public @Nullable YgflowSettingsState getState() {
         ensureInstanceKey();
         return this;
     }
 
+    /**
+     * 加载状态
+     * <p>
+     * 从持久化存储中加载状态，并确保所有字段都有合理的默认值。
+     * </p>
+     *
+     * @param state 状态对象
+     */
     @Override
     public void loadState(@NotNull YgflowSettingsState state) {
         this.baseUrl = state.baseUrl;
@@ -58,6 +99,12 @@ public final class YgflowSettingsState implements PersistentStateComponent<Ygflo
         ensureInstanceKey();
     }
 
+    /**
+     * 确保实例标识已设置
+     * <p>
+     * 如果实例标识为空，则生成一个新的 UUID。
+     * </p>
+     */
     public void ensureInstanceKey() {
         if (instanceKey == null || instanceKey.isBlank()) {
             instanceKey = UUID.randomUUID().toString();

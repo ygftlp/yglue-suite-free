@@ -5,6 +5,7 @@ import CanvasPalettePanel from "./CanvasPalettePanel.vue"
 import CanvasToolbar from "./CanvasToolbar.vue"
 import CanvasSurface from "./CanvasSurface.vue"
 import CanvasInspectorPanel from "./CanvasInspectorPanel.vue"
+import VersionList from "./VersionList.vue"
 import { useCanvasEditor, type CanvasEditorProps } from "./useCanvasEditor"
 
 const props = defineProps<CanvasEditorProps>()
@@ -25,6 +26,7 @@ const {
   canDelete,
   canSave,
   canPublish,
+  showPublishButton,
   contextMenu,
   nodeTypes,
   logPreview,
@@ -36,6 +38,13 @@ const {
   publishFlow,
   openFlowSettings,
   closeFlowSettings,
+  versionListVisible,
+  openVersionList,
+  closeVersionList,
+  loadVersion,
+  loadVersionAndSave,
+  currentVersionNo,
+  publishedVersionNo,
   handleConnect,
   onNodeClick,
   onNodeContextMenu,
@@ -70,11 +79,13 @@ function handleDropNode(payload: { item: any; position: { x: number; y: number }
         :can-delete="canDelete"
         :can-save="canSave"
         :can-publish="canPublish"
+        :show-publish-button="showPublishButton"
         @open-flow-settings="openFlowSettings"
         @clear-selection="clearSelection"
         @delete-selection="deleteSelection"
         @save-draft="saveDraft"
         @publish-flow="publishFlow"
+        @open-version-list="openVersionList"
       />
       <CanvasSurface
         v-model:nodes="nodes"
@@ -114,6 +125,17 @@ function handleDropNode(payload: { item: any; position: { x: number; y: number }
     :request-schema-fields="props.endpointSchema?.requestSchema ?? undefined"
     :response-schema="props.endpointSchema?.responseSchema ?? undefined"
     @close="closeFlowSettings"
+  />
+  <VersionList
+    v-if="flowSettings.code"
+    :visible="versionListVisible"
+    :project-key="props.projectKey"
+    :flow-code="flowSettings.code"
+    :current-version-no="currentVersionNo"
+    :published-version-no="publishedVersionNo"
+    @close="closeVersionList"
+    @load-version="loadVersion"
+    @load-version-and-save="loadVersionAndSave"
   />
 </template>
 

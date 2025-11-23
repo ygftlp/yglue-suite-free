@@ -202,10 +202,6 @@ function extractEntrypointMeta(endpoint: ProjectEndpoint & Record<string, any>):
     normalized.enabled
 
   const enabled = enabledRaw !== false && enabledRaw !== 0
-  const replaceResponse =
-    typeof (endpoint as Record<string, any>).replaceResponse === "boolean"
-      ? Boolean((endpoint as Record<string, any>).replaceResponse)
-      : Boolean(normalized.replaceResponse)
 
   return {
     enabled,
@@ -214,7 +210,6 @@ function extractEntrypointMeta(endpoint: ProjectEndpoint & Record<string, any>):
     raw: {
       path,
       method,
-      replaceResponse,
       enabled,
       flowCode: flowCode ?? undefined,
     },

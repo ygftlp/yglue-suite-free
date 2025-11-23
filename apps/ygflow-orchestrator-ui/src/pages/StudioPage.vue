@@ -25,11 +25,25 @@ const flowModels = ref<FlowModel[]>([])
 const flowResolvers = ref<FlowResolver[]>([])
 
 const flowCode = computed(() => {
-  if (!endpoint.value) return undefined
-  const method = (endpoint.value.method || "REST").toLowerCase()
-  const raw = endpoint.value.path || `endpoint-${endpoint.value.id}`
-  const normalized = raw.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "") || `endpoint-${endpoint.value.id}`
-  return `${method}-${normalized}`
+  if (!endpoint.value) {
+    console.log("[StudioPage] flowCode computed: endpoint is null")
+    return undefined
+  }
+  // 优先使用 endpoint 中存储的 flowCode（从 FlowEntryPoint 表获取）
+  if (endpoint.value.flowCode) {
+    console.log("[StudioPage] flowCode computed: using endpoint.flowCode:", endpoint.value.flowCode)
+    return endpoint.value.flowCode
+  }
+  // 如果没有 flowCode，尝试从 entrypoint 配置中获取
+  const entrypoint = endpoint.value.entrypoint
+  if (entrypoint && typeof entrypoint === "object" && (entrypoint as any).flowCode) {
+    console.log("[StudioPage] flowCode computed: using entrypoint.flowCode:", (entrypoint as any).flowCode)
+    return (entrypoint as any).flowCode
+  }
+  // 如果都没有 flowCode，返回 undefined（不动态生成）
+  // 这样前端会显示空白画布，提示用户需要先发布流程
+  console.log("[StudioPage] flowCode computed: no flowCode found, returning undefined")
+  return undefined
 })
 
 const entrypointHint = computed(() => {
@@ -37,7 +51,6 @@ const entrypointHint = computed(() => {
   return {
     path: endpoint.value.path || "",
     method: (endpoint.value.method || "").toUpperCase(),
-    replaceResponse: false,
   }
 })
 
@@ -63,10 +76,13 @@ async function loadEndpoint() {
   endpointLoading.value = true
   endpointError.value = null
   try {
+    console.log("[StudioPage] Loading endpoint:", projectKey.value, endpointId.value)
     endpoint.value = await api.getEndpoint(projectKey.value, endpointId.value)
+    console.log("[StudioPage] Endpoint loaded:", endpoint.value?.id, "flowCode:", endpoint.value?.flowCode)
   } catch (err) {
     endpoint.value = null
     endpointError.value = err instanceof Error ? err.message : "加载接口信息失败"
+    console.error("[StudioPage] Failed to load endpoint:", err)
   } finally {
     endpointLoading.value = false
   }

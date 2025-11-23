@@ -12,6 +12,15 @@ import org.yglue.flow.orch.web.dto.stat.request.StatEventRequest;
 import java.time.Instant;
 import java.util.List;
 
+/**
+ * 统计事件服务类
+ * <p>
+ * 提供统计事件的记录和查询功能。
+ * </p>
+ *
+ * @author yglue
+ * @since 1.0
+ */
 @Service
 public class StatService {
 
@@ -19,6 +28,13 @@ public class StatService {
     private final FlowMapper flowMapper;
     private final StatEventMapper statEventMapper;
 
+    /**
+     * 构造函数
+     *
+     * @param projectService 项目服务
+     * @param flowMapper 流程数据访问对象
+     * @param statEventMapper 统计事件数据访问对象
+     */
     public StatService(ProjectService projectService,
                        FlowMapper flowMapper,
                        StatEventMapper statEventMapper) {
@@ -27,6 +43,16 @@ public class StatService {
         this.statEventMapper = statEventMapper;
     }
 
+    /**
+     * 记录统计事件
+     * <p>
+     * 如果请求中包含流程代码，会自动关联到对应的流程。
+     * </p>
+     *
+     * @param projectKey 项目标识
+     * @param req 统计事件请求对象
+     * @return 创建的统计事件对象
+     */
     @Transactional
     public StatEvent recordEvent(String projectKey, StatEventRequest req) {
         Project project = projectService.requireProject(projectKey);
@@ -48,6 +74,12 @@ public class StatService {
         return event;
     }
 
+    /**
+     * 查询项目的所有统计事件
+     *
+     * @param projectKey 项目标识
+     * @return 统计事件列表
+     */
     public List<StatEvent> list(String projectKey) {
         Project project = projectService.requireProject(projectKey);
         return statEventMapper.selectByProject(project.getId());

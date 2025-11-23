@@ -11,7 +11,8 @@ public class FlowEntryPointRequest {
 
     private String requestSchemaJson;
 
-    private Boolean replaceResponse;
+    private Object dataResponseFormat;
+
     private Boolean enabled;
 
     public String getPath() {
@@ -38,12 +39,12 @@ public class FlowEntryPointRequest {
         this.requestSchemaJson = requestSchemaJson;
     }
 
-    public Boolean getReplaceResponse() {
-        return replaceResponse;
+    public Object getDataResponseFormat() {
+        return dataResponseFormat;
     }
 
-    public void setReplaceResponse(Boolean replaceResponse) {
-        this.replaceResponse = replaceResponse;
+    public void setDataResponseFormat(Object dataResponseFormat) {
+        this.dataResponseFormat = dataResponseFormat;
     }
 
     public Boolean getEnabled() {

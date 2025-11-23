@@ -39,6 +39,19 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+/**
+ * 导出元数据操作
+ * <p>
+ * 扫描项目中的 Java 类，提取以下信息并导出为 JSON：
+ * - Flow API 服务类（@FlowApi 注解）
+ * - Flow 模型类（@FlowModel 注解）
+ * - Flow 解析器类（@FlowResolver 注解）
+ * - REST 端点（Spring MVC 注解）
+ * </p>
+ *
+ * @author yglue
+ * @since 1.0
+ */
 public class ExportMetadataAction extends AnAction {
 
     private static final String FLOW_MODEL_ANNOTATION = "org.yglue.flow.annotations.FlowModel";
@@ -78,6 +91,11 @@ public class ExportMetadataAction extends AnAction {
         METHOD_MAPPING_ANNOTATIONS.add("org.springframework.web.bind.annotation.RequestMapping");
     }
 
+    /**
+     * 执行导出操作
+     *
+     * @param e 操作事件
+     */
     @Override
     public void actionPerformed(AnActionEvent e) {
         Project project = e.getProject();
@@ -91,6 +109,16 @@ public class ExportMetadataAction extends AnAction {
         }
     }
 
+    /**
+     * 导出项目元数据
+     * <p>
+     * 扫描项目并生成元数据 JSON 文件，保存到项目的 .ygflow/export.json 路径。
+     * </p>
+     *
+     * @param project 项目对象
+     * @return 导出的文件路径
+     * @throws Exception 如果导出失败
+     */
     public static Path exportProject(Project project) throws Exception {
         JSONObject json = scanProject(project);
         String base = project.getBasePath();
@@ -102,6 +130,12 @@ public class ExportMetadataAction extends AnAction {
         return outFile;
     }
 
+    /**
+     * 扫描项目并生成元数据 JSON
+     *
+     * @param project 项目对象
+     * @return 元数据 JSON 对象
+     */
     private static JSONObject scanProject(Project project) {
         JSONObject result = new JSONObject();
         JSONArray services = new JSONArray();
@@ -188,6 +222,15 @@ public class ExportMetadataAction extends AnAction {
         return Character.toLowerCase(className.charAt(0)) + className.substring(1);
     }
 
+    /**
+     * 处理 Flow API 类
+     * <p>
+     * 提取带有 @FlowApi 注解的类信息，包括服务信息和操作列表。
+     * </p>
+     *
+     * @param aClass 类对象
+     * @param services 服务数组（输出）
+     */
     private static void handleFlowApiClass(PsiClass aClass, JSONArray services) {
         PsiAnnotation apiAnno = findAnnotation(aClass, API_ANNOTATIONS);
         if (apiAnno != null) {
@@ -254,6 +297,15 @@ public class ExportMetadataAction extends AnAction {
         }
     }
 
+    /**
+     * 处理 Flow 解析器类
+     * <p>
+     * 提取带有 @FlowResolver 注解的类信息。
+     * </p>
+     *
+     * @param aClass 类对象
+     * @param sink 解析器数组（输出）
+     */
     private static void handleFlowResolverClass(PsiClass aClass, JSONArray sink) {
         PsiAnnotation resolverAnno = aClass.getAnnotation(FLOW_RESOLVER_ANNOTATION);
         if (resolverAnno == null) {
@@ -275,6 +327,14 @@ public class ExportMetadataAction extends AnAction {
         sink.put(item);
     }
 
+    /**
+     * 添加内置解析器
+     * <p>
+     * 添加系统内置的解析器类型：REQUEST、CONTEXT、CONSTANT、EXPRESSION。
+     * </p>
+     *
+     * @param sink 解析器数组（输出）
+     */
     private static void appendBuiltinResolvers(JSONArray sink) {
         sink.put(new JSONObject()
                 .put("type", "REQUEST")
@@ -302,6 +362,15 @@ public class ExportMetadataAction extends AnAction {
                 .put("builtin", true));
     }
 
+    /**
+     * 处理 Flow 模型类
+     * <p>
+     * 提取带有 @FlowModel 注解的类信息，包括模型 Schema。
+     * </p>
+     *
+     * @param aClass 类对象
+     * @param models 模型数组（输出）
+     */
     private static void handleFlowModelClass(PsiClass aClass, JSONArray models) {
         PsiAnnotation modelAnno = aClass.getAnnotation(FLOW_MODEL_ANNOTATION);
         if (modelAnno == null) {
@@ -327,6 +396,15 @@ public class ExportMetadataAction extends AnAction {
         models.put(modelObj);
     }
 
+    /**
+     * 收集 REST 端点
+     * <p>
+     * 从 Spring MVC 控制器类中提取 REST 端点信息，包括路径、HTTP 方法、请求/响应 Schema。
+     * </p>
+     *
+     * @param clazz 控制器类对象
+     * @param sink REST 端点数组（输出）
+     */
     private static void collectRestEndpoints(PsiClass clazz, JSONArray sink) {
         if (!isRestController(clazz)) {
             for (PsiClass inner : clazz.getInnerClasses()) {
@@ -395,6 +473,15 @@ public class ExportMetadataAction extends AnAction {
         }
     }
 
+    /**
+     * 判断是否为 REST 控制器类
+     * <p>
+     * 检查类是否带有 @RestController 注解，或同时带有 @Controller 和 @ResponseBody 注解。
+     * </p>
+     *
+     * @param clazz 类对象
+     * @return 如果是 REST 控制器则返回 true
+     */
     private static boolean isRestController(PsiClass clazz) {
         if (findAnnotation(clazz, REST_CONTROLLER_ANNOTATIONS) != null) {
             return true;
@@ -403,6 +490,15 @@ public class ExportMetadataAction extends AnAction {
                 && findAnnotation(clazz, CONTROLLER_ANNOTATIONS) != null;
     }
 
+    /**
+     * 提取方法的 HTTP 映射信息
+     * <p>
+     * 从方法上的 Spring MVC 映射注解（@GetMapping、@PostMapping 等）中提取 HTTP 方法、路径等信息。
+     * </p>
+     *
+     * @param method 方法对象
+     * @return 映射信息列表
+     */
     private static List<Mapping> extractMethodMappings(PsiMethod method) {
         List<Mapping> mappings = new ArrayList<>();
         for (String annoFqn : METHOD_MAPPING_ANNOTATIONS) {
@@ -429,6 +525,15 @@ public class ExportMetadataAction extends AnAction {
         return mappings;
     }
 
+    /**
+     * 从注解中提取路径列表
+     * <p>
+     * 优先提取 path 属性，如果没有则提取 value 属性。
+     * </p>
+     *
+     * @param annotation 注解对象
+     * @return 路径列表
+     */
     private static List<String> extractPaths(PsiAnnotation annotation) {
         List<String> paths = extractStrings(annotation, "path");
         if (paths.isEmpty()) {
@@ -437,6 +542,13 @@ public class ExportMetadataAction extends AnAction {
         return paths;
     }
 
+    /**
+     * 从修饰符列表中提取路径列表
+     *
+     * @param modifiers 修饰符列表
+     * @param annotations 注解全限定名集合
+     * @return 路径列表
+     */
     private static List<String> extractPaths(PsiModifierList modifiers, Set<String> annotations) {
         List<String> result = new ArrayList<>();
         if (modifiers == null) {
@@ -451,6 +563,13 @@ public class ExportMetadataAction extends AnAction {
         return result;
     }
 
+    /**
+     * 从注解中提取字符串数组属性值
+     *
+     * @param annotation 注解对象
+     * @param attribute 属性名
+     * @return 字符串列表
+     */
     private static List<String> extractStrings(PsiAnnotation annotation, String attribute) {
         List<String> values = new ArrayList<>();
         PsiAnnotationMemberValue attr = annotation.findAttributeValue(attribute);
@@ -476,6 +595,12 @@ public class ExportMetadataAction extends AnAction {
         return values;
     }
 
+    /**
+     * 从 @RequestMapping 注解中提取 HTTP 方法列表
+     *
+     * @param annotation 注解对象
+     * @return HTTP 方法列表
+     */
     private static List<String> extractRequestMethods(PsiAnnotation annotation) {
         List<String> result = new ArrayList<>();
         PsiAnnotationMemberValue attr = annotation.findAttributeValue("method");
@@ -498,6 +623,12 @@ public class ExportMetadataAction extends AnAction {
         return result;
     }
 
+    /**
+     * 从枚举引用表达式中提取枚举名称
+     *
+     * @param value 注解成员值
+     * @return 枚举名称
+     */
     private static String extractEnumName(PsiAnnotationMemberValue value) {
         if (value instanceof PsiReferenceExpression ref) {
             String qualified = ref.getQualifiedName();
@@ -515,6 +646,16 @@ public class ExportMetadataAction extends AnAction {
         return text.substring(idx).replace("}", "").replace("{", "");
     }
 
+    /**
+     * 规范化 URL 路径
+     * <p>
+     * 合并类路径和方法路径，确保以 / 开头，并移除多余的斜杠。
+     * </p>
+     *
+     * @param classPath 类路径
+     * @param methodPath 方法路径
+     * @return 规范化后的路径
+     */
     private static String normalizeUrl(String classPath, String methodPath) {
         String c = classPath == null ? "" : classPath.trim();
         String m = methodPath == null ? "" : methodPath.trim();
@@ -530,14 +671,39 @@ public class ExportMetadataAction extends AnAction {
         return combined.replaceAll("/+$", "/");
     }
 
+    /**
+     * HTTP 映射信息记录
+     *
+     * @param httpMethod HTTP 方法
+     * @param paths 路径列表
+     * @param produces 支持的响应类型列表
+     * @param consumes 支持的请求类型列表
+     */
     private record Mapping(String httpMethod, List<String> paths, List<String> produces, List<String> consumes) {}
 
+    /**
+     * 从注解中获取属性值
+     *
+     * @param anno 注解对象
+     * @param key 属性名
+     * @return 属性值字符串，如果不存在则返回空字符串
+     */
     private static String getAttr(PsiAnnotation anno, String key) {
         PsiAnnotationMemberValue v = anno.findAttributeValue(key);
         if (v == null) return "";
         return extractString(v);
     }
 
+    /**
+     * 查找注解
+     * <p>
+     * 在修饰符列表所有者上查找指定全限定名的注解。
+     * </p>
+     *
+     * @param owner 修饰符列表所有者
+     * @param annotationFqns 注解全限定名集合
+     * @return 找到的注解，如果不存在则返回 null
+     */
     private static PsiAnnotation findAnnotation(PsiModifierListOwner owner, Set<String> annotationFqns) {
         for (String fqn : annotationFqns) {
             PsiAnnotation anno = owner.getAnnotation(fqn);
@@ -548,6 +714,12 @@ public class ExportMetadataAction extends AnAction {
         return null;
     }
 
+    /**
+     * 将字符串集合转换为 JSON 数组
+     *
+     * @param values 字符串集合
+     * @return JSON 数组
+     */
     private static JSONArray toJsonArray(Set<String> values) {
         JSONArray array = new JSONArray();
         for (String v : values) {
@@ -556,6 +728,13 @@ public class ExportMetadataAction extends AnAction {
         return array;
     }
 
+    /**
+     * 从注解中获取字符串数组属性值
+     *
+     * @param anno 注解对象
+     * @param key 属性名
+     * @return 字符串集合
+     */
     private static Set<String> getStringArray(PsiAnnotation anno, String key) {
         PsiAnnotationMemberValue value = anno.findAttributeValue(key);
         if (value == null) {
@@ -578,6 +757,12 @@ public class ExportMetadataAction extends AnAction {
         return result;
     }
 
+    /**
+     * 从注解成员值中提取字符串
+     *
+     * @param value 注解成员值
+     * @return 字符串值
+     */
     private static String extractString(PsiAnnotationMemberValue value) {
         if (value instanceof PsiLiteralExpression literal) {
             Object raw = literal.getValue();
@@ -593,14 +778,33 @@ public class ExportMetadataAction extends AnAction {
         return text;
     }
 
+    /**
+     * 渲染类型为字符串
+     *
+     * @param type 类型对象
+     * @return 类型的规范文本表示
+     */
     private static String renderType(PsiType type) {
         return type != null ? type.getCanonicalText() : "";
     }
 
+    /**
+     * 如果值为空则返回默认值
+     *
+     * @param value 值
+     * @param fallback 默认值
+     * @return 值或默认值
+     */
     private static String emptyToDefault(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
     }
 
+    /**
+     * 构建响应 Schema
+     *
+     * @param method 方法对象
+     * @return 响应 Schema JSON 对象
+     */
     private static JSONObject buildResponseSchema(PsiMethod method) {
         JSONObject schema = new JSONObject();
         PsiType returnType = method.getReturnType();

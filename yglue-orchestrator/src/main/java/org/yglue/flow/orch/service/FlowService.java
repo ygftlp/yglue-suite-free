@@ -174,7 +174,10 @@ public class FlowService {
     }
     
     /**
-     * 清理 contentJson，移除所有 UI 相关字段，只保留核心业务数据（节点、边、设置、版本信息）
+     * 清理 contentJson，移除 UI 相关字段，只保留核心业务数据（节点、边、设置、版本信息）
+     * <p>
+     * 注意：position 字段会被保留，因为它是 Vue Flow 渲染节点所必需的。
+     * </p>
      */
     private String cleanContentJson(String contentJson) {
         if (contentJson == null || contentJson.isBlank()) {
@@ -235,13 +238,17 @@ public class FlowService {
     
     /**
      * 清理节点对象，移除 UI 相关字段
+     * <p>
+     * 注意：position 字段会被保留，因为它是 Vue Flow 渲染节点所必需的。
+     * </p>
      */
     private ObjectNode cleanNode(ObjectNode node) {
         ObjectNode cleaned = OBJECT_MAPPER.createObjectNode();
         
         // UI 相关字段列表（需要过滤掉）
+        // 注意：position 不在列表中，因为它是 Vue Flow 渲染节点所必需的，应该被保留
         java.util.Set<String> uiFields = java.util.Set.of(
-            "position", "selected", "dragging", "width", "height",
+            "selected", "dragging", "width", "height",
             "style", "class", "className", "resizing", "draggable",
             "connectable", "selectable", "focusable", "deletable"
         );

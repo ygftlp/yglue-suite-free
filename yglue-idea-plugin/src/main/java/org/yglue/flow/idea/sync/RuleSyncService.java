@@ -23,7 +23,14 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Handles orchestration rule synchronisation between the IntelliJ plugin and the YGlue orchestrator.
+ * 规则同步服务
+ * <p>
+ * 处理 IntelliJ 插件与 YGlue 编排器之间的流程规则同步。
+ * 包括发送心跳、下载待同步流程、确认同步等功能。
+ * </p>
+ *
+ * @author yglue
+ * @since 1.0
  */
 public class RuleSyncService {
 
@@ -34,6 +41,14 @@ public class RuleSyncService {
     private final String instanceKey;
     private final Path rulesDirectory;
 
+    /**
+     * 构造函数
+     *
+     * @param settings 插件设置状态
+     * @param resolvedEndpoint 解析后的服务器端点
+     * @param resolvedProjectKey 解析后的项目标识
+     * @param rulesDirectory 规则文件目录
+     */
     public RuleSyncService(@NotNull YgflowSettingsState settings,
                            @NotNull String resolvedEndpoint,
                            @NotNull String resolvedProjectKey,
@@ -48,6 +63,19 @@ public class RuleSyncService {
         this.rulesDirectory = rulesDirectory;
     }
 
+    /**
+     * 执行同步操作
+     * <p>
+     * 1. 发送心跳获取待同步流程列表
+     * 2. 下载待同步的流程规则文件
+     * 3. 检查本地文件是否存在，缺失则重新下载
+     * 4. 下载入口点配置文件
+     * </p>
+     *
+     * @param indicator 进度指示器
+     * @return 同步结果
+     * @throws Exception 如果同步失败
+     */
     public SyncResult sync(@NotNull ProgressIndicator indicator) throws Exception {
         indicator.setIndeterminate(true);
         JSONObject heartbeat = sendHeartbeat();
@@ -100,6 +128,14 @@ public class RuleSyncService {
     
     /**
      * 检查本地规则文件是否存在，如果缺失则重新下载
+     * <p>
+     * 获取所有流程列表，检查每个流程的本地文件是否存在。
+     * 如果文件不存在，则下载已发布的版本（如果没有已发布的版本则下载最新版本）。
+     * </p>
+     *
+     * @param indicator 进度指示器
+     * @return 下载的条目列表
+     * @throws Exception 如果检查或下载失败
      */
     private List<SyncResult.Entry> checkAndDownloadMissingFiles(@NotNull ProgressIndicator indicator) throws Exception {
         List<SyncResult.Entry> entries = new ArrayList<>();
@@ -173,6 +209,9 @@ public class RuleSyncService {
     
     /**
      * 获取所有流程列表
+     *
+     * @return 流程列表 JSON 数组
+     * @throws Exception 如果请求失败
      */
     private JSONArray fetchAllFlows() throws Exception {
         HttpRequest request = HttpRequest.newBuilder()
@@ -191,6 +230,10 @@ public class RuleSyncService {
     
     /**
      * 获取指定流程的所有版本
+     *
+     * @param flowCode 流程代码
+     * @return 版本列表 JSON 数组
+     * @throws Exception 如果请求失败
      */
     private JSONArray fetchFlowVersions(String flowCode) throws Exception {
         HttpRequest request = HttpRequest.newBuilder()
@@ -208,6 +251,15 @@ public class RuleSyncService {
         return new JSONArray(response.body());
     }
 
+    /**
+     * 发送心跳请求
+     * <p>
+     * 向服务器发送插件实例心跳，获取待同步的流程列表。
+     * </p>
+     *
+     * @return 心跳响应 JSON 对象
+     * @throws Exception 如果请求失败
+     */
     private JSONObject sendHeartbeat() throws Exception {
         JSONObject payload = new JSONObject();
         payload.put("instanceKey", instanceKey);
@@ -229,6 +281,14 @@ public class RuleSyncService {
         return new JSONObject(response.body());
     }
 
+    /**
+     * 获取流程内容
+     *
+     * @param flowCode 流程代码
+     * @param versionNo 版本号
+     * @return 流程内容 JSON 字符串
+     * @throws Exception 如果请求失败
+     */
     private String fetchFlowContent(String flowCode, int versionNo) throws Exception {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(endpoint + "/api/projects/" + encode(projectKey)
@@ -244,6 +304,16 @@ public class RuleSyncService {
         return body.optString("contentJson", "{}");
     }
 
+    /**
+     * 发送同步确认
+     * <p>
+     * 确认插件实例已成功同步到指定版本的流程。
+     * </p>
+     *
+     * @param flowCode 流程代码
+     * @param versionNo 版本号
+     * @throws Exception 如果请求失败
+     */
     private void sendAck(String flowCode, int versionNo) throws Exception {
         JSONObject payload = new JSONObject();
         payload.put("flowCode", flowCode);
@@ -261,6 +331,14 @@ public class RuleSyncService {
         ensureSuccess(response, "ACK failed for " + flowCode);
     }
 
+    /**
+     * 写入规则文件
+     *
+     * @param flowCode 流程代码
+     * @param contentJson 内容 JSON 字符串
+     * @return 写入的文件路径
+     * @throws Exception 如果写入失败
+     */
     private Path writeRuleFile(String flowCode, String contentJson) throws Exception {
         String fileName = sanitizeFileName(flowCode) + ".json";
         Path file = rulesDirectory.resolve(fileName);
@@ -269,6 +347,14 @@ public class RuleSyncService {
         return file;
     }
 
+    /**
+     * 下载入口点配置文件
+     * <p>
+     * 下载项目的 REST 入口点配置，保存为 entrypoints.json。
+     * </p>
+     *
+     * @throws Exception 如果下载失败
+     */
     private void downloadEntryPoints() throws Exception {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(endpoint + "/api/projects/" + encode(projectKey) + "/entrypoints"))
@@ -290,6 +376,13 @@ public class RuleSyncService {
                 StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
     }
 
+    /**
+     * 确保 HTTP 响应成功
+     *
+     * @param response HTTP 响应
+     * @param message 错误消息前缀
+     * @throws Exception 如果响应状态码不在 2xx 范围内
+     */
     private void ensureSuccess(HttpResponse<?> response, String message) throws Exception {
         int status = response.statusCode();
         if (status < 200 || status >= 300) {
@@ -297,6 +390,12 @@ public class RuleSyncService {
         }
     }
 
+    /**
+     * 移除字符串末尾的斜杠
+     *
+     * @param value 字符串值
+     * @return 处理后的字符串
+     */
     private static String trimTrailingSlash(String value) {
         String v = value;
         while (v.endsWith("/")) {
@@ -305,10 +404,25 @@ public class RuleSyncService {
         return v;
     }
 
+    /**
+     * URL 编码字符串
+     *
+     * @param segment URL 片段
+     * @return 编码后的字符串
+     */
     private static String encode(String segment) {
         return URLEncoder.encode(segment, StandardCharsets.UTF_8);
     }
 
+    /**
+     * 清理文件名
+     * <p>
+     * 移除文件名中的非法字符，替换为下划线。
+     * </p>
+     *
+     * @param input 输入字符串
+     * @return 清理后的文件名
+     */
     private static String sanitizeFileName(String input) {
         if (input == null || input.isBlank()) {
             return "flow";
@@ -317,6 +431,11 @@ public class RuleSyncService {
         return sanitized.isBlank() ? "flow" : sanitized;
     }
 
+    /**
+     * 创建额外信息 JSON 字符串
+     *
+     * @return 额外信息 JSON 字符串
+     */
     @NlsSafe
     private String createExtraInfo() {
         JSONObject json = new JSONObject();
@@ -330,23 +449,50 @@ public class RuleSyncService {
         return json.toString();
     }
 
+    /**
+     * 同步结果
+     */
     public static class SyncResult {
         public final boolean upToDate;
         public final List<Entry> entries;
 
+        /**
+         * 构造函数
+         *
+         * @param upToDate 是否已是最新
+         * @param entries 同步条目列表
+         */
         private SyncResult(boolean upToDate, List<Entry> entries) {
             this.upToDate = upToDate;
             this.entries = entries;
         }
 
+        /**
+         * 创建"已是最新"的同步结果
+         *
+         * @return 同步结果
+         */
         public static SyncResult upToDate() {
             return new SyncResult(true, List.of());
         }
 
+        /**
+         * 创建"已同步"的同步结果
+         *
+         * @param entries 同步条目列表
+         * @return 同步结果
+         */
         public static SyncResult synced(List<Entry> entries) {
             return new SyncResult(false, entries);
         }
 
+        /**
+         * 同步条目记录
+         *
+         * @param flowCode 流程代码
+         * @param version 版本号
+         * @param file 文件路径
+         */
         public record Entry(String flowCode, int version, Path file) {}
     }
 }

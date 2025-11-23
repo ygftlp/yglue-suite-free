@@ -27,6 +27,15 @@ import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+/**
+ * 插件同步服务类
+ * <p>
+ * 提供 IDEA 插件的心跳处理、流程同步指令计算、同步确认等功能。
+ * </p>
+ *
+ * @author yglue
+ * @since 1.0
+ */
 @Service
 public class PluginSyncService {
 
@@ -36,6 +45,15 @@ public class PluginSyncService {
     private final PluginInstanceMapper pluginInstanceMapper;
     private final FlowSyncStateMapper flowSyncStateMapper;
 
+    /**
+     * 构造函数
+     *
+     * @param projectService 项目服务
+     * @param flowMapper 流程数据访问对象
+     * @param flowVersionMapper 流程版本数据访问对象
+     * @param pluginInstanceMapper 插件实例数据访问对象
+     * @param flowSyncStateMapper 流程同步状态数据访问对象
+     */
     public PluginSyncService(ProjectService projectService,
                              FlowMapper flowMapper,
                              FlowVersionMapper flowVersionMapper,
@@ -48,6 +66,17 @@ public class PluginSyncService {
         this.flowSyncStateMapper = flowSyncStateMapper;
     }
 
+    /**
+     * 处理插件心跳请求
+     * <p>
+     * 更新插件实例信息，并计算待同步的流程列表。
+     * </p>
+     *
+     * @param projectKey 项目标识
+     * @param req 心跳请求对象
+     * @param requesterIp 请求者 IP 地址
+     * @return 心跳响应，包含是否有待同步流程的标志和待同步流程列表
+     */
     @Transactional
     public PluginHeartbeatResponse handleHeartbeat(String projectKey,
                                                    PluginHeartbeatRequest req,
@@ -86,6 +115,17 @@ public class PluginSyncService {
         return new PluginHeartbeatResponse(!pending.isEmpty(), pending);
     }
 
+    /**
+     * 确认流程同步
+     * <p>
+     * 记录插件实例已同步到指定版本的流程。
+     * </p>
+     *
+     * @param projectKey 项目标识
+     * @param instanceKey 插件实例标识
+     * @param req 同步确认请求对象
+     * @throws ResponseStatusException 如果插件实例或流程不存在，抛出相应异常
+     */
     @Transactional
     public void acknowledgeSync(String projectKey,
                                 String instanceKey,
@@ -134,6 +174,12 @@ public class PluginSyncService {
         pluginInstanceMapper.update(instance);
     }
 
+    /**
+     * 查询项目的所有插件实例
+     *
+     * @param projectKey 项目标识
+     * @return 插件实例响应列表
+     */
     public List<PluginInstanceResponse> listInstances(String projectKey) {
         Project project = projectService.requireProject(projectKey);
         List<PluginInstance> instances = pluginInstanceMapper.selectByProject(project.getId());
@@ -156,6 +202,13 @@ public class PluginSyncService {
         return responses;
     }
 
+    /**
+     * 计算待同步的流程列表
+     *
+     * @param projectId 项目ID
+     * @param instanceKey 插件实例标识
+     * @return 待同步流程指令列表
+     */
     private List<FlowSyncInstructionResponse> computePendingSync(Long projectId, String instanceKey) {
         List<Flow> flows = flowMapper.selectByProject(projectId);
         Map<Long, FlowVersion> latestVersions = loadLatestVersions(flows);
@@ -183,6 +236,15 @@ public class PluginSyncService {
         return pending;
     }
 
+    /**
+     * 计算待同步流程数量
+     *
+     * @param flows 流程列表
+     * @param latestVersions 最新版本映射
+     * @param instanceKey 插件实例标识
+     * @param projectId 项目ID
+     * @return 待同步流程数量
+     */
     private int computePendingCount(List<Flow> flows,
                                     Map<Long, FlowVersion> latestVersions,
                                     String instanceKey,
@@ -206,6 +268,12 @@ public class PluginSyncService {
         return count;
     }
 
+    /**
+     * 加载流程的最新版本映射
+     *
+     * @param flows 流程列表
+     * @return 版本ID到版本对象的映射
+     */
     private Map<Long, FlowVersion> loadLatestVersions(List<Flow> flows) {
         List<Long> versionIds = flows.stream()
                 .map(Flow::getLatestVersionId)
@@ -220,10 +288,26 @@ public class PluginSyncService {
                 .collect(Collectors.toMap(FlowVersion::getId, Function.identity()));
     }
 
+    /**
+     * 解析 IP 地址
+     * <p>
+     * 优先使用请求中的 hostIp，如果不存在则使用请求者 IP。
+     * </p>
+     *
+     * @param req 心跳请求对象
+     * @param requesterIp 请求者 IP
+     * @return IP 地址
+     */
     private String resolveIp(PluginHeartbeatRequest req, String requesterIp) {
         return req.hostIp != null && !req.hostIp.isBlank() ? req.hostIp : requesterIp;
     }
 
+    /**
+     * 获取默认状态
+     *
+     * @param status 状态字符串
+     * @return 状态字符串，如果为空则返回 "ONLINE"
+     */
     private String defaultStatus(String status) {
         return (status == null || status.isBlank()) ? "ONLINE" : status;
     }

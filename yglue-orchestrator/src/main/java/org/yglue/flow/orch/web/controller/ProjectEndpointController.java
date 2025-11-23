@@ -217,7 +217,6 @@ public class ProjectEndpointController {
         item.setEntrypointId(endpoint.getEntrypointId());
         item.setFlowCode(endpoint.getFlowCode());
         item.setEnabled(endpoint.getEnabled());
-        item.setReplaceResponse(endpoint.getReplaceResponse());
         return item;
     }
 
@@ -263,12 +262,8 @@ public class ProjectEndpointController {
                 response.setEntrypointId(entryPoint.getId());
                 response.setFlowCode(entryPoint.getFlowCode());
                 response.setEnabled(entryPoint.getEnabled() == null || entryPoint.getEnabled());
-                response.setReplaceResponse(entryPoint.getReplaceResponse() == null
-                        ? Boolean.TRUE
-                        : entryPoint.getReplaceResponse());
             } else {
                 response.setEnabled(Boolean.FALSE);
-                response.setReplaceResponse(Boolean.FALSE);
             }
         }
         

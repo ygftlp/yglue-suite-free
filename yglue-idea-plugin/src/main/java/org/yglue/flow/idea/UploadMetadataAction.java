@@ -19,10 +19,24 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 
+/**
+ * 上传元数据操作
+ * <p>
+ * 将项目的元数据导出并上传到 YGlue 编排器服务器。
+ * </p>
+ *
+ * @author yglue
+ * @since 1.0
+ */
 public class UploadMetadataAction extends AnAction {
 
     private static final Logger LOG = Logger.getInstance(UploadMetadataAction.class);
 
+    /**
+     * 执行上传操作
+     *
+     * @param e 操作事件
+     */
     @Override
     public void actionPerformed(AnActionEvent e) {
         Project project = e.getProject();
@@ -30,6 +44,16 @@ public class UploadMetadataAction extends AnAction {
         upload(project, true);
     }
 
+    /**
+     * 上传项目元数据
+     * <p>
+     * 如果元数据文件不存在或需要重新导出，会自动导出后再上传。
+     * </p>
+     *
+     * @param project 项目对象
+     * @param showDialogs 是否显示对话框（true 表示手动上传，false 表示自动上传）
+     * @return 上传是否成功
+     */
     public static boolean upload(Project project, boolean showDialogs) {
         YgflowSettingsState settings = YgflowSettingsState.getInstance();
         if (settings == null) {
@@ -129,6 +153,12 @@ public class UploadMetadataAction extends AnAction {
         }
     }
 
+    /**
+     * 移除字符串末尾的斜杠
+     *
+     * @param value 字符串值
+     * @return 处理后的字符串
+     */
     private static String trimTrailingSlash(String value) {
         String v = value;
         while (v.endsWith("/")) {
@@ -137,6 +167,15 @@ public class UploadMetadataAction extends AnAction {
         return v;
     }
 
+    /**
+     * 获取默认的基础 URL
+     * <p>
+     * 如果配置的 URL 为空，则返回默认的本地地址。
+     * </p>
+     *
+     * @param configured 配置的 URL
+     * @return 基础 URL
+     */
     private static String defaultBaseUrl(String configured) {
         if (configured != null && !configured.isBlank()) {
             return configured.trim();
@@ -144,6 +183,13 @@ public class UploadMetadataAction extends AnAction {
         return "http://localhost:8090";
     }
 
+    /**
+     * 处理信息消息
+     *
+     * @param project 项目对象
+     * @param message 消息内容
+     * @param showDialogs 是否显示对话框
+     */
     private static void handleInfo(Project project, String message, boolean showDialogs) {
         if (showDialogs) {
             Messages.showInfoMessage(project, message, "yglue Upload");
@@ -152,6 +198,13 @@ public class UploadMetadataAction extends AnAction {
         }
     }
 
+    /**
+     * 处理错误消息
+     *
+     * @param project 项目对象
+     * @param message 错误消息
+     * @param showDialogs 是否显示对话框
+     */
     private static void handleError(Project project, String message, boolean showDialogs) {
         if (showDialogs) {
             Messages.showErrorDialog(project, message, "yglue Upload");

@@ -17,6 +17,15 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+/**
+ * 流程解析器服务类
+ * <p>
+ * 提供流程解析器的同步、查询等功能。
+ * </p>
+ *
+ * @author yglue
+ * @since 1.0
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -26,6 +35,18 @@ public class FlowResolverService {
 
     private final FlowResolverMapper flowResolverMapper;
 
+    /**
+     * 同步流程解析器
+     * <p>
+     * 根据提供的解析器载荷列表，同步更新项目下的流程解析器：
+     * - 如果解析器不存在，则创建
+     * - 如果解析器已存在，则更新（仅当字段发生变化时）
+     * - 不在载荷列表中的解析器将被标记为已删除
+     * </p>
+     *
+     * @param projectId 项目ID
+     * @param payloads 解析器载荷列表
+     */
     @Transactional
     public void syncResolvers(Long projectId, Collection<ResolverPayload> payloads) {
         Map<String, FlowResolver> existing = flowResolverMapper.selectByProjectId(projectId)
@@ -97,6 +118,15 @@ public class FlowResolverService {
         flowResolverMapper.markDeletedByProjectExcludingTypes(projectId, retainedTypes);
     }
 
+    /**
+     * 查询项目的所有活跃流程解析器
+     * <p>
+     * 如果项目下没有自定义解析器，则返回内置解析器列表。
+     * </p>
+     *
+     * @param projectId 项目ID
+     * @return 流程解析器列表
+     */
     public List<FlowResolver> listActive(Long projectId) {
         List<FlowResolver> resolvers = flowResolverMapper.selectActiveByProjectId(projectId);
         if (resolvers == null || resolvers.isEmpty()) {
@@ -105,10 +135,29 @@ public class FlowResolverService {
         return resolvers;
     }
 
+    /**
+     * 如果值为空则返回默认值
+     *
+     * @param value 值
+     * @param fallback 默认值
+     * @return 值或默认值
+     */
     private static String defaultIfBlank(String value, String fallback) {
         return (value == null || value.isBlank()) ? fallback : value;
     }
 
+    /**
+     * 流程解析器数据载荷
+     *
+     * @param type 解析器类型
+     * @param name 解析器名称
+     * @param description 描述
+     * @param category 分类
+     * @param builtin 是否内置
+     * @param configSchema 配置 Schema
+     * @param className 类名
+     * @param rawJson 原始 JSON
+     */
     public record ResolverPayload(
             String type,
             String name,
@@ -119,6 +168,12 @@ public class FlowResolverService {
             String className,
             String rawJson
     ) {
+        /**
+         * 从原始 Map 创建解析器载荷
+         *
+         * @param node 原始节点 Map
+         * @return 解析器载荷，如果节点无效则返回 null
+         */
         public static ResolverPayload fromRaw(Map<String, Object> node) {
             if (node == null) {
                 return null;
@@ -139,6 +194,12 @@ public class FlowResolverService {
             );
         }
 
+        /**
+         * 将 Map 序列化为 JSON 字符串
+         *
+         * @param node 节点 Map
+         * @return JSON 字符串，如果序列化失败则返回 null
+         */
         @SuppressWarnings("unchecked")
         private static String toJson(Map<String, Object> node) {
             try {
@@ -149,10 +210,22 @@ public class FlowResolverService {
             }
         }
 
+        /**
+         * 将对象转换为字符串
+         *
+         * @param raw 原始对象
+         * @return 字符串，如果对象为 null 则返回 null
+         */
         private static String stringValue(Object raw) {
             return raw == null ? null : String.valueOf(raw);
         }
 
+        /**
+         * 将对象转换为布尔值
+         *
+         * @param raw 原始对象
+         * @return 布尔值，如果对象为 null 则返回 null
+         */
         private static Boolean booleanValue(Object raw) {
             if (raw == null) return null;
             if (raw instanceof Boolean b) return b;
@@ -160,6 +233,11 @@ public class FlowResolverService {
         }
     }
 
+    /**
+     * 获取内置解析器列表
+     *
+     * @return 内置解析器列表
+     */
     private static List<FlowResolver> builtinResolvers() {
         List<FlowResolver> list = new ArrayList<>();
         list.add(buildBuiltin("REQUEST", "请求参数", "从 HTTP 请求体、路径、查询、Header、Form 等位置提取字段", "HTTP"));
@@ -169,6 +247,15 @@ public class FlowResolverService {
         return list;
     }
 
+    /**
+     * 构建内置解析器对象
+     *
+     * @param type 解析器类型
+     * @param name 解析器名称
+     * @param description 描述
+     * @param category 分类
+     * @return 流程解析器对象
+     */
     private static FlowResolver buildBuiltin(String type, String name, String description, String category) {
         FlowResolver resolver = new FlowResolver();
         resolver.setType(type);

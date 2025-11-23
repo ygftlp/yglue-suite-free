@@ -100,8 +100,11 @@ export function inferValueType(javaType: string): string {
 }
 
 import type { FlowEntrypoint } from "../../data/flowSettings"
+import type { FlowEntrypointPayload } from "../../api/client"
 
-export function normalizeEntrypoint(input?: Partial<FlowEntrypoint> | null): FlowEntrypoint | null {
+export function normalizeEntrypoint(
+  input?: Partial<FlowEntrypoint> | FlowEntrypointPayload | null
+): FlowEntrypoint | null {
   if (!input) return null
   const path = (input.path || "").trim()
   if (!path) return null
@@ -117,12 +120,23 @@ export function normalizeEntrypoint(input?: Partial<FlowEntrypoint> | null): Flo
             : (input as any).requestSchema 
               ? JSON.stringify((input as any).requestSchema) 
               : null)
+  // 处理 dataResponseFormat（可能是字符串或对象）
+  let dataResponseFormat: FlowEntrypoint["dataResponseFormat"] = null
+  if ((input as any).dataResponseFormat != null) {
+    const format = (input as any).dataResponseFormat
+    if (typeof format === "string") {
+      dataResponseFormat = format as FlowEntrypoint["dataResponseFormat"]
+    } else if (typeof format === "object") {
+      dataResponseFormat = format as FlowEntrypoint["dataResponseFormat"]
+    }
+  }
+
   return {
     path,
     method,
-    replaceResponse: Boolean(input.replaceResponse),
     enabled: input.enabled !== false,
     requestSchemaJson: requestSchemaJson ?? null,
+    dataResponseFormat,
   }
 }
 
@@ -131,9 +145,9 @@ export function serializeEntrypointPayload(entrypoint: FlowEntrypoint | null) {
   return {
     path: entrypoint.path,
     method: entrypoint.method || null,
-    replaceResponse: Boolean(entrypoint.replaceResponse),
     enabled: entrypoint.enabled !== false,
     requestSchemaJson: entrypoint.requestSchemaJson ?? null,
+    dataResponseFormat: entrypoint.dataResponseFormat ?? null,
   }
 }
 

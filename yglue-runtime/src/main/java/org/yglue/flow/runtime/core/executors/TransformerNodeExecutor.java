@@ -8,7 +8,10 @@ import org.yglue.flow.runtime.core.NodeExecutor;
 import org.yglue.flow.runtime.core.util.ExpressionEvaluator;
 import org.yglue.flow.runtime.core.util.ParamResolver;
 
-import java.util.*;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * 转换器节点执行器
@@ -317,7 +320,18 @@ public class TransformerNodeExecutor implements NodeExecutor {
             
             return output;
         } catch (Exception e) {
-            throw new RuntimeException("Groovy script execution failed: " + e.getMessage(), e);
+            // 检测常见的拼写错误，提供更友好的错误提示
+            String errorMessage = e.getMessage();
+            String helpfulHint = "";
+            if (errorMessage != null) {
+                if (errorMessage.contains("retrun") && errorMessage.contains("No signature of method")) {
+                    helpfulHint = " (提示：可能是拼写错误，请检查是否将 'return' 写成了 'retrun')";
+                } else if (errorMessage.contains("retun") && errorMessage.contains("No signature of method")) {
+                    helpfulHint = " (提示：可能是拼写错误，请检查是否将 'return' 写成了 'retun')";
+                }
+            }
+            throw new RuntimeException("Groovy script execution failed: " + errorMessage + helpfulHint 
+                + "\n脚本内容: " + script, e);
         }
     }
 

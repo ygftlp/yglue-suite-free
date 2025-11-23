@@ -3,6 +3,7 @@ package org.yglue.flow.runtime.core;
 import org.yglue.flow.runtime.FlowContext;
 import org.yglue.flow.runtime.core.definition.FlowDefinition;
 import org.yglue.flow.runtime.core.definition.NodeDefinition;
+import org.yglue.flow.runtime.core.validator.ValidationException;
 import org.yglue.flow.runtime.events.EventBus;
 import org.yglue.flow.runtime.events.FlowCompletedEvent;
 import org.yglue.flow.runtime.events.FlowStartedEvent;
@@ -81,6 +82,13 @@ public class FlowExecutor {
                 interceptor.afterNode(executionContext, result);
             }
             publish(new NodeFinishedEvent(flow, node, context, result));
+        } catch (ValidationException ve) {
+            // ValidationException 需要直接抛出，不要包装，以便 FlowOrchestratedAspect 能够捕获
+            for (ExecutionInterceptor interceptor : interceptors) {
+                interceptor.onError(executionContext, ve);
+            }
+            publish(new NodeErrorEvent(flow, node, context, ve));
+            throw ve;
         } catch (Exception ex) {
             for (ExecutionInterceptor interceptor : interceptors) {
                 interceptor.onError(executionContext, ex);

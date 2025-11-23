@@ -1,6 +1,6 @@
 ﻿<script setup lang="ts">
-import { computed, ref, watch } from "vue"
-import type { FlowEntrypoint, FlowSettings, LogPolicy } from "../data/flowSettings"
+import { computed, nextTick, ref, watch } from "vue"
+import type { FlowEntrypoint, FlowSettings, LogPolicy, DataResponseFormatConfig } from "../data/flowSettings"
 type SchemaField = { name: string; type: string; typeName?: string }
 type ResponseSchema = { type?: string | null }
 
@@ -61,7 +61,154 @@ function closePanel() {
 }
 
 function createEntrypoint(): FlowEntrypoint {
-  return { path: "", method: "GET", replaceResponse: false, enabled: true, requestSchemaJson: null }
+  return { path: "", method: "GET", enabled: true, requestSchemaJson: null, dataResponseFormat: null }
+}
+
+// 数据响应格式配置
+type CustomFieldItem = {
+  id: string
+  fieldName: string
+}
+
+function generateUUID(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID()
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === "x" ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
+const dataResponseFormatConfig = ref<{
+  errorCodeField: string
+  errorMessageField: string
+  successCode: number
+  defaultErrorCode: number
+  customFields: CustomFieldItem[]
+}>({
+  errorCodeField: "errorCode",
+  errorMessageField: "message",
+  successCode: 1,
+  defaultErrorCode: -1,
+  customFields: [{ id: generateUUID(), fieldName: "data" }],
+})
+
+function addCustomField() {
+  console.log("=== addCustomField 函数被调用 ===")
+  const currentFields = dataResponseFormatConfig.value.customFields
+  console.log("当前 customFields 长度:", currentFields.length)
+  console.log("当前 customFields:", JSON.parse(JSON.stringify(currentFields)))
+  
+  const newField: CustomFieldItem = {
+    id: generateUUID(),
+    fieldName: "",
+  }
+  
+  // 创建新数组，确保 Vue 检测到变化
+  const updatedFields = [...currentFields, newField]
+  
+  // 更新整个 ref 对象
+  dataResponseFormatConfig.value = {
+    ...dataResponseFormatConfig.value,
+    customFields: updatedFields
+  }
+  
+  console.log("添加后的 customFields 长度:", dataResponseFormatConfig.value.customFields.length)
+  console.log("添加后的 customFields:", JSON.parse(JSON.stringify(dataResponseFormatConfig.value.customFields)))
+  
+  // 延迟更新，确保 DOM 已更新
+  nextTick(() => {
+    updateDataResponseFormat()
+    console.log("updateDataResponseFormat 已调用")
+  })
+}
+
+function removeCustomField(index: number) {
+  if (dataResponseFormatConfig.value.customFields.length <= 1) {
+    return
+  }
+  dataResponseFormatConfig.value.customFields.splice(index, 1)
+  updateDataResponseFormat()
+}
+
+// 防止 watch 循环更新的标志
+let isUpdatingFromWatch = false
+
+// 初始化数据响应格式配置
+watch(
+  () => entrypoint.value.dataResponseFormat,
+  (format) => {
+    // 如果正在从内部更新，跳过 watch
+    if (isUpdatingFromWatch) {
+      return
+    }
+    
+    if (!format || typeof format === "string") {
+      // 如果没有配置或旧格式（字符串），使用默认值
+      dataResponseFormatConfig.value = {
+        errorCodeField: "errorCode",
+        errorMessageField: "message",
+        successCode: 1,
+        defaultErrorCode: -1,
+        customFields: [{ id: generateUUID(), fieldName: "data" }],
+      }
+      return
+    }
+    
+    const customFields = format.customFields && format.customFields.length > 0
+      ? format.customFields.map(f => ({ id: generateUUID(), fieldName: f.fieldName }))
+      : [{ id: generateUUID(), fieldName: "data" }]
+    
+    dataResponseFormatConfig.value = {
+      errorCodeField: format.errorCodeField || "errorCode",
+      errorMessageField: format.errorMessageField || "message",
+      successCode: format.successCode ?? 1,
+      defaultErrorCode: format.defaultErrorCode ?? -1,
+      customFields,
+    }
+  },
+  { immediate: true, deep: false }
+)
+
+// 更新数据响应格式
+function updateDataResponseFormat() {
+  // 设置标志，防止 watch 循环更新
+  isUpdatingFromWatch = true
+  
+  const format: DataResponseFormatConfig = {
+    errorCodeField: dataResponseFormatConfig.value.errorCodeField,
+    errorMessageField: dataResponseFormatConfig.value.errorMessageField,
+    successCode: dataResponseFormatConfig.value.successCode,
+    defaultErrorCode: dataResponseFormatConfig.value.defaultErrorCode,
+    customFields: dataResponseFormatConfig.value.customFields
+      .filter(f => f.fieldName.trim())
+      .map(f => ({ fieldName: f.fieldName.trim() })),
+  }
+  
+  updateEntrypointField("dataResponseFormat", format)
+  
+  // 延迟重置标志，确保 watch 不会触发
+  nextTick(() => {
+    isUpdatingFromWatch = false
+  })
+}
+
+// 构建示例响应
+function buildExampleResponse() {
+  const response: Record<string, any> = {
+    [dataResponseFormatConfig.value.errorCodeField]: "VALIDATION_FAILED",
+    [dataResponseFormatConfig.value.errorMessageField]: "参数 'userId' 校验失败",
+  }
+  
+  dataResponseFormatConfig.value.customFields.forEach(field => {
+    if (field.fieldName.trim()) {
+      response[field.fieldName] = { field: "userId", errorCode: "REQUIRED_MISSING" }
+    }
+  })
+  
+  return response
 }
 
 function toggleEntrypoint(enabled: boolean) {
@@ -352,6 +499,103 @@ function getTypeTooltip(item: SchemaField): string | null {
               />
             </label>
           </div>
+          
+          <!-- 数据响应格式配置 -->
+          <div class="error-response-format-section">
+            <div class="section-subtitle">数据响应格式</div>
+            <p class="section-desc">配置流程响应的数据格式，适配不同系统的响应结构。</p>
+            
+            <div class="section-grid">
+              <label class="field">
+                <span>错误码字段名</span>
+                <input
+                  class="input"
+                  type="text"
+                  placeholder="errorCode"
+                  :value="dataResponseFormatConfig.errorCodeField"
+                  @input="dataResponseFormatConfig.errorCodeField = ($event.target as HTMLInputElement).value; updateDataResponseFormat()"
+                />
+              </label>
+              <label class="field">
+                <span>错误消息字段名</span>
+                <input
+                  class="input"
+                  type="text"
+                  placeholder="message"
+                  :value="dataResponseFormatConfig.errorMessageField"
+                  @input="dataResponseFormatConfig.errorMessageField = ($event.target as HTMLInputElement).value; updateDataResponseFormat()"
+                />
+              </label>
+              <label class="field">
+                <span>成功码（默认值）</span>
+                <input
+                  class="input"
+                  type="number"
+                  placeholder="1"
+                  :value="dataResponseFormatConfig.successCode"
+                  @input="dataResponseFormatConfig.successCode = parseInt(($event.target as HTMLInputElement).value) || 1; updateDataResponseFormat()"
+                />
+              </label>
+              <label class="field">
+                <span>失败码（默认值）</span>
+                <input
+                  class="input"
+                  type="number"
+                  placeholder="-1"
+                  :value="dataResponseFormatConfig.defaultErrorCode"
+                  @input="dataResponseFormatConfig.defaultErrorCode = parseInt(($event.target as HTMLInputElement).value) || -1; updateDataResponseFormat()"
+                />
+              </label>
+            </div>
+            
+            <!-- 自定义数据字段列表 -->
+            <div class="custom-fields-section">
+              <div class="custom-fields-header">
+                <span class="section-subtitle">自定义数据字段</span>
+                <button 
+                  type="button" 
+                  class="add-field-btn" 
+                  @click="() => { console.log('按钮被点击'); addCustomField(); }"
+                >
+                  + 添加字段
+                </button>
+              </div>
+              <div class="custom-fields-list">
+                <div
+                  v-for="(field, index) in dataResponseFormatConfig.customFields"
+                  :key="field.id"
+                  class="custom-field-item"
+                >
+                  <div class="field-row">
+                    <label class="field-name-input">
+                      <input
+                        class="input"
+                        type="text"
+                        placeholder="字段名"
+                        :value="field.fieldName"
+                        @input="field.fieldName = ($event.target as HTMLInputElement).value; updateDataResponseFormat()"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      class="remove-field-btn"
+                      @click="removeCustomField(index)"
+                      :disabled="dataResponseFormatConfig.customFields.length === 1"
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div class="format-example">
+              <div class="example-title">示例响应：</div>
+              <pre class="example-code">{{
+                JSON.stringify(buildExampleResponse(), null, 2)
+              }}</pre>
+            </div>
+          </div>
         </section>
 
         <section class="panel-section">
@@ -486,6 +730,156 @@ function getTypeTooltip(item: SchemaField): string | null {
 
 .entrypoint-grid .field.full {
   grid-column: 1 / -1;
+}
+
+.error-response-format-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.section-subtitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 4px;
+}
+
+.format-mode-selector {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.radio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.radio input[type="radio"] {
+  cursor: pointer;
+}
+
+.format-preset-section {
+  margin-top: 8px;
+}
+
+.format-custom-section {
+  margin-top: 12px;
+}
+
+.format-example {
+  margin-top: 12px;
+  padding: 12px;
+  background: #f9fafb;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+}
+
+.example-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: #6b7280;
+  margin-bottom: 8px;
+}
+
+.example-code {
+  font-size: 11px;
+  font-family: 'Courier New', monospace;
+  color: #374151;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.custom-fields-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.custom-fields-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  position: relative;
+  z-index: 1;
+}
+
+.add-field-btn {
+  padding: 4px 12px;
+  font-size: 12px;
+  color: #2563eb;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  position: relative;
+  z-index: 100;
+  pointer-events: auto !important;
+  touch-action: manipulation;
+}
+
+.add-field-btn:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+
+.custom-fields-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.custom-field-item {
+  padding: 8px;
+  background: #f9fafb;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+}
+
+.field-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.field-name-input {
+  flex: 1;
+  margin: 0;
+}
+
+.field-name-input .input {
+  width: 100%;
+}
+
+.remove-field-btn {
+  padding: 4px 12px;
+  font-size: 12px;
+  color: #dc2626;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.remove-field-btn:hover:not(:disabled) {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+.remove-field-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .collect-grid {

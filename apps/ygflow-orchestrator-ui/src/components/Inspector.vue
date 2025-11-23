@@ -2,8 +2,34 @@
 import { computed, ref } from "vue"
 import TransformerEditor from "./TransformerEditor.vue"
 import ScriptEditor from "./ScriptEditor.vue"
+import ValidationEditor from "./ValidationEditor.vue"
 import { transactionManagers } from "../data/transactionManagers"
 import type { FlowModel, FlowResolver } from "../api/client"
+
+/**
+ * 校验规则类型
+ */
+type ValidatorType = 
+  | "required" 
+  | "notEmpty" 
+  | "notBlank" 
+  | "type" 
+  | "range" 
+  | "length" 
+  | "regex" 
+  | "expression" 
+  | "custom"
+
+/**
+ * 校验规则
+ */
+interface ValidationRule {
+  id: string
+  type: ValidatorType
+  enabled: boolean
+  message?: string
+  config?: Record<string, any>
+}
 
 type IOType = "inputs"
 
@@ -45,6 +71,13 @@ const outputInfo = computed(() => props.selectedNode?.data?.output || null)
 
 // 脚本编辑器 refs
 const scriptEditorRefs = ref<Array<{ openCodeEditor: () => void } | null>>([])
+
+// 校验器编辑器 refs
+const validationEditorRefs = ref<Array<{ open: () => void } | null>>([])
+
+// 当前编辑的校验器索引和规则
+const editingValidatorIndex = ref<number | null>(null)
+const editingValidatorRule = ref<ValidationRule | null>(null)
 
 // 已移除条件分支连线功能
 
@@ -134,6 +167,94 @@ function getInputScript(input: any): string {
   if (!input) return ""
   // 优先使用 script，如果没有则使用 transformer（兼容旧数据）
   return input.script || input.transformer || ""
+}
+
+function getInputValidators(input: any): ValidationRule[] {
+  if (!input || !input.validators) return []
+  return Array.isArray(input.validators) ? input.validators : []
+}
+
+function addValidator(inputIndex: number) {
+  const newRule: ValidationRule = {
+    id: `validator-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    type: "required",
+    enabled: true,
+  }
+  
+  mutateNode((next) => {
+    ensureArray(next, "inputs")
+    const input = next.data.inputs[inputIndex]
+    if (!input.validators) {
+      input.validators = []
+    }
+    input.validators.push(newRule)
+  })
+}
+
+function removeValidator(inputIndex: number, validatorIndex: number) {
+  mutateNode((next) => {
+    ensureArray(next, "inputs")
+    const input = next.data.inputs[inputIndex]
+    if (input.validators) {
+      input.validators.splice(validatorIndex, 1)
+    }
+  })
+}
+
+function editValidator(inputIndex: number, validatorIndex: number) {
+  const input = props.selectedNode?.data?.inputs?.[inputIndex]
+  if (!input) return
+  
+  const validators = getInputValidators(input)
+  const rule = validators[validatorIndex]
+  if (!rule) return
+  
+  editingValidatorIndex.value = validatorIndex
+  editingValidatorRule.value = { ...rule }
+  
+  // 打开校验器编辑器
+  const editorRef = validationEditorRefs.value[inputIndex]
+  if (editorRef) {
+    editorRef.open()
+  }
+}
+
+function saveValidator(inputIndex: number, updatedRule: ValidationRule) {
+  mutateNode((next) => {
+    ensureArray(next, "inputs")
+    const input = next.data.inputs[inputIndex]
+    if (!input.validators) {
+      input.validators = []
+    }
+    
+    const validatorIndex = editingValidatorIndex.value
+    if (validatorIndex !== null && validatorIndex >= 0 && validatorIndex < input.validators.length) {
+      input.validators[validatorIndex] = updatedRule
+    }
+  })
+  
+  editingValidatorIndex.value = null
+  editingValidatorRule.value = null
+}
+
+function cancelEditValidator() {
+  editingValidatorIndex.value = null
+  editingValidatorRule.value = null
+}
+
+function getValidatorTypeLabel(type: ValidatorType): string {
+  const labels: Record<ValidatorType, string> = {
+    required: "必填",
+    notEmpty: "非空",
+    notBlank: "非空白",
+    type: "类型",
+    range: "范围",
+    length: "长度",
+    regex: "正则",
+    expression: "表达式",
+    custom: "自定义",
+  }
+  return labels[type] || type
 }
 
 function updateInputScript(index: number, script: string) {
@@ -478,6 +599,66 @@ function getServiceName(comp: any): string | null {
               :hide-preview="true"
               @update:script="(script) => updateInputScript(index, script)"
             />
+            
+            <!-- 校验器配置区域 -->
+            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
+                <div class="muted small">校验器</div>
+                <button
+                  class="btn"
+                  style="font-size: 11px; padding: 4px 8px"
+                  @click="addValidator(index)"
+                >
+                  添加校验器
+                </button>
+              </div>
+              
+              <div v-if="getInputValidators(input).length === 0" class="muted" style="font-size: 11px">
+                暂无校验器
+              </div>
+              
+              <div
+                v-for="(validator, validatorIndex) in getInputValidators(input)"
+                :key="validator.id || validatorIndex"
+                class="card"
+                style="padding: 8px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center"
+              >
+                <div style="flex: 1">
+                  <div style="display: flex; align-items: center; gap: 8px">
+                    <span style="font-size: 12px; font-weight: 500">{{ getValidatorTypeLabel(validator.type) }}</span>
+                    <span v-if="!validator.enabled" style="font-size: 11px; color: #9ca3af">（已禁用）</span>
+                  </div>
+                  <div v-if="validator.message" style="font-size: 11px; color: #6b7280; margin-top: 2px">
+                    {{ validator.message }}
+                  </div>
+                </div>
+                <div style="display: flex; gap: 4px">
+                  <button
+                    class="btn"
+                    style="font-size: 11px; padding: 4px 8px"
+                    @click="editValidator(index, validatorIndex)"
+                  >
+                    编辑
+                  </button>
+                  <button
+                    class="btn"
+                    style="font-size: 11px; padding: 4px 8px"
+                    @click="removeValidator(index, validatorIndex)"
+                  >
+                    删除
+                  </button>
+                </div>
+              </div>
+              
+              <!-- 校验器编辑器 -->
+              <ValidationEditor
+                :ref="(el) => { validationEditorRefs[index] = el as any }"
+                :rule="editingValidatorRule"
+                :value-type="input.valueType || 'STRING'"
+                @save="saveValidator(index, $event)"
+                @cancel="cancelEditValidator"
+              />
+            </div>
           </div>
         </div>
 

@@ -17,6 +17,16 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * 规则自动同步调度器
+ * <p>
+ * 定时检查并同步流程规则文件到本地项目。
+ * 支持配置同步间隔，并提供立即触发同步的功能。
+ * </p>
+ *
+ * @author yglue
+ * @since 1.0
+ */
 @Service(Service.Level.PROJECT)
 public final class RuleAutoSyncScheduler implements Disposable {
 
@@ -85,6 +95,11 @@ public final class RuleAutoSyncScheduler implements Disposable {
         }
     }
 
+    /**
+     * 执行同步操作
+     *
+     * @param settings 插件设置状态
+     */
     private void performSync(YgflowSettingsState settings) {
         String basePath = project.getBasePath();
         if (basePath == null || basePath.isBlank()) {
@@ -129,6 +144,12 @@ public final class RuleAutoSyncScheduler implements Disposable {
         }
     }
 
+    /**
+     * 设置变更回调
+     * <p>
+     * 当设置变更时，重置上次同步时间并触发立即同步。
+     * </p>
+     */
     public void onSettingsChanged() {
         lastAttemptEpochSeconds = 0L;
         if (autoSyncEnabled()) {
@@ -136,6 +157,12 @@ public final class RuleAutoSyncScheduler implements Disposable {
         }
     }
 
+    /**
+     * 立即触发同步
+     * <p>
+     * 在后台线程中立即执行一次同步操作，不等待定时任务。
+     * </p>
+     */
     public void triggerImmediate() {
         AppExecutorUtil.getAppExecutorService().execute(() -> {
             if (project.isDisposed()) {
@@ -157,11 +184,25 @@ public final class RuleAutoSyncScheduler implements Disposable {
         });
     }
 
+    /**
+     * 检查自动同步是否启用
+     *
+     * @return 如果启用则返回 true
+     */
     private boolean autoSyncEnabled() {
         YgflowSettingsState settings = YgflowSettingsState.getInstance();
         return settings != null && settings.autoRuleSyncEnabled;
     }
 
+    /**
+     * 规范化基础 URL
+     * <p>
+     * 移除末尾的斜杠，如果为空则使用默认值。
+     * </p>
+     *
+     * @param configured 配置的 URL
+     * @return 规范化后的 URL
+     */
     private static String normalizeBaseUrl(String configured) {
         String value = configured == null ? "" : configured.trim();
         if (value.isEmpty()) {
@@ -173,6 +214,13 @@ public final class RuleAutoSyncScheduler implements Disposable {
         return value;
     }
 
+    /**
+     * 解析规则目录路径
+     *
+     * @param basePath 项目根路径
+     * @param rulesDirRaw 规则目录路径（相对或绝对）
+     * @return 规范化后的规则目录路径
+     */
     private static Path resolveRulesDirectory(String basePath, String rulesDirRaw) {
         String value = rulesDirRaw == null || rulesDirRaw.isBlank()
                 ? ".ygflow/rules"
@@ -184,6 +232,11 @@ public final class RuleAutoSyncScheduler implements Disposable {
         return path.normalize();
     }
 
+    /**
+     * 获取当前时间戳（秒）
+     *
+     * @return 当前时间戳（秒）
+     */
     private static long currentEpochSeconds() {
         return System.currentTimeMillis() / 1000;
     }

@@ -12,6 +12,16 @@ import org.yglue.flow.idea.settings.YgflowSettingsState;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * 元数据自动上传调度器
+ * <p>
+ * 定时检查并上传项目元数据到 YGlue 编排器服务器。
+ * 支持配置上传间隔，并提供立即触发上传的功能。
+ * </p>
+ *
+ * @author yglue
+ * @since 1.0
+ */
 @Service(Service.Level.PROJECT)
 public final class MetadataAutoUploadScheduler implements Disposable {
 
@@ -21,12 +31,26 @@ public final class MetadataAutoUploadScheduler implements Disposable {
     private final ScheduledFuture<?> future;
     private volatile long lastUploadEpochSeconds = 0L;
 
+    /**
+     * 构造函数
+     * <p>
+     * 启动定时检查任务，初始延迟10秒，之后每10秒检查一次。
+     * </p>
+     *
+     * @param project 项目对象
+     */
     public MetadataAutoUploadScheduler(@NotNull Project project) {
         this.project = project;
         this.future = AppExecutorUtil.getAppScheduledExecutorService()
                 .scheduleWithFixedDelay(this::tick, 10, 10, TimeUnit.SECONDS);
     }
 
+    /**
+     * 定时检查任务
+     * <p>
+     * 每10秒执行一次，检查是否需要上传元数据。
+     * </p>
+     */
     private void tick() {
         YgflowSettingsState settings = YgflowSettingsState.getInstance();
         if (project.isDisposed() || settings == null || !settings.autoUploadEnabled) {
@@ -45,6 +69,12 @@ public final class MetadataAutoUploadScheduler implements Disposable {
         }
     }
 
+    /**
+     * 立即触发上传
+     * <p>
+     * 在后台线程中立即执行一次上传操作，不等待定时任务。
+     * </p>
+     */
     public void triggerImmediate() {
         AppExecutorUtil.getAppExecutorService().execute(() -> {
             YgflowSettingsState settings = YgflowSettingsState.getInstance();
@@ -60,6 +90,12 @@ public final class MetadataAutoUploadScheduler implements Disposable {
         });
     }
 
+    /**
+     * 设置变更回调
+     * <p>
+     * 当设置变更时，重置上次上传时间并触发立即上传。
+     * </p>
+     */
     public void onSettingsChanged() {
         lastUploadEpochSeconds = 0L;
         triggerImmediate();

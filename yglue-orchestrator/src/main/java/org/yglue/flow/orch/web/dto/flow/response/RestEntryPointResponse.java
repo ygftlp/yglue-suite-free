@@ -6,7 +6,7 @@ public class RestEntryPointResponse {
     private String method;
     private String flowCode;
     private String requestSchemaJson;
-    private boolean replaceResponse;
+    private Object dataResponseFormat;
     private boolean enabled;
 
     public RestEntryPointResponse() {
@@ -17,14 +17,14 @@ public class RestEntryPointResponse {
                                   String method,
                                   String flowCode,
                                   String requestSchemaJson,
-                                  boolean replaceResponse,
+                                  Object dataResponseFormat,
                                   boolean enabled) {
         this.id = id;
         this.path = path;
         this.method = method;
         this.flowCode = flowCode;
         this.requestSchemaJson = requestSchemaJson;
-        this.replaceResponse = replaceResponse;
+        this.dataResponseFormat = dataResponseFormat;
         this.enabled = enabled;
     }
 
@@ -68,12 +68,12 @@ public class RestEntryPointResponse {
         this.requestSchemaJson = requestSchemaJson;
     }
 
-    public boolean isReplaceResponse() {
-        return replaceResponse;
+    public Object getDataResponseFormat() {
+        return dataResponseFormat;
     }
 
-    public void setReplaceResponse(boolean replaceResponse) {
-        this.replaceResponse = replaceResponse;
+    public void setDataResponseFormat(Object dataResponseFormat) {
+        this.dataResponseFormat = dataResponseFormat;
     }
 
     public boolean isEnabled() {

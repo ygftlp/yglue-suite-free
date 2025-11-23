@@ -49,9 +49,7 @@ public class FlowEntryPointService {
             entry.setPath(normalizePath(request.getPath()));
             entry.setHttpMethod(normalizeMethod(request.getMethod()));
             entry.setRequestSchemaJson(normalizeSchemaJson(request.getRequestSchemaJson()));
-            entry.setReplaceResponse(request.getReplaceResponse() == null
-                    ? Boolean.TRUE
-                    : request.getReplaceResponse());
+            entry.setDataResponseFormat(normalizeDataResponseFormat(request.getDataResponseFormat()));
             entry.setEnabled(request.getEnabled() == null ? Boolean.TRUE : request.getEnabled());
             entry.setCreateBy(operator);
             entry.setUpdateBy(operator);
@@ -61,9 +59,7 @@ public class FlowEntryPointService {
             existing.setPath(normalizePath(request.getPath()));
             existing.setHttpMethod(normalizeMethod(request.getMethod()));
             existing.setRequestSchemaJson(normalizeSchemaJson(request.getRequestSchemaJson()));
-            existing.setReplaceResponse(request.getReplaceResponse() == null
-                    ? Boolean.TRUE
-                    : request.getReplaceResponse());
+            existing.setDataResponseFormat(normalizeDataResponseFormat(request.getDataResponseFormat()));
             existing.setEnabled(request.getEnabled() == null ? Boolean.TRUE : request.getEnabled());
             existing.setUpdateBy(operator);
             existing.setDelFlag(0);
@@ -116,14 +112,40 @@ public class FlowEntryPointService {
         return entryPoint;
     }
 
+    /**
+     * 规范化路径
+     * <p>
+     * 确保路径以 "/" 开头，并移除多余的斜杠。
+     * </p>
+     * 
+     * @param path 原始路径
+     * @return 规范化后的路径
+     */
     private String normalizePath(String path) {
-        String trimmed = path.trim();
+        String trimmed = path == null ? "" : path.trim();
+        if (trimmed.isEmpty()) {
+            return "/";
+        }
         if (!trimmed.startsWith("/")) {
             trimmed = "/" + trimmed;
         }
-        return trimmed.replaceAll("//+", "/");
+        trimmed = trimmed.replaceAll("//+", "/");
+        // 移除末尾的斜杠（除非是根路径）
+        if (trimmed.length() > 1 && trimmed.endsWith("/")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1);
+        }
+        return trimmed;
     }
 
+    /**
+     * 规范化 HTTP 方法
+     * <p>
+     * 将方法转换为大写，如果为空则返回 null。
+     * </p>
+     * 
+     * @param method HTTP 方法
+     * @return 规范化后的方法（大写），如果为空则返回 null
+     */
     private String normalizeMethod(String method) {
         if (method == null || method.isBlank()) {
             return null;
@@ -144,6 +166,31 @@ public class FlowEntryPointService {
             return OBJECT_MAPPER.writeValueAsString(tree);
         } catch (Exception ex) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "requestSchema must be valid JSON", ex);
+        }
+    }
+
+    /**
+     * 规范化数据响应格式
+     * <p>
+     * 如果为对象则序列化为 JSON 字符串，如果为字符串（预设名称）则直接返回。
+     * </p>
+     *
+     * @param dataResponseFormat 数据响应格式（字符串或对象）
+     * @return 规范化后的 JSON 字符串或预设名称
+     */
+    private String normalizeDataResponseFormat(Object dataResponseFormat) {
+        if (dataResponseFormat == null) {
+            return null;
+        }
+        if (dataResponseFormat instanceof String) {
+            String str = ((String) dataResponseFormat).trim();
+            return str.isEmpty() ? null : str;
+        }
+        try {
+            return OBJECT_MAPPER.writeValueAsString(dataResponseFormat);
+        } catch (Exception ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "dataResponseFormat must be a valid JSON object or preset name", ex);
         }
     }
 }

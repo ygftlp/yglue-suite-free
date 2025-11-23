@@ -30,11 +30,23 @@ export function useFlowState() {
   }
 
   function setGraph(newNodes: any[], newEdges: any[]) {
-    nodes.value = Array.isArray(newNodes) ? newNodes : []
-    edges.value = Array.isArray(newEdges) ? newEdges : []
+    console.log("[useFlowState] setGraph called:", { 
+      newNodesCount: Array.isArray(newNodes) ? newNodes.length : 0,
+      newEdgesCount: Array.isArray(newEdges) ? newEdges.length : 0,
+      currentNodesCount: nodes.value.length,
+      currentEdgesCount: edges.value.length
+    })
+    const validNodes = Array.isArray(newNodes) ? newNodes : []
+    const validEdges = Array.isArray(newEdges) ? newEdges : []
+    nodes.value = validNodes
+    edges.value = validEdges
     selected.value = null
     selectedEdge.value = null
     hideContextMenu()
+    console.log("[useFlowState] setGraph completed:", {
+      nodesCount: nodes.value.length,
+      edgesCount: edges.value.length
+    })
   }
 
   function resetGraph() {

@@ -6,6 +6,7 @@ const props = defineProps<{
   canDelete: boolean
   canSave: boolean
   canPublish: boolean
+  showPublishButton: boolean
 }>()
 
 const emit = defineEmits<{
@@ -14,7 +15,29 @@ const emit = defineEmits<{
   (event: "delete-selection"): void
   (event: "save-draft"): void
   (event: "publish-flow"): void
+  (event: "open-version-list"): void
 }>()
+
+function handlePublishClick() {
+  console.log("[CanvasToolbar] 发布按钮被点击")
+  console.log("[CanvasToolbar] canPublish:", props.canPublish)
+  console.log("[CanvasToolbar] showPublishButton:", props.showPublishButton)
+  
+  if (!props.canPublish) {
+    console.log("[CanvasToolbar] 按钮被禁用，显示提示")
+    if (!props.showPublishButton) {
+      // 已发布状态
+      window.alert("当前版本已发布，无法重复发布。如需重新发布，请先修改内容并保存新版本。")
+    } else {
+      // 有发布按钮但不可用，可能是正在保存/发布中，或者没有内容
+      window.alert("无法发布流程，请检查流程内容或保存状态。")
+    }
+    return
+  }
+  
+  console.log("[CanvasToolbar] 触发 publish-flow 事件")
+  emit("publish-flow")
+}
 </script>
 
 <template>
@@ -30,13 +53,20 @@ const emit = defineEmits<{
     </div>
     <div class="toolbar-actions">
       <button class="btn ghost" type="button" @click="emit('open-flow-settings')">流程设置</button>
+      <button class="btn ghost" type="button" @click="emit('open-version-list')">版本列表</button>
       <button class="btn" type="button" @click="emit('clear-selection')">清空选中</button>
       <button class="btn" type="button" :disabled="!props.canDelete" @click="emit('delete-selection')">
         删除选中
       </button>
       <button class="btn" type="button" :disabled="!props.canSave" @click="emit('save-draft')">保存草稿</button>
-      <button class="btn primary" type="button" :disabled="!props.canPublish" @click="emit('publish-flow')">
-        发布
+      <button 
+        class="btn primary" 
+        type="button" 
+        :class="{ 'btn-disabled': !props.canPublish }"
+        @click="handlePublishClick"
+        :title="props.canPublish ? '发布当前流程' : (props.showPublishButton ? '请先修改内容' : '当前版本已发布')"
+      >
+        {{ props.showPublishButton ? '发布' : '已发布' }}
       </button>
     </div>
   </div>
@@ -114,6 +144,16 @@ const emit = defineEmits<{
   border: 1px solid rgba(148, 163, 184, 0.6);
   background: transparent;
   color: #0f172a;
+}
+
+.btn-disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  pointer-events: auto;
+}
+
+.btn-disabled:hover {
+  opacity: 0.6;
 }
 </style>
 

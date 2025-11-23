@@ -22,6 +22,16 @@ import java.time.Duration;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * 插件心跳调度器
+ * <p>
+ * 定时向 YGlue 编排器服务器发送心跳请求，保持插件实例在线状态。
+ * 服务器可以根据心跳响应返回待同步的流程列表。
+ * </p>
+ *
+ * @author yglue
+ * @since 1.0
+ */
 @Service(Service.Level.PROJECT)
 public final class PluginHeartbeatScheduler implements Disposable {
 
@@ -34,6 +44,14 @@ public final class PluginHeartbeatScheduler implements Disposable {
 
     private volatile long lastAttemptEpochSeconds = 0L;
 
+    /**
+     * 构造函数
+     * <p>
+     * 启动定时心跳任务，初始延迟10秒，之后每20秒检查一次。
+     * </p>
+     *
+     * @param project 项目对象
+     */
     public PluginHeartbeatScheduler(@NotNull Project project) {
         this.project = project;
         this.httpClient = HttpClient.newBuilder()
@@ -43,6 +61,12 @@ public final class PluginHeartbeatScheduler implements Disposable {
                 .scheduleWithFixedDelay(this::tick, 10, 20, TimeUnit.SECONDS);
     }
 
+    /**
+     * 定时心跳任务
+     * <p>
+     * 每20秒执行一次，检查是否需要发送心跳。
+     * </p>
+     */
     private void tick() {
         if (project.isDisposed()) {
             return;
@@ -80,6 +104,12 @@ public final class PluginHeartbeatScheduler implements Disposable {
         }
     }
 
+    /**
+     * 立即触发心跳
+     * <p>
+     * 在后台线程中立即发送一次心跳请求，不等待定时任务。
+     * </p>
+     */
     public void triggerImmediate() {
         AppExecutorUtil.getAppExecutorService().execute(() -> {
             lastAttemptEpochSeconds = 0L;
@@ -87,6 +117,14 @@ public final class PluginHeartbeatScheduler implements Disposable {
         });
     }
 
+    /**
+     * 发送心跳请求
+     *
+     * @param endpoint 服务器端点
+     * @param projectKey 项目标识
+     * @param instanceKey 插件实例标识
+     * @throws Exception 如果请求失败
+     */
     private void sendHeartbeat(String endpoint, String projectKey, String instanceKey) throws Exception {
         JSONObject payload = new JSONObject();
         payload.put("instanceKey", instanceKey);
@@ -110,6 +148,12 @@ public final class PluginHeartbeatScheduler implements Disposable {
         }
     }
 
+    /**
+     * 规范化基础 URL
+     *
+     * @param value URL 字符串
+     * @return 规范化后的 URL
+     */
     private static String normalizeBaseUrl(String value) {
         if (value == null) {
             return "";
@@ -121,10 +165,23 @@ public final class PluginHeartbeatScheduler implements Disposable {
         return trimmed;
     }
 
+    /**
+     * URL 编码字符串
+     *
+     * @param input 输入字符串
+     * @return 编码后的字符串
+     */
     private static String encode(String input) {
         return URLEncoder.encode(input, StandardCharsets.UTF_8);
     }
 
+    /**
+     * 构建额外信息 JSON 字符串
+     *
+     * @param projectKey 项目标识
+     * @param instanceKey 插件实例标识
+     * @return 额外信息 JSON 字符串
+     */
     private static String buildExtraInfo(String projectKey, String instanceKey) {
         JSONObject json = new JSONObject();
         json.put("source", "yglue-plugin");
@@ -137,6 +194,11 @@ public final class PluginHeartbeatScheduler implements Disposable {
         return json.toString();
     }
 
+    /**
+     * 获取当前时间戳（秒）
+     *
+     * @return 当前时间戳（秒）
+     */
     private static long currentEpochSeconds() {
         return System.currentTimeMillis() / 1000;
     }

@@ -17,6 +17,15 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+/**
+ * 流程模型服务类
+ * <p>
+ * 提供流程模型的同步、查询等功能。
+ * </p>
+ *
+ * @author yglue
+ * @since 1.0
+ */
 @Service
 public class FlowModelService {
 
@@ -25,10 +34,27 @@ public class FlowModelService {
 
     private final FlowModelMapper flowModelMapper;
 
+    /**
+     * 构造函数
+     *
+     * @param flowModelMapper 流程模型数据访问对象
+     */
     public FlowModelService(FlowModelMapper flowModelMapper) {
         this.flowModelMapper = flowModelMapper;
     }
 
+    /**
+     * 同步流程模型
+     * <p>
+     * 根据提供的模型载荷列表，同步更新项目下的流程模型：
+     * - 如果模型不存在，则创建
+     * - 如果模型已存在，则更新（仅当字段发生变化时）
+     * - 不在载荷列表中的模型将被标记为已删除
+     * </p>
+     *
+     * @param projectId 项目ID
+     * @param payloads 模型载荷列表
+     */
     @Transactional
     public void syncModels(Long projectId, Collection<ModelPayload> payloads) {
         List<FlowModel> existing = flowModelMapper.selectByProjectId(projectId);
@@ -106,14 +132,33 @@ public class FlowModelService {
         flowModelMapper.markDeletedByProjectExcludingIdentifiers(projectId, retainedIdentifiers);
     }
 
+    /**
+     * 查询项目的所有活跃流程模型
+     *
+     * @param projectId 项目ID
+     * @return 流程模型列表
+     */
     public List<FlowModel> listActive(Long projectId) {
         return flowModelMapper.selectActiveByProjectId(projectId);
     }
 
+    /**
+     * 如果值为空则返回默认值
+     *
+     * @param value 值
+     * @param fallback 默认值
+     * @return 值或默认值
+     */
     private static String defaultIfBlank(String value, String fallback) {
         return (value == null || value.isBlank()) ? fallback : value;
     }
 
+    /**
+     * 将标签列表序列化为 JSON 数组字符串
+     *
+     * @param tags 标签列表
+     * @return JSON 数组字符串，如果列表为空则返回 null
+     */
     private static String writeJsonArray(List<String> tags) {
         if (tags == null) {
             return null;
@@ -134,6 +179,19 @@ public class FlowModelService {
         }
     }
 
+    /**
+     * 流程模型数据载荷
+     *
+     * @param identifier 模型标识
+     * @param name 模型名称
+     * @param className 类名
+     * @param description 描述
+     * @param category 分类
+     * @param version 版本
+     * @param tags 标签列表
+     * @param schemaJson Schema JSON
+     * @param rawJson 原始 JSON
+     */
     public record ModelPayload(
             String identifier,
             String name,
@@ -146,8 +204,4 @@ public class FlowModelService {
             String rawJson
     ) {}
 }
-
-
-
-
 
