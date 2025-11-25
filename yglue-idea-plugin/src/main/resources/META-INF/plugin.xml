@@ -26,6 +26,16 @@
               text="Upload Metadata"
               description="Upload .ygflow/export.json to Orchestrator"/>
     
+      <action id="org.yglue.flow.ExportCodeSnapshotAction"
+              class="org.yglue.flow.idea.snapshot.ExportCodeSnapshotAction"
+              text="Export Code Snapshot"
+              description="Export project code snapshot for script completion"/>
+
+      <action id="org.yglue.flow.UploadCodeSnapshotAction"
+              class="org.yglue.flow.idea.snapshot.UploadCodeSnapshotAction"
+              text="Upload Code Snapshot"
+              description="Upload project code snapshot to orchestrator"/>
+    
       <action id="org.yglue.flow.SyncRulesAction"
               class="org.yglue.flow.idea.sync.SyncRulesAction"
               text="Sync Rules"

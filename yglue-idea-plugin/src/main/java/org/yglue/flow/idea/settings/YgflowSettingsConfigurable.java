@@ -11,8 +11,11 @@ import com.intellij.openapi.project.ProjectManager;
 import com.intellij.openapi.ui.TextComponentAccessor;
 import com.intellij.openapi.ui.TextFieldWithBrowseButton;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.ui.CheckBoxList;
+import com.intellij.ui.CheckBoxListListener;
 import com.intellij.ui.DocumentAdapter;
 import com.intellij.ui.components.JBLabel;
+import com.intellij.ui.components.JBScrollPane;
 import com.intellij.ui.components.JBTextField;
 import com.intellij.util.concurrency.AppExecutorUtil;
 import com.intellij.util.concurrency.EdtExecutorService;
@@ -27,6 +30,7 @@ import org.json.JSONObject;
 import org.yglue.flow.idea.MetadataAutoUploadScheduler;
 import org.yglue.flow.idea.PluginHeartbeatScheduler;
 import org.yglue.flow.idea.RuleAutoSyncScheduler;
+import org.yglue.flow.idea.util.JarDependencyResolver;
 import org.yglue.flow.idea.util.YgflowConfigurationResolver;
 
 import javax.swing.JButton;
@@ -36,11 +40,15 @@ import javax.swing.JPanel;
 import javax.swing.JTextField;
 import javax.swing.event.DocumentEvent;
 import java.awt.BorderLayout;
+import java.awt.Dimension;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledFuture;
@@ -81,6 +89,11 @@ public class YgflowSettingsConfigurable implements Configurable {
     private JBTextField statusIntervalField;
     private JBLabel statusLabel;
     private ScheduledFuture<?> statusCheckFuture;
+    private JCheckBox jarUploadCheck;
+    private CheckBoxList<String> jarSelectionList;
+    private JButton jarRefreshButton;
+    private JBLabel jarListHint;
+    private final Set<String> jarSelectionState = new HashSet<>();
 
     private static String trim(String value) {
         return value == null ? "" : value.trim();
@@ -251,6 +264,36 @@ public class YgflowSettingsConfigurable implements Configurable {
             statusPanel.add(statusLabel, BorderLayout.CENTER);
             statusPanel.add(statusButton, BorderLayout.EAST);
 
+            jarUploadCheck = new JCheckBox("Enable JAR metadata upload");
+            jarUploadCheck.addActionListener(e -> updateJarUploadControls());
+
+            jarSelectionList = new CheckBoxList<>();
+            jarSelectionList.setSelectionMode(javax.swing.ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+            jarSelectionList.setBorder(JBUI.Borders.empty());
+            jarSelectionList.setCheckBoxListListener(new CheckBoxListListener() {
+                @Override
+                public void checkBoxSelectionChanged(int index, boolean value) {
+                    handleJarSelectionChanged(index, value);
+                }
+            });
+            JBScrollPane jarScrollPane = new JBScrollPane(jarSelectionList);
+            jarScrollPane.setPreferredSize(new Dimension(-1, 180));
+
+            jarRefreshButton = new JButton("Refresh");
+            jarRefreshButton.addActionListener(e -> reloadJarOptions());
+
+            jarListHint = new JBLabel("Jar list not loaded yet");
+            jarListHint.setFont(JBFont.small());
+
+            JPanel jarFooter = new JPanel(new BorderLayout(6, 0));
+            jarFooter.add(jarListHint, BorderLayout.CENTER);
+            jarFooter.add(jarRefreshButton, BorderLayout.EAST);
+
+            JPanel jarPanel = new JPanel(new BorderLayout(0, 6));
+            jarPanel.add(jarUploadCheck, BorderLayout.NORTH);
+            jarPanel.add(jarScrollPane, BorderLayout.CENTER);
+            jarPanel.add(jarFooter, BorderLayout.SOUTH);
+
             JPanel form = FormBuilder.createFormBuilder()
                     .addLabeledComponent("Orchestrator Base URL:", baseUrlField)
                     .addLabeledComponent("Project Key:", projectKeyField)
@@ -263,6 +306,7 @@ public class YgflowSettingsConfigurable implements Configurable {
                     .addLabeledComponent("Auto Rule Sync Interval (seconds):", autoRuleSyncIntervalField)
                     .addLabeledComponent("Auto Check Interval (s):", statusIntervalField)
                     .addLabeledComponent("Service Status:", statusPanel)
+                    .addComponent(jarPanel)
                     .addComponentFillVertically(new JPanel(), 0)
                     .getPanel();
 
@@ -319,6 +363,14 @@ public class YgflowSettingsConfigurable implements Configurable {
                 }
             }
         }
+        if (!modified && jarUploadCheck != null) {
+            if (jarUploadCheck.isSelected() != state.jarUploadEnabled) {
+                modified = true;
+            }
+        }
+        if (!modified) {
+            modified = !jarSelectionState.equals(state.selectedJarCoordinates);
+        }
         return modified;
     }
 
@@ -336,6 +388,8 @@ public class YgflowSettingsConfigurable implements Configurable {
         state.autoUploadIntervalSeconds = validateAutoUploadIntervalSeconds(autoUploadIntervalField.getText());
         state.autoRuleSyncEnabled = autoRuleSyncCheck.isSelected();
         state.autoRuleSyncIntervalSeconds = validateAutoRuleSyncIntervalSeconds(autoRuleSyncIntervalField.getText());
+        state.jarUploadEnabled = jarUploadCheck != null && jarUploadCheck.isSelected();
+        state.selectedJarCoordinates = new HashSet<>(jarSelectionState);
         state.ensureInstanceKey();
         scheduleAutomaticStatusChecks();
         for (Project project : ProjectManager.getInstance().getOpenProjects()) {
@@ -375,6 +429,15 @@ public class YgflowSettingsConfigurable implements Configurable {
         statusIntervalField.setText(String.valueOf(Math.max(1, state.statusCheckIntervalSeconds)));
         updateAutoUploadControls();
         updateAutoRuleSyncControls();
+        if (jarUploadCheck != null) {
+            jarUploadCheck.setSelected(state.jarUploadEnabled);
+        }
+        jarSelectionState.clear();
+        if (state.selectedJarCoordinates != null) {
+            jarSelectionState.addAll(state.selectedJarCoordinates);
+        }
+        reloadJarOptions();
+        updateJarUploadControls();
         markStatusUnknown();
         scheduleAutomaticStatusChecks();
         enqueueStatusCheck(true);
@@ -395,6 +458,11 @@ public class YgflowSettingsConfigurable implements Configurable {
         autoRuleSyncIntervalField = null;
         statusIntervalField = null;
         statusLabel = null;
+        jarUploadCheck = null;
+        jarSelectionList = null;
+        jarRefreshButton = null;
+        jarListHint = null;
+        jarSelectionState.clear();
     }
 
     private void performStatusCheck() {
@@ -610,6 +678,81 @@ public class YgflowSettingsConfigurable implements Configurable {
     private void updateAutoRuleSyncControls() {
         if (autoRuleSyncIntervalField != null) {
             autoRuleSyncIntervalField.setEnabled(autoRuleSyncCheck != null && autoRuleSyncCheck.isSelected());
+        }
+    }
+
+    private void updateJarUploadControls() {
+        boolean enabled = jarUploadCheck != null && jarUploadCheck.isSelected();
+        if (jarSelectionList != null) {
+            jarSelectionList.setEnabled(enabled);
+        }
+        if (jarRefreshButton != null) {
+            jarRefreshButton.setEnabled(enabled);
+        }
+        if (jarListHint != null) {
+            jarListHint.setEnabled(enabled);
+        }
+    }
+
+    private void reloadJarOptions() {
+        if (jarSelectionList == null) {
+            return;
+        }
+        Project project = currentProject();
+        if (project == null) {
+            jarSelectionList.clear();
+            if (jarListHint != null) {
+                jarListHint.setText("No project context available.");
+            }
+            return;
+        }
+        if (jarListHint != null) {
+            jarListHint.setText("Loading...");
+        }
+        CompletableFuture
+                .supplyAsync(() -> JarDependencyResolver.listProjectJars(project), AppExecutorUtil.getAppExecutorService())
+                .whenComplete((list, error) -> {
+                    List<JarDependencyResolver.JarInfo> safe = error == null ? list : List.of();
+                    EdtExecutorService.getInstance().execute(() -> {
+                        if (error != null && jarListHint != null) {
+                            jarListHint.setText("加载失败: " + error.getMessage());
+                        }
+                        applyJarOptions(safe);
+                    });
+                });
+    }
+
+    private void applyJarOptions(List<JarDependencyResolver.JarInfo> options) {
+        if (jarSelectionList == null) {
+            return;
+        }
+        jarSelectionList.clear();
+        for (JarDependencyResolver.JarInfo info : options) {
+            jarSelectionList.addItem(info.id(), info.displayName(), jarSelectionState.contains(info.id()));
+        }
+        if (jarListHint != null) {
+            if (options.isEmpty()) {
+                jarListHint.setText("未找到可上传的 Jar");
+            } else {
+                jarListHint.setText("共 " + options.size() + " 个 Jar 依赖");
+            }
+        }
+        updateJarUploadControls();
+    }
+
+    private void handleJarSelectionChanged(int index, boolean value) {
+        if (jarSelectionList == null) {
+            return;
+        }
+        var model = jarSelectionList.getModel();
+        if (index < 0 || index >= model.getSize()) {
+            return;
+        }
+        String id = model.getElementAt(index);
+        if (value) {
+            jarSelectionState.add(id);
+        } else {
+            jarSelectionState.remove(id);
         }
     }
 

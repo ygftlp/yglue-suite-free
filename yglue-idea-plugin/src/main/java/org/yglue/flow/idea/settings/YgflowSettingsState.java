@@ -5,10 +5,11 @@ import com.intellij.openapi.components.PersistentStateComponent;
 import com.intellij.openapi.components.Service;
 import com.intellij.openapi.components.State;
 import com.intellij.openapi.components.Storage;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.UUID;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-
-import java.util.UUID;
 
 /**
  * YGlue 插件设置状态
@@ -33,6 +34,8 @@ public final class YgflowSettingsState implements PersistentStateComponent<Ygflo
     public int heartbeatIntervalSeconds = 60;
     public boolean autoRuleSyncEnabled = true;
     public int autoRuleSyncIntervalSeconds = 60;
+    public boolean jarUploadEnabled = false;
+    public Set<String> selectedJarCoordinates = new HashSet<>();
 
     /**
      * 获取设置实例
@@ -96,6 +99,10 @@ public final class YgflowSettingsState implements PersistentStateComponent<Ygflo
         this.heartbeatIntervalSeconds = state.heartbeatIntervalSeconds > 0 ? state.heartbeatIntervalSeconds : 60;
         this.autoRuleSyncEnabled = state.autoRuleSyncEnabled;
         this.autoRuleSyncIntervalSeconds = state.autoRuleSyncIntervalSeconds > 0 ? state.autoRuleSyncIntervalSeconds : 60;
+        this.jarUploadEnabled = state.jarUploadEnabled;
+        this.selectedJarCoordinates = state.selectedJarCoordinates == null
+                ? new HashSet<>()
+                : new HashSet<>(state.selectedJarCoordinates);
         ensureInstanceKey();
     }
 

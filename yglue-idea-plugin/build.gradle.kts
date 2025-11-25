@@ -30,6 +30,7 @@ intellij {
 
 dependencies {
     implementation("org.json:json:20240303")
+    implementation("org.ow2.asm:asm:9.7")
 }
 
 tasks {

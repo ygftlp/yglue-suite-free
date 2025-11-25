@@ -2,3 +2,5 @@
 /logs/
 /apps/ygflow-orchestrator-ui/dist/
 /apps/ygflow-orchestrator-ui/node_modules/
+/yglue-idea-plugin/.gradle/
+/yglue-idea-plugin/build/
