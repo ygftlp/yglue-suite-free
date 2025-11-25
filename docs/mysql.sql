@@ -234,3 +234,160 @@ create table yglue.yglue_stat_event
 create index idx_proj_ts
     on yglue.yglue_stat_event (project_id, event_ts);
 
+
+-- =====================================================
+-- 代码语义快照 & Jar 元数据（供脚本补全等场景）
+-- =====================================================
+
+create table yglue.yglue_project_code_snapshot
+(
+    id            bigint auto_increment primary key,
+    project_id    bigint                              not null comment '关联项目',
+    snapshot_key  varchar(128)                        not null comment 'IDE 插件生成的唯一版本标识',
+    commit_hash   varchar(64)                         null comment '可选：对应代码提交',
+    generated_at  timestamp default CURRENT_TIMESTAMP not null comment 'IDE 端生成/上报时间',
+    status        tinyint   default 0                 not null comment '0-处理中 1-可用 2-失败',
+    content_hash  char(64)                            null comment '用于幂等和增量比对',
+    remark        varchar(255)                        null,
+    constraint fk_snapshot_project
+        foreign key (project_id) references yglue.yglue_project (id),
+    constraint uk_snapshot_project_key
+        unique (project_id, snapshot_key)
+);
+
+create index idx_snapshot_project_status
+    on yglue.yglue_project_code_snapshot (project_id, status);
+
+
+create table yglue.yglue_project_snapshot_class
+(
+    id             bigint auto_increment primary key,
+    snapshot_id    bigint                              not null,
+    qualified_name varchar(512)                        not null,
+    simple_name    varchar(255)                        not null,
+    package_name   varchar(512)                        null,
+    source_type    varchar(32)  default 'PROJECT'      not null comment 'PROJECT/JAR',
+    jar_id         bigint                              null comment '关联平台 Jar（可空）',
+    doc            text                                null,
+    constraint fk_snapshot_class_snapshot
+        foreign key (snapshot_id) references yglue.yglue_project_code_snapshot (id),
+    constraint fk_snapshot_class_jar
+        foreign key (jar_id) references yglue.yglue_jar_library (id),
+    constraint uk_snapshot_class_name
+        unique (snapshot_id, qualified_name)
+);
+
+create index idx_snapshot_class_source
+    on yglue.yglue_project_snapshot_class (source_type);
+
+
+create table yglue.yglue_project_snapshot_class_field
+(
+    id          bigint auto_increment primary key,
+    class_id    bigint                              not null,
+    name        varchar(255)                        not null,
+    type        varchar(512)                        not null,
+    description text                                null,
+    constraint fk_snapshot_field_class
+        foreign key (class_id) references yglue.yglue_project_snapshot_class (id)
+);
+
+create index idx_snapshot_field_class
+    on yglue.yglue_project_snapshot_class_field (class_id);
+
+
+create table yglue.yglue_project_snapshot_class_method
+(
+    id              bigint auto_increment primary key,
+    class_id        bigint                              not null,
+    name            varchar(255)                        not null,
+    signature       varchar(512)                        null comment '可选，完整方法签名',
+    return_type     varchar(512)                        not null,
+    parameters_json json                                null comment '形参列表：[{name,type}]',
+    is_static       tinyint   default 0                 not null,
+    description     text                                null,
+    constraint fk_snapshot_method_class
+        foreign key (class_id) references yglue.yglue_project_snapshot_class (id)
+);
+
+create index idx_snapshot_method_class
+    on yglue.yglue_project_snapshot_class_method (class_id);
+
+
+create table yglue.yglue_project_snapshot_dependency
+(
+    id          bigint auto_increment primary key,
+    snapshot_id bigint                              not null,
+    group_id    varchar(255)                        not null,
+    artifact_id varchar(255)                        not null,
+    version     varchar(128)                        not null,
+    scope       varchar(64)                         null,
+    jar_id      bigint                              null comment '指向平台 Jar 元数据',
+    dependency_hash char(64)                        null comment '依赖坐标 + 版本哈希',
+    constraint fk_snapshot_dep_snapshot
+        foreign key (snapshot_id) references yglue.yglue_project_code_snapshot (id),
+    constraint fk_snapshot_dep_jar
+        foreign key (jar_id) references yglue.yglue_jar_library (id),
+    constraint uk_snapshot_dep_gav
+        unique (snapshot_id, group_id, artifact_id, version)
+);
+
+create index idx_snapshot_dep_scope
+    on yglue.yglue_project_snapshot_dependency (scope);
+
+
+create table yglue.yglue_jar_library
+(
+    id           bigint auto_increment primary key,
+    group_id     varchar(255)                        not null,
+    artifact_id  varchar(255)                        not null,
+    version      varchar(128)                        not null,
+    jar_type     varchar(32)  default 'PLATFORM'     not null comment 'STANDARD/PLATFORM/PROJECT',
+    source       varchar(128)                        null comment '来源：JDK17/internal-sdk 等',
+    description  varchar(255)                        null,
+    content_hash char(64)                            null,
+    create_time  timestamp default CURRENT_TIMESTAMP not null,
+    constraint uk_jar_library_gav
+        unique (group_id, artifact_id, version)
+);
+
+
+create table yglue.yglue_jar_library_class
+(
+    id             bigint auto_increment primary key,
+    jar_id         bigint                              not null,
+    qualified_name varchar(512)                        not null,
+    simple_name    varchar(255)                        not null,
+    package_name   varchar(512)                        null,
+    doc            text                                null,
+    constraint fk_jar_class_library
+        foreign key (jar_id) references yglue.yglue_jar_library (id),
+    constraint uk_jar_class_name
+        unique (jar_id, qualified_name)
+);
+
+create table yglue.yglue_jar_library_class_field
+(
+    id          bigint auto_increment primary key,
+    class_id    bigint                              not null,
+    name        varchar(255)                        not null,
+    type        varchar(512)                        not null,
+    description text                                null,
+    constraint fk_jar_field_class
+        foreign key (class_id) references yglue.yglue_jar_library_class (id)
+);
+
+create table yglue.yglue_jar_library_class_method
+(
+    id              bigint auto_increment primary key,
+    class_id        bigint                              not null,
+    name            varchar(255)                        not null,
+    signature       varchar(512)                        null,
+    return_type     varchar(512)                        not null,
+    parameters_json json                                null,
+    is_static       tinyint   default 0                 not null,
+    description     text                                null,
+    constraint fk_jar_method_class
+        foreign key (class_id) references yglue.yglue_jar_library_class (id)
+);
+
