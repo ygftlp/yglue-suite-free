@@ -234,3 +234,132 @@ create table yglue.yglue_stat_event
 create index idx_proj_ts
     on yglue.yglue_stat_event (project_id, event_ts);
 
+
+-- =====================================================
+-- 代码语义快照 & Jar 元数据（供脚本补全等场景）
+-- =====================================================
+
+create table yglue.yglue_project_code_snapshot
+(
+    id             bigint auto_increment primary key,
+    project_id     bigint                              not null comment '关联项目',
+    snapshot_key   varchar(128)                        not null comment 'IDE 插件生成的唯一版本标识',
+    commit_hash    varchar(128)                        null comment '可选：对应代码提交',
+    generated_at   timestamp                           null comment 'IDE 端生成/上报时间',
+    status         tinyint   default 0                 not null comment '0-处理中 1-可用 2-失败',
+    content_hash   char(64)                            null comment '用于幂等和增量比对',
+    ide_product    varchar(128)                        null,
+    ide_version    varchar(64)                         null,
+    ide_build      varchar(64)                         null,
+    remark         varchar(255)                        null,
+    created_at     timestamp default CURRENT_TIMESTAMP not null,
+    updated_at     timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
+    constraint uk_snapshot_project_key
+        unique (project_id, snapshot_key)
+);
+
+create table yglue.yglue_project_snapshot_class
+(
+    id             bigint auto_increment primary key,
+    snapshot_id    bigint                              not null,
+    qualified_name varchar(512)                        not null,
+    simple_name    varchar(255)                        null,
+    package_name   varchar(512)                        null,
+    kind           varchar(32)                         null,
+    source_type    varchar(32)  default 'PROJECT'      not null comment 'PROJECT/JAR',
+    jar_id         bigint                              null comment '关联平台 Jar（可空）',
+    doc            text                                null,
+    constraint uk_snapshot_class_name
+        unique (snapshot_id, qualified_name),
+    index idx_snapshot_class_snapshot (snapshot_id)
+);
+
+create table yglue.yglue_project_snapshot_class_field
+(
+    id        bigint auto_increment primary key,
+    class_id  bigint                              not null,
+    name      varchar(255)                        not null,
+    type      varchar(512)                        null,
+    is_static tinyint   default 0                 not null,
+    index idx_snapshot_field_class (class_id)
+);
+
+create table yglue.yglue_project_snapshot_class_method
+(
+    id              bigint auto_increment primary key,
+    class_id        bigint                              not null,
+    name            varchar(255)                        not null,
+    return_type     varchar(512)                        null,
+    is_static       tinyint   default 0                 not null,
+    parameters_json json                                null,
+    index idx_snapshot_method_class (class_id)
+);
+
+create table yglue.yglue_project_snapshot_dependency
+(
+    id              bigint auto_increment primary key,
+    snapshot_id     bigint                              not null,
+    dependency_id   varchar(255)                        null,
+    name            varchar(255)                        null,
+    group_id        varchar(255)                        null,
+    artifact_id     varchar(255)                        null,
+    version         varchar(128)                        null,
+    coordinate      varchar(512)                        null,
+    scope           varchar(64)                         null,
+    jar_id          bigint                              null comment '指向平台 Jar 元数据',
+    selected_flag   tinyint   default 0                 not null,
+    index idx_snapshot_dep_snapshot (snapshot_id)
+);
+
+create table yglue.yglue_jar_library
+(
+    id           bigint auto_increment primary key,
+    jar_key      varchar(255)                        not null,
+    name         varchar(255)                        null,
+    group_id     varchar(255)                        null,
+    artifact_id  varchar(255)                        null,
+    version      varchar(128)                        null,
+    jar_type     varchar(32)  default 'LIBRARY'      not null,
+    source       varchar(128)                        null comment '来源：JDK17/internal-sdk 等',
+    description  varchar(255)                        null,
+    content_hash char(64)                            null,
+    created_at   timestamp default CURRENT_TIMESTAMP not null,
+    updated_at   timestamp default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP,
+    constraint uk_jar_library_key
+        unique (jar_key)
+);
+
+create table yglue.yglue_jar_library_class
+(
+    id             bigint auto_increment primary key,
+    jar_id         bigint                              not null,
+    qualified_name varchar(512)                        not null,
+    simple_name    varchar(255)                        null,
+    package_name   varchar(512)                        null,
+    kind           varchar(32)                         null,
+    doc            text                                null,
+    constraint uk_jar_class_name
+        unique (jar_id, qualified_name)
+);
+
+create table yglue.yglue_jar_library_class_field
+(
+    id        bigint auto_increment primary key,
+    class_id  bigint                              not null,
+    name      varchar(255)                        not null,
+    type      varchar(512)                        null,
+    is_static tinyint   default 0                 not null,
+    index idx_jar_field_class (class_id)
+);
+
+create table yglue.yglue_jar_library_class_method
+(
+    id              bigint auto_increment primary key,
+    class_id        bigint                              not null,
+    name            varchar(255)                        not null,
+    return_type     varchar(512)                        null,
+    is_static       tinyint   default 0                 not null,
+    parameters_json json                                null,
+    index idx_jar_method_class (class_id)
+);
+

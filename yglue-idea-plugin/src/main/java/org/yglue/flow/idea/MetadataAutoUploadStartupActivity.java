@@ -31,6 +31,12 @@ public class MetadataAutoUploadStartupActivity implements StartupActivity.DumbAw
         if (scheduler != null) {
             scheduler.onSettingsChanged();
         }
+
+        // 初始化代码快照自动上传调度器
+        CodeSnapshotAutoUploadScheduler codeScheduler = project.getService(CodeSnapshotAutoUploadScheduler.class);
+        if (codeScheduler != null) {
+            codeScheduler.onSettingsChanged();
+        }
         
         // 初始化心跳调度器
         PluginHeartbeatScheduler heartbeatScheduler = project.getService(PluginHeartbeatScheduler.class);

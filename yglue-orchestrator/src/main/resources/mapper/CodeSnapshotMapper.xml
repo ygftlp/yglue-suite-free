@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="org.yglue.flow.orch.persistence.mapper.CodeSnapshotMapper">
+
+    <resultMap id="ProjectCodeSnapshotResultMap" type="org.yglue.flow.orch.domain.snapshot.ProjectCodeSnapshot">
+        <id property="id" column="id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="snapshotKey" column="snapshot_key"/>
+        <result property="commitHash" column="commit_hash"/>
+        <result property="generatedAt" column="generated_at"/>
+        <result property="status" column="status"/>
+        <result property="contentHash" column="content_hash"/>
+        <result property="ideProduct" column="ide_product"/>
+        <result property="ideVersion" column="ide_version"/>
+        <result property="ideBuild" column="ide_build"/>
+        <result property="remark" column="remark"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <sql id="SnapshotColumns">
+        id, project_id, snapshot_key, commit_hash, generated_at, status, content_hash, ide_product,
+        ide_version, ide_build, remark, created_at, updated_at
+    </sql>
+
+    <select id="selectByProjectAndKey" resultMap="ProjectCodeSnapshotResultMap">
+        SELECT <include refid="SnapshotColumns"/>
+        FROM yglue_project_code_snapshot
+        WHERE project_id = #{projectId}
+          AND snapshot_key = #{snapshotKey}
+    </select>
+
+    <insert id="insertSnapshot" parameterType="org.yglue.flow.orch.domain.snapshot.ProjectCodeSnapshot"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO yglue_project_code_snapshot
+        (project_id, snapshot_key, commit_hash, generated_at, status, content_hash,
+         ide_product, ide_version, ide_build, remark)
+        VALUES
+        (#{projectId}, #{snapshotKey}, #{commitHash}, #{generatedAt}, #{status},
+         #{contentHash}, #{ideProduct}, #{ideVersion}, #{ideBuild}, #{remark})
+    </insert>
+
+    <delete id="deleteSnapshotAssociations">
+        DELETE FROM yglue_project_snapshot_dependency WHERE snapshot_id = #{snapshotId};
+        DELETE FROM yglue_project_snapshot_class_method
+        WHERE class_id IN (
+            SELECT id FROM yglue_project_snapshot_class WHERE snapshot_id = #{snapshotId}
+        );
+        DELETE FROM yglue_project_snapshot_class_field
+        WHERE class_id IN (
+            SELECT id FROM yglue_project_snapshot_class WHERE snapshot_id = #{snapshotId}
+        );
+        DELETE FROM yglue_project_snapshot_class WHERE snapshot_id = #{snapshotId};
+    </delete>
+
+    <delete id="deleteSnapshot">
+        DELETE FROM yglue_project_code_snapshot WHERE id = #{snapshotId};
+    </delete>
+
+    <insert id="insertSnapshotClass" parameterType="org.yglue.flow.orch.domain.snapshot.ProjectSnapshotClass"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO yglue_project_snapshot_class
+        (snapshot_id, qualified_name, simple_name, package_name, kind, source_type, jar_id, doc)
+        VALUES
+        (#{snapshotId}, #{qualifiedName}, #{simpleName}, #{packageName}, #{kind}, #{sourceType}, #{jarId}, #{doc})
+    </insert>
+
+    <insert id="insertSnapshotClassField"
+            parameterType="org.yglue.flow.orch.domain.snapshot.ProjectSnapshotClassField"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO yglue_project_snapshot_class_field
+        (class_id, name, type, is_static)
+        VALUES
+        (#{classId}, #{name}, #{type}, #{static})
+    </insert>
+
+    <insert id="insertSnapshotClassMethod"
+            parameterType="org.yglue.flow.orch.domain.snapshot.ProjectSnapshotClassMethod"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO yglue_project_snapshot_class_method
+        (class_id, name, return_type, is_static, parameters_json)
+        VALUES
+        (#{classId}, #{name}, #{returnType}, #{static}, #{parametersJson})
+    </insert>
+
+    <insert id="insertSnapshotDependency"
+            parameterType="org.yglue.flow.orch.domain.snapshot.ProjectSnapshotDependency"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO yglue_project_snapshot_dependency
+        (snapshot_id, dependency_id, name, group_id, artifact_id, version, coordinate, scope, jar_id, selected_flag)
+        VALUES
+        (#{snapshotId}, #{dependencyId}, #{name}, #{groupId}, #{artifactId}, #{version},
+         #{coordinate}, #{scope}, #{jarId}, #{selected})
+    </insert>
+
+</mapper>

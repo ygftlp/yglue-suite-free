@@ -27,6 +27,7 @@ import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.json.JSONObject;
+import org.yglue.flow.idea.CodeSnapshotAutoUploadScheduler;
 import org.yglue.flow.idea.MetadataAutoUploadScheduler;
 import org.yglue.flow.idea.PluginHeartbeatScheduler;
 import org.yglue.flow.idea.RuleAutoSyncScheduler;
@@ -90,6 +91,8 @@ public class YgflowSettingsConfigurable implements Configurable {
     private JBLabel statusLabel;
     private ScheduledFuture<?> statusCheckFuture;
     private JCheckBox jarUploadCheck;
+    private JCheckBox autoCodeSnapshotUploadCheck;
+    private JBTextField autoCodeSnapshotUploadIntervalField;
     private CheckBoxList<String> jarSelectionList;
     private JButton jarRefreshButton;
     private JBLabel jarListHint;
@@ -248,6 +251,12 @@ public class YgflowSettingsConfigurable implements Configurable {
             autoRuleSyncIntervalField = new JBTextField();
             autoRuleSyncIntervalField.getEmptyText().setText("60");
 
+            autoCodeSnapshotUploadCheck = new JCheckBox("Enable automatic code snapshot upload");
+            autoCodeSnapshotUploadCheck.addActionListener(e -> updateCodeSnapshotUploadControls());
+
+            autoCodeSnapshotUploadIntervalField = new JBTextField();
+            autoCodeSnapshotUploadIntervalField.getEmptyText().setText("30");
+
             statusIntervalField = new JBTextField();
             statusIntervalField.getEmptyText().setText("5");
             statusIntervalField.getDocument().addDocumentListener(new DocumentAdapter() {
@@ -304,6 +313,8 @@ public class YgflowSettingsConfigurable implements Configurable {
                     .addLabeledComponent("Auto Upload Interval (seconds):", autoUploadIntervalField)
                     .addComponent(autoRuleSyncCheck)
                     .addLabeledComponent("Auto Rule Sync Interval (seconds):", autoRuleSyncIntervalField)
+                    .addComponent(autoCodeSnapshotUploadCheck)
+                    .addLabeledComponent("Code Snapshot Upload Interval (seconds):", autoCodeSnapshotUploadIntervalField)
                     .addLabeledComponent("Auto Check Interval (s):", statusIntervalField)
                     .addLabeledComponent("Service Status:", statusPanel)
                     .addComponent(jarPanel)
@@ -371,6 +382,19 @@ public class YgflowSettingsConfigurable implements Configurable {
         if (!modified) {
             modified = !jarSelectionState.equals(state.selectedJarCoordinates);
         }
+        if (!modified) {
+            if (autoCodeSnapshotUploadCheck.isSelected() != state.codeSnapshotAutoUploadEnabled) {
+                modified = true;
+            } else {
+                String text = trim(autoCodeSnapshotUploadIntervalField.getText());
+                try {
+                    int value = Integer.parseInt(text);
+                    modified = value != state.codeSnapshotUploadIntervalSeconds;
+                } catch (NumberFormatException ex) {
+                    modified = true;
+                }
+            }
+        }
         return modified;
     }
 
@@ -390,12 +414,19 @@ public class YgflowSettingsConfigurable implements Configurable {
         state.autoRuleSyncIntervalSeconds = validateAutoRuleSyncIntervalSeconds(autoRuleSyncIntervalField.getText());
         state.jarUploadEnabled = jarUploadCheck != null && jarUploadCheck.isSelected();
         state.selectedJarCoordinates = new HashSet<>(jarSelectionState);
+        state.codeSnapshotAutoUploadEnabled = autoCodeSnapshotUploadCheck.isSelected();
+        state.codeSnapshotUploadIntervalSeconds =
+                validateCodeSnapshotIntervalSeconds(autoCodeSnapshotUploadIntervalField.getText());
         state.ensureInstanceKey();
         scheduleAutomaticStatusChecks();
         for (Project project : ProjectManager.getInstance().getOpenProjects()) {
             MetadataAutoUploadScheduler scheduler = project.getService(MetadataAutoUploadScheduler.class);
             if (scheduler != null) {
                 scheduler.onSettingsChanged();
+            }
+            CodeSnapshotAutoUploadScheduler codeScheduler = project.getService(CodeSnapshotAutoUploadScheduler.class);
+            if (codeScheduler != null) {
+                codeScheduler.onSettingsChanged();
             }
             PluginHeartbeatScheduler heartbeatScheduler = project.getService(PluginHeartbeatScheduler.class);
             if (heartbeatScheduler != null) {
@@ -438,6 +469,9 @@ public class YgflowSettingsConfigurable implements Configurable {
         }
         reloadJarOptions();
         updateJarUploadControls();
+        autoCodeSnapshotUploadCheck.setSelected(state.codeSnapshotAutoUploadEnabled);
+        autoCodeSnapshotUploadIntervalField.setText(String.valueOf(Math.max(5, state.codeSnapshotUploadIntervalSeconds)));
+        updateCodeSnapshotUploadControls();
         markStatusUnknown();
         scheduleAutomaticStatusChecks();
         enqueueStatusCheck(true);
@@ -459,6 +493,8 @@ public class YgflowSettingsConfigurable implements Configurable {
         statusIntervalField = null;
         statusLabel = null;
         jarUploadCheck = null;
+        autoCodeSnapshotUploadCheck = null;
+        autoCodeSnapshotUploadIntervalField = null;
         jarSelectionList = null;
         jarRefreshButton = null;
         jarListHint = null;
@@ -681,6 +717,13 @@ public class YgflowSettingsConfigurable implements Configurable {
         }
     }
 
+    private void updateCodeSnapshotUploadControls() {
+        if (autoCodeSnapshotUploadIntervalField != null) {
+            autoCodeSnapshotUploadIntervalField.setEnabled(
+                    autoCodeSnapshotUploadCheck != null && autoCodeSnapshotUploadCheck.isSelected());
+        }
+    }
+
     private void updateJarUploadControls() {
         boolean enabled = jarUploadCheck != null && jarUploadCheck.isSelected();
         if (jarSelectionList != null) {
@@ -785,6 +828,22 @@ public class YgflowSettingsConfigurable implements Configurable {
             return value;
         } catch (NumberFormatException ex) {
             throw new ConfigurationException("Auto rule sync interval must be a positive number.");
+        }
+    }
+
+    private int validateCodeSnapshotIntervalSeconds(String text) throws ConfigurationException {
+        String trimmed = trim(text);
+        if (trimmed.isEmpty()) {
+            return 30;
+        }
+        try {
+            int value = Integer.parseInt(trimmed);
+            if (value < 5 || value > 86400) {
+                throw new ConfigurationException("Code snapshot upload interval must be between 5 and 86400 seconds.");
+            }
+            return value;
+        } catch (NumberFormatException ex) {
+            throw new ConfigurationException("Code snapshot upload interval must be a positive number.");
         }
     }
 

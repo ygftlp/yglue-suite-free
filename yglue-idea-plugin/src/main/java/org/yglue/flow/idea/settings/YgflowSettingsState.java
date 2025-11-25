@@ -36,6 +36,8 @@ public final class YgflowSettingsState implements PersistentStateComponent<Ygflo
     public int autoRuleSyncIntervalSeconds = 60;
     public boolean jarUploadEnabled = false;
     public Set<String> selectedJarCoordinates = new HashSet<>();
+    public boolean codeSnapshotAutoUploadEnabled = true;
+    public int codeSnapshotUploadIntervalSeconds = 30;
 
     /**
      * 获取设置实例
@@ -103,6 +105,10 @@ public final class YgflowSettingsState implements PersistentStateComponent<Ygflo
         this.selectedJarCoordinates = state.selectedJarCoordinates == null
                 ? new HashSet<>()
                 : new HashSet<>(state.selectedJarCoordinates);
+        this.codeSnapshotAutoUploadEnabled = state.codeSnapshotAutoUploadEnabled;
+        this.codeSnapshotUploadIntervalSeconds = state.codeSnapshotUploadIntervalSeconds > 0
+                ? state.codeSnapshotUploadIntervalSeconds
+                : 30;
         ensureInstanceKey();
     }
 

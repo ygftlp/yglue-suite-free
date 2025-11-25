@@ -22,6 +22,7 @@ import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.util.PlatformUtils;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -30,11 +31,14 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.jetbrains.annotations.NotNull;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -68,12 +72,17 @@ public final class CodeSnapshotExporter {
         root.put("snapshotKey", generateSnapshotKey());
         root.put("generatedAt", DateTimeFormatter.ISO_INSTANT.format(Instant.now()));
         root.put("ide", buildIdeInfo());
+        List<JarDependencyResolver.JarInfo> jarInfos = JarDependencyResolver.listProjectJars(project);
+        Map<String, JarDependencyResolver.JarInfo> jarInfoMap = jarInfos.stream()
+                .collect(Collectors.toMap(JarDependencyResolver.JarInfo::id, info -> info, (a, b) -> a, HashMap::new));
         root.put("classes", collectProjectClasses(project));
-        root.put("dependencies", collectProjectDependencies(project));
+        root.put("dependencies", collectProjectDependencies(jarInfos));
         root.put("selectedJars", new JSONArray(settings.selectedJarCoordinates == null
                 ? Set.of()
                 : settings.selectedJarCoordinates));
-        root.put("jarMetadata", collectJarMetadata(project, settings));
+        root.put("jarMetadata", collectJarMetadata(settings, jarInfoMap));
+        String payloadHash = root.toString();
+        root.put("contentHash", sha256Hex(payloadHash));
         return root;
     }
 
@@ -210,9 +219,9 @@ public final class CodeSnapshotExporter {
         return type == null ? "void" : type.getCanonicalText();
     }
 
-    private static JSONArray collectProjectDependencies(Project project) {
+    private static JSONArray collectProjectDependencies(List<JarDependencyResolver.JarInfo> infos) {
         JSONArray dependencies = new JSONArray();
-        for (JarDependencyResolver.JarInfo info : JarDependencyResolver.listProjectJars(project)) {
+        for (JarDependencyResolver.JarInfo info : infos) {
             JSONObject dep = new JSONObject();
             dep.put("id", info.id());
             dep.put("name", info.displayName());
@@ -228,19 +237,19 @@ public final class CodeSnapshotExporter {
         return dependencies;
     }
 
-    private static JSONArray collectJarMetadata(Project project, YgflowSettingsState settings) {
+    private static JSONArray collectJarMetadata(YgflowSettingsState settings,
+                                                Map<String, JarDependencyResolver.JarInfo> jarInfoMap) {
         JSONArray jars = new JSONArray();
         if (!settings.jarUploadEnabled || settings.selectedJarCoordinates == null || settings.selectedJarCoordinates.isEmpty()) {
             return jars;
         }
-        Map<String, Library> libraryMap = JarDependencyResolver.mapLibrariesById(project);
         for (String id : settings.selectedJarCoordinates) {
-            Library library = libraryMap.get(id);
-            if (library == null) {
+            JarDependencyResolver.JarInfo info = jarInfoMap.get(id);
+            if (info == null) {
                 continue;
             }
             try {
-                JSONObject jar = buildJarMetadata(library, id);
+                JSONObject jar = buildJarMetadata(info);
                 if (jar != null) {
                     jars.put(jar);
                 }
@@ -251,20 +260,27 @@ public final class CodeSnapshotExporter {
         return jars;
     }
 
-    private static JSONObject buildJarMetadata(Library library, String id)
+    private static JSONObject buildJarMetadata(JarDependencyResolver.JarInfo info)
             throws IOException, NoSuchAlgorithmException {
         JSONArray classes = new JSONArray();
         Set<String> visited = new HashSet<>();
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        for (VirtualFile root : library.getFiles(OrderRootType.CLASSES)) {
+        for (VirtualFile root : info.library().getFiles(OrderRootType.CLASSES)) {
             processLibraryRoot(root, classes, visited, digest);
         }
         if (classes.isEmpty()) {
             return null;
         }
         JSONObject jar = new JSONObject();
-        jar.put("id", id);
-        jar.put("name", Objects.toString(library.getName(), id));
+        jar.put("id", info.id());
+        jar.put("name", info.displayName());
+        JarDependencyResolver.JarCoordinate coordinate = info.coordinate();
+        if (coordinate != null) {
+            jar.put("groupId", coordinate.groupId());
+            jar.put("artifactId", coordinate.artifactId());
+            jar.put("version", coordinate.version());
+            jar.put("coordinate", coordinate.toString());
+        }
         jar.put("classes", classes);
         jar.put("contentHash", toHex(digest.digest()));
         return jar;
@@ -318,6 +334,16 @@ public final class CodeSnapshotExporter {
             sb.append(String.format("%02x", b));
         }
         return sb.toString();
+    }
+
+    private static String sha256Hex(String payload) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hashed = digest.digest(payload.getBytes(StandardCharsets.UTF_8));
+            return toHex(hashed);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("Unable to compute snapshot hash", e);
+        }
     }
 
     private static final class JarClassVisitor extends ClassVisitor {

@@ -92,6 +92,12 @@ public final class MetadataChangeListener implements BulkFileListener, Disposabl
             if (scheduler != null) {
                 scheduler.triggerImmediate();
             }
+            if (settings.codeSnapshotAutoUploadEnabled) {
+                CodeSnapshotAutoUploadScheduler codeScheduler = project.getService(CodeSnapshotAutoUploadScheduler.class);
+                if (codeScheduler != null) {
+                    codeScheduler.triggerImmediate();
+                }
+            }
         }
     }
 
