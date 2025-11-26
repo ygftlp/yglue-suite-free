@@ -4,6 +4,7 @@ import { EditorState } from "@codemirror/state"
 import { EditorView, keymap, lineNumbers, drawSelection, highlightActiveLine } from "@codemirror/view"
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands"
 import { autocompletion, completionKeymap, CompletionContext, CompletionResult } from "@codemirror/autocomplete"
+import { api } from "../api/client"
 
 type HelperTab = "variables" | "functions"
 
@@ -43,6 +44,9 @@ const props = defineProps<{
     requestSchema?: Array<{ name: string; type: string }> | null
     responseSchema?: { type?: string | null } | null
   } | null
+  projectKey?: string
+  endpointId?: number
+  upstreamOutputType?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -66,8 +70,10 @@ watch(
 )
 
 const scriptValue = computed(() => props.script ?? "")
-const variableGroups = computed<HelperGroup[]>(() => normalizeHelperGroups(props.variableGroups))
-const functionGroups = computed<HelperGroup[]>(() => normalizeHelperGroups(props.functionGroups))
+const externalVariableGroups = ref<HelperGroupInput[]>([])
+const variableGroups = computed<HelperGroup[]>(() => normalizeHelperGroups([...(props.variableGroups || []), ...externalVariableGroups.value]))
+const externalFunctionGroups = ref<HelperGroupInput[]>([])
+const functionGroups = computed<HelperGroup[]>(() => normalizeHelperGroups([...(props.functionGroups || []), ...externalFunctionGroups.value]))
 const activeHelperGroups = computed<HelperGroup[]>(() =>
   helperTabState.value === "variables" ? variableGroups.value : functionGroups.value
 )
@@ -77,7 +83,7 @@ const activeHelperGroups = computed<HelperGroup[]>(() =>
  * 支持变量属性自动补全，如 ctx.、input.、output. 等
  */
 function createCompletionSource(
-  variableGroups: HelperGroupInput[],
+  getVariableGroups: () => HelperGroup[],
   endpointSchema?: { requestSchema?: Array<{ name: string; type: string }> | null } | null
 ): (context: CompletionContext) => CompletionResult | null {
   return (context: CompletionContext) => {
@@ -87,7 +93,7 @@ function createCompletionSource(
     
     // 提取所有变量名
     const allVariables = new Map<string, { label: string; description: string; properties?: string[] }>()
-    variableGroups?.forEach((group) => {
+    getVariableGroups()?.forEach((group) => {
       group.items?.forEach((item) => {
         if (item.label && item.snippet) {
           const varName = item.snippet.trim().split(/[.\[]/)[0] // 提取变量名（如 ctx['xxx'] -> ctx）
@@ -107,7 +113,7 @@ function createCompletionSource(
     
     if (dotMatch) {
       const varName = dotMatch[1]
-      const completions = getVariableCompletions(varName, allVariables, variableGroups, "", endpointSchema)
+      const completions = getVariableCompletions(varName, allVariables, getVariableGroups, "", endpointSchema)
       if (completions.length > 0) {
         return {
           from: pos - (dotMatch[0].length - dotMatch[1].length),
@@ -117,7 +123,7 @@ function createCompletionSource(
     } else if (bracketMatch) {
       const varName = bracketMatch[1]
       const prefix = bracketMatch[2]
-      const completions = getVariableCompletions(varName, allVariables, variableGroups, prefix, endpointSchema)
+      const completions = getVariableCompletions(varName, allVariables, getVariableGroups, prefix, endpointSchema)
       if (completions.length > 0) {
         return {
           from: pos - prefix.length,
@@ -156,7 +162,7 @@ function createCompletionSource(
 function getVariableCompletions(
   varName: string,
   allVariables: Map<string, { label: string; description: string }>,
-  variableGroups: HelperGroupInput[],
+  getVariableGroups: () => HelperGroup[],
   prefix: string = "",
   endpointSchema?: { requestSchema?: Array<{ name: string; type: string }> | null } | null
 ): Array<{ label: string; type: string; detail?: string }> {
@@ -170,7 +176,7 @@ function getVariableCompletions(
     ]
     
     // 从 variableGroups 中提取 ctx 相关的属性
-    variableGroups?.forEach((group) => {
+    getVariableGroups()?.forEach((group) => {
       group.items?.forEach((item) => {
         if (item.snippet?.startsWith("ctx")) {
           const snippet = item.snippet.trim()
@@ -268,7 +274,7 @@ function getVariableCompletions(
   // resolved 变量的属性（从 requestSchema 推断）
   if (varName === "resolved") {
     // 可以从 variableGroups 中提取 resolved 相关的属性
-    variableGroups?.forEach((group) => {
+    getVariableGroups()?.forEach((group) => {
       group.items?.forEach((item) => {
         if (item.snippet?.startsWith("resolved.")) {
           const propName = item.snippet.replace("resolved.", "").trim()
@@ -319,6 +325,8 @@ function normalizeHelperItem(item?: HelperItemInput): HelperItem | null {
 function openCodeEditor() {
   showCodeEditor.value = true
   emit("open")
+  loadScriptHelpersInternal()
+  loadMembersForUpstreamTypeInternal()
   nextTick(() => {
     if (codeEditorContainer.value && !codeEditorView) {
       initCodeEditor()
@@ -333,6 +341,81 @@ function openCodeEditor() {
       codeEditorView.dispatch(transaction)
     }
   })
+}
+
+async function loadScriptHelpersInternal() {
+  if (!props.projectKey) return
+  try {
+    const helpers = await api.getScriptHelpers(
+      props.projectKey,
+      props.endpointId ? { endpointId: props.endpointId } : undefined
+    )
+    const depGroup: HelperGroupInput = {
+      title: "依赖",
+      items: (helpers.selectedJars || []).map((j) => ({
+        label: j.name,
+        snippet: j.coordinate || "",
+        description: (j.coordinate || "") || "依赖坐标",
+      })),
+    }
+    const classGroup: HelperGroupInput = {
+      title: "类引用",
+      items: (helpers.classes || []).slice(0, 500).map((c) => ({
+        label: c.simpleName || c.qualifiedName,
+        snippet: c.qualifiedName,
+        description: c.packageName ? `${c.packageName}` : "",
+        tooltip: c.kind,
+      })),
+    }
+    externalFunctionGroups.value = [classGroup]
+    externalVariableGroups.value = [...externalVariableGroups.value, depGroup]
+  } catch (e) {
+    // ignore
+  }
+}
+
+function isSimpleType(type: string): boolean {
+  const simpleTypes = [
+    "String","Integer","Long","Double","Float","Boolean",
+    "int","long","double","float","boolean",
+    "java.lang.String","java.lang.Integer","java.lang.Long","java.lang.Double","java.lang.Float","java.lang.Boolean",
+  ]
+  return simpleTypes.some((st) => type.includes(st))
+}
+
+async function loadMembersForUpstreamTypeInternal() {
+  const qn = props.upstreamOutputType
+  if (!qn || qn === "OBJECT" || qn === "ARRAY" || typeof qn !== "string" || isSimpleType(qn)) return
+  if (!props.projectKey) return
+  try {
+    const fields = await api.getClassMembers(props.projectKey, { qualifiedName: qn, kind: "fields", page: 1, size: 100 })
+    const methods = await api.getClassMembers(props.projectKey, { qualifiedName: qn, kind: "methods", page: 1, size: 200 })
+    if (fields.items?.length) {
+      const fieldGroup: HelperGroupInput = {
+        title: "字段",
+        items: fields.items.slice(0, 200).map((f: any) => ({
+          label: String(f.name),
+          snippet: `${qn}.${String(f.name)}`,
+          description: String(f.type || ""),
+        })),
+      }
+      externalVariableGroups.value = [...externalVariableGroups.value, fieldGroup]
+    }
+    if (methods.items?.length) {
+      const methodGroup: HelperGroupInput = {
+        title: "方法",
+        items: methods.items.slice(0, 300).map((m: any) => ({
+          label: String(m.name),
+          snippet: `${qn}.${String(m.name)}()`,
+          description: String(m.returnType || ""),
+          tooltip: m.parametersJson ? String(m.parametersJson) : undefined,
+        })),
+      }
+      externalFunctionGroups.value = [...externalFunctionGroups.value, methodGroup]
+    }
+  } catch (e) {
+    // ignore
+  }
 }
 
 function closeCodeEditor() {
@@ -365,7 +448,7 @@ function initCodeEditor() {
     },
   ])
   // 构建自动补全源（需要访问 props，所以放在函数内部）
-  const completionSource = createCompletionSource(props.variableGroups || [], props.endpointSchema)
+  const completionSource = createCompletionSource(() => variableGroups.value, props.endpointSchema)
   
   const extensions = [
     history(),

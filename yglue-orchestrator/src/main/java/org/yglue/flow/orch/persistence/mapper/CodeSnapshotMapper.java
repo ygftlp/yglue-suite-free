@@ -27,4 +27,8 @@ public interface CodeSnapshotMapper {
     void insertSnapshotClassMethod(ProjectSnapshotClassMethod method);
 
     void insertSnapshotDependency(ProjectSnapshotDependency dependency);
+
+    ProjectCodeSnapshot selectLatestByProjectId(@Param("projectId") Long projectId);
+
+    java.util.List<ProjectSnapshotDependency> listSnapshotDependencies(@Param("snapshotId") Long snapshotId);
 }

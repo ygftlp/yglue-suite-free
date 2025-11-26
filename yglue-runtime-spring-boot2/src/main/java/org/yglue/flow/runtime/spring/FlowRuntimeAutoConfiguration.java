@@ -61,7 +61,7 @@ public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
                                  EventBus eventBus) {
         // 从配置中获取 reloadOnExecution 设置
         boolean reloadOnExecution = this.properties.isReloadOnExecution();
-        return new RuleEngine(applicationContext, interceptors, eventBus, reloadOnExecution);
+        return new RuleEngine(applicationContext, interceptors, eventBus, reloadOnExecution, applicationContext.getBean(org.yglue.flow.runtime.core.NodeExecutorRegistry.class));
     }
 
     @Bean
@@ -74,6 +74,26 @@ public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
     @ConditionalOnMissingBean
     public ExecutionInterceptor loggingExecutionInterceptor() {
         return new LoggingInterceptor();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public org.yglue.flow.runtime.core.NodeExecutorRegistry nodeExecutorRegistry(ApplicationContext applicationContext) {
+        org.yglue.flow.runtime.core.executors.ServiceNodeExecutor serviceExecutor = new org.yglue.flow.runtime.core.executors.ServiceNodeExecutor(applicationContext);
+        org.yglue.flow.runtime.core.NodeExecutorRegistry registry = new org.yglue.flow.runtime.core.NodeExecutorRegistry()
+                .register("log", new org.yglue.flow.runtime.core.executors.LogNodeExecutor())
+                .register("delay", new org.yglue.flow.runtime.core.executors.DelayNodeExecutor())
+                .register("set", new org.yglue.flow.runtime.core.executors.SetNodeExecutor())
+                .register("if", new org.yglue.flow.runtime.core.executors.IfNodeExecutor())
+                .register("branch", new org.yglue.flow.runtime.core.executors.BranchNodeExecutor())
+                .register("call", new org.yglue.flow.runtime.core.executors.CallNodeExecutor(applicationContext))
+                .register("transformer", new org.yglue.flow.runtime.core.executors.TransformerNodeExecutor())
+                .register("service", serviceExecutor);
+        org.yglue.flow.runtime.rest.RestInvocationRegistry restRegistry = new org.yglue.flow.runtime.rest.RestInvocationRegistry()
+                .register(new org.yglue.flow.runtime.rest.BeanRestInvocationStrategy())
+                .register(new org.yglue.flow.runtime.rest.HttpRestInvocationStrategy());
+        registry.register("rest", new org.yglue.flow.runtime.core.executors.RestNodeExecutor(restRegistry, applicationContext));
+        return registry;
     }
 
     @Override

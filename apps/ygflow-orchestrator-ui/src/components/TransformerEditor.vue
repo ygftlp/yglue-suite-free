@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed } from "vue"
-import type { FlowModel, FlowResolver } from "../api/client"
+import { computed, ref } from "vue"
+import { useRoute } from "vue-router"
+import { api, type FlowModel, type FlowResolver, type ScriptHelpersResponse } from "../api/client"
 import ScriptEditor from "./ScriptEditor.vue"
 
 interface Props {
@@ -49,6 +50,94 @@ type RawHelperGroup = {
 
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
+
+const route = useRoute()
+const projectKey = computed(() => route.params.projectKey as string)
+const endpointId = computed(() => {
+  const v = (route.params as any).endpointId
+  return typeof v !== "undefined" ? Number(v) : undefined
+})
+
+const externalVariableGroups = ref<RawHelperGroup[]>([
+  {
+    title: "变量",
+    items: [
+      { label: "ctx", snippet: "ctx", description: "流程上下文" },
+      { label: "input", snippet: "input", description: "上游输出" },
+      { label: "output", snippet: "output", description: "映射输出" },
+      { label: "resolved", snippet: "resolved", description: "已解析参数" },
+    ],
+  },
+])
+
+const externalFunctionGroups = ref<RawHelperGroup[]>([])
+
+async function loadMembersForUpstreamType() {
+  const qn = upstreamOutputType.value
+  if (!qn || qn === "OBJECT" || qn === "ARRAY" || isSimpleType(qn)) return
+  if (!projectKey.value) return
+  try {
+    const fields = await api.getClassMembers(projectKey.value, { qualifiedName: qn, kind: "fields", page: 1, size: 100 })
+    const methods = await api.getClassMembers(projectKey.value, { qualifiedName: qn, kind: "methods", page: 1, size: 200 })
+    if (fields.items?.length) {
+      const fieldGroup: RawHelperGroup = {
+        title: "字段",
+        items: fields.items.slice(0, 200).map((f: any) => ({
+          label: String(f.name),
+          snippet: `${qn}.${String(f.name)}`,
+          description: String(f.type || ""),
+        })),
+      }
+      externalVariableGroups.value = [...externalVariableGroups.value, fieldGroup]
+    }
+    if (methods.items?.length) {
+      const methodGroup: RawHelperGroup = {
+        title: "方法",
+        items: methods.items.slice(0, 300).map((m: any) => ({
+          label: String(m.name),
+          snippet: `${qn}.${String(m.name)}()`,
+          description: String(m.returnType || ""),
+          tooltip: m.parametersJson ? String(m.parametersJson) : undefined,
+        })),
+      }
+      externalFunctionGroups.value = [...externalFunctionGroups.value, methodGroup]
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+
+async function loadScriptHelpers() {
+  if (!projectKey.value) return
+  try {
+    const helpers: ScriptHelpersResponse = await api.getScriptHelpers(
+      projectKey.value,
+      endpointId.value ? { endpointId: endpointId.value } : undefined
+    )
+    const depGroup: RawHelperGroup = {
+      title: "依赖",
+      items: (helpers.selectedJars || []).map((j) => ({
+        label: j.name,
+        snippet: j.coordinate || "",
+        description: (j.coordinate || "") || "依赖坐标",
+      })),
+    }
+    const classGroup: RawHelperGroup = {
+      title: "类引用",
+      items: (helpers.classes || []).slice(0, 500).map((c) => ({
+        label: c.simpleName || c.qualifiedName,
+        snippet: c.qualifiedName,
+        description: c.packageName ? `${c.packageName}` : "",
+        tooltip: c.kind,
+      })),
+    }
+    externalFunctionGroups.value = [classGroup]
+    externalVariableGroups.value = [externalVariableGroups.value[0], depGroup]
+  } catch (e) {
+    // ignore
+  }
+}
 
 const isTransformerNode = computed(() => props.selectedNode?.type === "transformer")
 const outputType = computed(() => props.selectedNode?.data?.outputType || "object")
@@ -437,7 +526,7 @@ function generateInitialScript(): string {
 /**
  * 检查并初始化脚本（如果为空）
  */
-function ensureScriptInitialized() {
+async function ensureScriptInitialized() {
   const currentScript = props.selectedNode?.data?.script || ""
   if (!currentScript.trim() && props.endpointSchema?.requestSchema && props.endpointSchema.requestSchema.length > 0) {
     const initialScript = generateInitialScript()
@@ -445,6 +534,7 @@ function ensureScriptInitialized() {
       updateNodeField("script", initialScript)
     }
   }
+  // Deleted: moved helper loading into ScriptEditor
 }
 
 </script>
@@ -470,6 +560,9 @@ function ensureScriptInitialized() {
       :variable-groups="scriptVariableGroups"
       :function-groups="scriptFunctionGroups"
       :endpoint-schema="props.endpointSchema"
+      :project-key="projectKey"
+      :endpoint-id="endpointId"
+      :upstream-output-type="upstreamOutputType"
       @update:script="handleScriptUpdate"
       @open="ensureScriptInitialized"
     />

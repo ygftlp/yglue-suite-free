@@ -27,4 +27,17 @@ public interface JarLibraryMapper {
     void insertJarClassField(JarLibraryClassField field);
 
     void insertJarClassMethod(JarLibraryClassMethod method);
+
+    java.util.List<JarLibraryClass> listJarClassesByJarIds(@Param("jarIds") java.util.List<Long> jarIds);
+
+    JarLibraryClass selectJarClassByQualifiedNameAndJarIds(@Param("qualifiedName") String qualifiedName,
+                                                           @Param("jarIds") java.util.List<Long> jarIds);
+
+    java.util.List<JarLibraryClassField> listJarClassFields(@Param("classId") Long classId,
+                                                           @Param("limit") int limit,
+                                                           @Param("offset") int offset);
+
+    java.util.List<JarLibraryClassMethod> listJarClassMethods(@Param("classId") Long classId,
+                                                             @Param("limit") int limit,
+                                                             @Param("offset") int offset);
 }

@@ -89,4 +89,42 @@
         (#{classId}, #{name}, #{returnType}, #{static}, #{parametersJson})
     </insert>
 
+    <select id="listJarClassesByJarIds" resultType="org.yglue.flow.orch.domain.jar.JarLibraryClass">
+        SELECT id, jar_id, qualified_name, simple_name, package_name, kind, doc
+        FROM yglue_jar_library_class
+        WHERE jar_id IN
+        <foreach collection="jarIds" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+        ORDER BY package_name, simple_name
+    </select>
+
+    <select id="selectJarClassByQualifiedNameAndJarIds" resultType="org.yglue.flow.orch.domain.jar.JarLibraryClass">
+        SELECT id, jar_id, qualified_name, simple_name, package_name, kind, doc
+        FROM yglue_jar_library_class
+        WHERE qualified_name = #{qualifiedName}
+          AND jar_id IN
+        <foreach collection="jarIds" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+        ORDER BY jar_id
+        LIMIT 1
+    </select>
+
+    <select id="listJarClassFields" resultType="org.yglue.flow.orch.domain.jar.JarLibraryClassField">
+        SELECT id, class_id, name, type, is_static AS static
+        FROM yglue_jar_library_class_field
+        WHERE class_id = #{classId}
+        ORDER BY name
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="listJarClassMethods" resultType="org.yglue.flow.orch.domain.jar.JarLibraryClassMethod">
+        SELECT id, class_id, name, return_type, is_static AS static, parameters_json
+        FROM yglue_jar_library_class_method
+        WHERE class_id = #{classId}
+        ORDER BY name
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
 </mapper>

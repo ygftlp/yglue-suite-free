@@ -69,7 +69,7 @@ public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
                                  EventBus eventBus) {
         // 从配置中获取 reloadOnExecution 设置
         boolean reloadOnExecution = this.properties.isReloadOnExecution();
-        return new RuleEngine(applicationContext, interceptors, eventBus, reloadOnExecution);
+        return new RuleEngine(applicationContext, interceptors, eventBus, reloadOnExecution, applicationContext.getBean(NodeExecutorRegistry.class));
     }
 
     @Bean

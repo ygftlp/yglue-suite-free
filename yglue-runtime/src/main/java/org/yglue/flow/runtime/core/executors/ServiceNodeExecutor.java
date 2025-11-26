@@ -210,12 +210,12 @@ public class ServiceNodeExecutor implements NodeExecutor {
         // 查找并调用方法（使用实际类型而不是代理类）
         log.debug("[ServiceNodeExecutor] 查找方法: nodeId={}, targetClass={}, methodName={}, argumentCount={}", 
             nodeId, targetClass.getName(), methodName, arguments.size());
-        Method method = resolveMethod(targetClass, methodName, arguments.size());
+        Method method = resolveMethod(targetClass, methodName, arguments);
         log.info("[ServiceNodeExecutor] 找到方法: nodeId={}, method={}", nodeId, method);
         
         log.debug("[ServiceNodeExecutor] 转换参数类型: nodeId={}, parameterTypes={}", 
             nodeId, method.getParameterTypes());
-        Object[] convertedArgs = convertArgs(method.getParameterTypes(), arguments);
+        Object[] convertedArgs = convertArgs(method, arguments);
         log.debug("[ServiceNodeExecutor] 参数类型转换完成: nodeId={}, convertedArgs={}", nodeId, convertedArgs);
         
         log.info("[ServiceNodeExecutor] 开始调用方法: nodeId={}, beanName={}, method={}", 
@@ -389,56 +389,91 @@ public class ServiceNodeExecutor implements NodeExecutor {
      * @return 匹配的方法
      * @throws IllegalArgumentException 如果找不到匹配的方法
      */
-    private Method resolveMethod(Class<?> clazz, String name, int argc) {
-        log.debug("[ServiceNodeExecutor] 查找方法: clazz={}, name={}, argc={}", clazz.getName(), name, argc);
-        
-        // 1. 先尝试查找 public 方法（包括继承的方法）
-        for (Method method : clazz.getMethods()) {
-            if (method.getName().equals(name) && method.getParameterCount() == argc) {
-                log.debug("[ServiceNodeExecutor] 找到匹配的 public 方法: method={}, parameterTypes={}", 
-                    method, method.getParameterTypes());
-                return method;
+    private Method resolveMethod(Class<?> clazz, String name, java.util.List<Object> args) {
+        log.debug("[ServiceNodeExecutor] 查找方法: clazz={}, name={}, argc={}", clazz.getName(), name, args.size());
+        java.util.List<Method> candidates = new java.util.ArrayList<>();
+        for (Method m : clazz.getMethods()) {
+            if (m.getName().equals(name)) {
+                candidates.add(m);
             }
         }
-        
-        // 2. 如果找不到 public 方法，尝试查找所有声明的方法（包括 private、protected、package-private）
-        for (Method method : clazz.getDeclaredMethods()) {
-            if (method.getName().equals(name) && method.getParameterCount() == argc) {
-                log.debug("[ServiceNodeExecutor] 找到匹配的 declared 方法: method={}, parameterTypes={}, modifiers={}", 
-                    method, method.getParameterTypes(), java.lang.reflect.Modifier.toString(method.getModifiers()));
-                // 如果是非 public 方法，需要设置可访问
-                if (!java.lang.reflect.Modifier.isPublic(method.getModifiers())) {
-                    method.setAccessible(true);
-                    log.debug("[ServiceNodeExecutor] 设置方法可访问: method={}", method);
+        for (Method m : clazz.getDeclaredMethods()) {
+            if (m.getName().equals(name)) {
+                candidates.add(m);
+            }
+        }
+        Method best = null;
+        int bestScore = Integer.MAX_VALUE;
+        for (Method m : candidates) {
+            Class<?>[] pts = m.getParameterTypes();
+            boolean varargs = m.isVarArgs();
+            if (!varargs && pts.length != args.size()) {
+                continue;
+            }
+            if (varargs && args.size() < pts.length - 1) {
+                continue;
+            }
+            int score = 0;
+            boolean convertible = true;
+            int fixedCount = varargs ? pts.length - 1 : pts.length;
+            for (int i = 0; i < fixedCount; i++) {
+                Class<?> pt = pts[i];
+                Object val = i < args.size() ? args.get(i) : null;
+                if (!canConvertTo(pt, val)) {
+                    convertible = false;
+                    break;
                 }
-                return method;
+                if (!(val != null && pt.isInstance(val))) {
+                    score += 1;
+                }
+            }
+            if (convertible && varargs) {
+                Class<?> compType = pts[pts.length - 1].getComponentType();
+                for (int j = fixedCount; j < args.size(); j++) {
+                    Object val = args.get(j);
+                    if (!canConvertTo(compType, val)) {
+                        convertible = false;
+                        break;
+                    }
+                    if (!(val != null && compType.isInstance(val))) {
+                        score += 1;
+                    }
+                }
+            }
+            if (!convertible) {
+                continue;
+            }
+            if (best == null || score < bestScore || (score == bestScore && java.lang.reflect.Modifier.isPublic(m.getModifiers()) && !java.lang.reflect.Modifier.isPublic(best.getModifiers()))) {
+                best = m;
+                bestScore = score;
             }
         }
-        
-        // 3. 如果还是找不到，列出所有可用的方法，便于调试
-        log.error("[ServiceNodeExecutor] 未找到方法: clazz={}, name={}, argc={}", clazz.getName(), name, argc);
-        
-        // 收集所有可用的方法名和参数数量
-        Set<String> availableMethods = new LinkedHashSet<>();
+        if (best != null) {
+            if (!java.lang.reflect.Modifier.isPublic(best.getModifiers())) {
+                best.setAccessible(true);
+            }
+            return best;
+        }
+        // 未找到方法，收集信息便于调试
+        log.error("[ServiceNodeExecutor] 未找到方法: clazz={}, name={}, argc={}", clazz.getName(), name, args.size());
+        java.util.Set<String> availableMethods = new java.util.LinkedHashSet<>();
         for (Method method : clazz.getMethods()) {
             if (method.getName().equals(name)) {
-                availableMethods.add(method.getName() + "/" + method.getParameterCount() + 
-                    " (" + Arrays.toString(method.getParameterTypes()) + ")");
+                availableMethods.add(method.getName() + "/" + method.getParameterCount() +
+                        " (" + java.util.Arrays.toString(method.getParameterTypes()) + ")");
             }
         }
         for (Method method : clazz.getDeclaredMethods()) {
             if (method.getName().equals(name) && !availableMethods.contains(method.getName() + "/" + method.getParameterCount())) {
-                availableMethods.add(method.getName() + "/" + method.getParameterCount() + 
-                    " (" + Arrays.toString(method.getParameterTypes()) + ")");
+                availableMethods.add(method.getName() + "/" + method.getParameterCount() +
+                        " (" + java.util.Arrays.toString(method.getParameterTypes()) + ")");
             }
         }
-        
-        String errorMsg = "Method not found: " + clazz.getName() + "." + name + "/" + argc;
+        String errorMsg = "Method not found: " + clazz.getName() + "." + name + "/" + args.size();
         if (!availableMethods.isEmpty()) {
             errorMsg += ". Available methods with name '" + name + "': " + String.join(", ", availableMethods);
         } else {
-            // 如果连同名方法都没有，列出所有方法
-            Set<String> allMethods = new LinkedHashSet<>();
+            java.util.Set<String> allMethods = new java.util.LinkedHashSet<>();
             for (Method method : clazz.getMethods()) {
                 allMethods.add(method.getName() + "/" + method.getParameterCount());
             }
@@ -447,7 +482,6 @@ public class ServiceNodeExecutor implements NodeExecutor {
             }
             errorMsg += ". Available methods in " + clazz.getName() + ": " + String.join(", ", allMethods);
         }
-        
         throw new IllegalArgumentException(errorMsg);
     }
 
@@ -462,19 +496,55 @@ public class ServiceNodeExecutor implements NodeExecutor {
      * @param args 参数值列表
      * @return 转换后的参数数组
      */
-    private Object[] convertArgs(Class<?>[] parameterTypes, List<Object> args) {
-        log.debug("[ServiceNodeExecutor] 转换参数类型: parameterTypes={}, args={}", parameterTypes, args);
-        Object[] converted = new Object[parameterTypes.length];
-        for (int i = 0; i < parameterTypes.length; i++) {
-            Object value = i < args.size() ? args.get(i) : null;
-            Class<?> targetType = parameterTypes[i];
-            Object convertedValue = convert(value, targetType);
-            log.debug("[ServiceNodeExecutor] 参数 [{}] 类型转换: value={}, valueType={}, targetType={}, convertedValue={}", 
-                i, value, value != null ? value.getClass().getName() : "null", targetType.getName(), convertedValue);
-            converted[i] = convertedValue;
+    private Object[] convertArgs(Method method, List<Object> args) {
+        Class<?>[] parameterTypes = method.getParameterTypes();
+        boolean varargs = method.isVarArgs();
+        if (!varargs) {
+            Object[] converted = new Object[parameterTypes.length];
+            for (int i = 0; i < parameterTypes.length; i++) {
+                Object value = i < args.size() ? args.get(i) : null;
+                converted[i] = convert(value, parameterTypes[i]);
+            }
+            return converted;
+        } else {
+            int fixed = parameterTypes.length - 1;
+            Class<?> compType = parameterTypes[parameterTypes.length - 1].getComponentType();
+            Object[] converted = new Object[parameterTypes.length];
+            for (int i = 0; i < fixed; i++) {
+                Object value = i < args.size() ? args.get(i) : null;
+                converted[i] = convert(value, parameterTypes[i]);
+            }
+            int varCount = Math.max(0, args.size() - fixed);
+            Object varArray = java.lang.reflect.Array.newInstance(compType, varCount);
+            for (int j = 0; j < varCount; j++) {
+                Object value = args.get(fixed + j);
+                Object cv = convert(value, compType);
+                java.lang.reflect.Array.set(varArray, j, cv);
+            }
+            converted[parameterTypes.length - 1] = varArray;
+            return converted;
         }
-        log.debug("[ServiceNodeExecutor] 参数类型转换完成: converted={}", converted);
-        return converted;
+    }
+
+    private boolean canConvertTo(Class<?> targetType, Object value) {
+        if (value == null) {
+            return true;
+        }
+        if (targetType.isInstance(value)) {
+            return true;
+        }
+        try {
+            Object converted = convert(value, targetType);
+            if (converted == null) {
+                return true;
+            }
+            if (targetType.isPrimitive()) {
+                return true;
+            }
+            return targetType.isInstance(converted) || converted.getClass().equals(targetType) || (targetType == String.class && converted instanceof String);
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /**
@@ -514,6 +584,35 @@ public class ServiceNodeExecutor implements NodeExecutor {
         }
         if (targetType == String.class) {
             return String.valueOf(value);
+        }
+        // BigDecimal / BigInteger
+        if (targetType == java.math.BigDecimal.class) {
+            return new java.math.BigDecimal(String.valueOf(value));
+        }
+        if (targetType == java.math.BigInteger.class) {
+            return new java.math.BigInteger(String.valueOf(value));
+        }
+        // Java time (ISO-8601)
+        if (targetType == java.time.LocalDate.class) {
+            return java.time.LocalDate.parse(String.valueOf(value));
+        }
+        if (targetType == java.time.LocalDateTime.class) {
+            return java.time.LocalDateTime.parse(String.valueOf(value));
+        }
+        // Enum by name
+        if (targetType.isEnum()) {
+            String name = String.valueOf(value);
+            @SuppressWarnings({"rawtypes", "unchecked"})
+            Object enumValue = java.lang.Enum.valueOf((Class<? extends java.lang.Enum>) targetType.asSubclass(java.lang.Enum.class), name);
+            return enumValue;
+        }
+        // Map -> POJO via ObjectMapper
+        if (value instanceof java.util.Map) {
+            try {
+                return objectMapper.convertValue(value, targetType);
+            } catch (IllegalArgumentException ignore) {
+                // fall through
+            }
         }
         return value;
     }

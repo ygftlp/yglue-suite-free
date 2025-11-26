@@ -316,6 +316,27 @@ export interface PluginInstance {
   pendingFlows?: number
 }
 
+export interface ProjectCodeSnapshot {
+  id: number
+  projectId: number
+  snapshotKey?: string
+  generatedAt?: string
+  contentHash?: string
+  ideProduct?: string | null
+  ideVersion?: string | null
+  ideBuild?: string | null
+}
+
+export interface ScriptHelpersResponse {
+  snapshotId: number | null
+  selectedJars: Array<{ jarId: number | null; name: string; coordinate?: string | null }>
+  classes: Array<{ qualifiedName: string; simpleName: string; packageName: string; kind: string }>
+}
+
+export interface ClassMemberResponse<T = any> {
+  items: T[]
+}
+
 export const api = {
   listProjects(): Promise<Project[]> {
     return request<Project[]>("/projects")
@@ -449,6 +470,24 @@ export const api = {
 
   listPluginInstances(projectKey: string): Promise<PluginInstance[]> {
     return request<PluginInstance[]>(`/projects/${encodeURIComponent(projectKey)}/plugins`)
+  },
+
+  getLatestCodeSnapshot(projectKey: string): Promise<ProjectCodeSnapshot | null> {
+    return request<ProjectCodeSnapshot | null>(`/projects/${encodeURIComponent(projectKey)}/code-snapshots/latest`)
+  },
+
+  getScriptHelpers(projectKey: string, params?: { endpointId?: number }): Promise<ScriptHelpersResponse> {
+    const query = params?.endpointId ? `?endpointId=${encodeURIComponent(String(params.endpointId))}` : ""
+    return request<ScriptHelpersResponse>(`/projects/${encodeURIComponent(projectKey)}/code-snapshots/helpers${query}`)
+  },
+
+  getClassMembers(
+    projectKey: string,
+    params: { qualifiedName: string; kind: "methods" | "fields"; page?: number; size?: number }
+  ): Promise<ClassMemberResponse> {
+    const { qualifiedName, kind, page = 1, size = 50 } = params
+    const q = new URLSearchParams({ qualifiedName, kind, page: String(page), size: String(size) }).toString()
+    return request<ClassMemberResponse>(`/projects/${encodeURIComponent(projectKey)}/code-snapshots/class-members?${q}`)
   },
 }
 

@@ -95,4 +95,20 @@
          #{coordinate}, #{scope}, #{jarId}, #{selected})
     </insert>
 
+    <select id="selectLatestByProjectId" resultMap="ProjectCodeSnapshotResultMap">
+        SELECT <include refid="SnapshotColumns"/>
+        FROM yglue_project_code_snapshot
+        WHERE project_id = #{projectId}
+        ORDER BY created_at DESC
+        LIMIT 1
+    </select>
+
+    <select id="listSnapshotDependencies" resultType="org.yglue.flow.orch.domain.snapshot.ProjectSnapshotDependency">
+        SELECT id, snapshot_id, dependency_id, name, group_id, artifact_id, version,
+               coordinate, scope, jar_id, selected_flag AS selected
+        FROM yglue_project_snapshot_dependency
+        WHERE snapshot_id = #{snapshotId}
+        ORDER BY name
+    </select>
+
 </mapper>

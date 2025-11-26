@@ -90,16 +90,25 @@ public class RuleEngine {
         this.reloadOnExecution = reloadOnExecution;
         this.loader = new FlowLoader();
         
-        ServiceNodeExecutor serviceExecutor = new ServiceNodeExecutor(applicationContext);
-        NodeExecutorRegistry registry = new NodeExecutorRegistry()
-                .register("log", new LogNodeExecutor())
-                .register("delay", new DelayNodeExecutor())
-                .register("set", new SetNodeExecutor())
-                .register("if", new IfNodeExecutor())
-                .register("branch", new BranchNodeExecutor())
-                .register("call", new CallNodeExecutor(applicationContext))
-                .register("transformer", new TransformerNodeExecutor())
-                .register("service", serviceExecutor);
+        // 优先尝试使用 Spring 容器中的 NodeExecutorRegistry
+        org.yglue.flow.runtime.core.NodeExecutorRegistry registry = null;
+        try {
+            registry = applicationContext.getBean(org.yglue.flow.runtime.core.NodeExecutorRegistry.class);
+        } catch (Exception ignore) {
+            registry = null;
+        }
+        if (registry == null) {
+            ServiceNodeExecutor serviceExecutor = new ServiceNodeExecutor(applicationContext);
+            registry = new NodeExecutorRegistry()
+                    .register("log", new LogNodeExecutor())
+                    .register("delay", new DelayNodeExecutor())
+                    .register("set", new SetNodeExecutor())
+                    .register("if", new IfNodeExecutor())
+                    .register("branch", new BranchNodeExecutor())
+                    .register("call", new CallNodeExecutor(applicationContext))
+                    .register("transformer", new TransformerNodeExecutor())
+                    .register("service", serviceExecutor);
+        }
 
         RestInvocationRegistry restRegistry = new RestInvocationRegistry()
                 .register(new BeanRestInvocationStrategy())
