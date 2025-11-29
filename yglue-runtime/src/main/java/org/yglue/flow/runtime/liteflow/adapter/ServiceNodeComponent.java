@@ -113,10 +113,7 @@ public class ServiceNodeComponent extends NodeComponent {
         NodeExecutionContext executionContext = new NodeExecutionContext(
                 flowDefinition,
                 nodeDefinition,
-                flowContext,
-                children -> {
-                    // 子节点执行逻辑由 LiteFlow 处理
-                }
+                flowContext
         );
 
         // 执行节点

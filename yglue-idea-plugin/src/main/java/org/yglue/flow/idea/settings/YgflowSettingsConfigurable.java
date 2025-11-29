@@ -791,7 +791,7 @@ public class YgflowSettingsConfigurable implements Configurable {
         if (index < 0 || index >= model.getSize()) {
             return;
         }
-        String id = model.getElementAt(index);
+        String id = jarSelectionList.getItemAt(index);
         if (value) {
             jarSelectionState.add(id);
         } else {

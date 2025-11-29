@@ -6,6 +6,10 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands"
 import { autocompletion, completionKeymap, CompletionContext, CompletionResult } from "@codemirror/autocomplete"
 import { api } from "../api/client"
 
+// 添加调试日志工具
+const DEBUG = false
+const debugLog = (...args: any[]) => DEBUG && console.log('[ScriptEditor]', ...args)
+
 type HelperTab = "variables" | "functions"
 
 interface HelperItem {
@@ -107,6 +111,36 @@ function createCompletionSource(
       })
     })
 
+    // 检查是否是 import 语句的补全
+    const importMatch = textBefore.match(/import\s+([\w.]*$)/)
+    if (importMatch) {
+      const prefix = importMatch[1] || ""
+      debugLog('Import completion triggered with prefix:', prefix)
+      
+      // 收集所有类引用作为 import 补全选项
+      const importCompletions: Array<{ label: string; type: string; detail?: string }> = []
+      getVariableGroups()?.forEach((group) => {
+        if (group.title === "类引用") {
+          group.items?.forEach((item) => {
+            if (item.snippet && item.snippet.startsWith(prefix)) {
+              importCompletions.push({
+                label: item.snippet,
+                type: "class",
+                detail: item.description || "",
+              })
+            }
+          })
+        }
+      })
+      
+      if (importCompletions.length > 0) {
+        return {
+          from: pos - prefix.length,
+          options: importCompletions,
+        }
+      }
+    }
+    
     // 匹配变量. 或变量[ 的模式
     const dotMatch = textBefore.match(/(\w+)(\.|\[['"]?)$/)
     const bracketMatch = textBefore.match(/(\w+)\['([^']*)$/)
@@ -131,7 +165,7 @@ function createCompletionSource(
         }
       }
     }
-
+    
     // 如果没有匹配到变量. 模式，提供变量名补全
     const wordMatch = textBefore.match(/(\w*)$/)
     if (wordMatch) {
@@ -144,6 +178,24 @@ function createCompletionSource(
           detail: info.description,
         }))
       
+      // 如果是在行首或者前面是空白字符，也提供类引用补全
+      const lineStartMatch = textBefore.match(/^\s*(.*)$/)
+      if (lineStartMatch && prefix === lineStartMatch[1]) {
+        getVariableGroups()?.forEach((group) => {
+          if (group.title === "类引用") {
+            group.items?.forEach((item) => {
+              if (item.label && item.label.startsWith(prefix)) {
+                variableCompletions.push({
+                  label: item.label,
+                  type: "class",
+                  detail: item.description || "",
+                })
+              }
+            })
+          }
+        })
+      }
+      
       if (variableCompletions.length > 0) {
         return {
           from: pos - prefix.length,
@@ -151,7 +203,7 @@ function createCompletionSource(
         }
       }
     }
-
+    
     return null
   }
 }
@@ -343,6 +395,25 @@ function openCodeEditor() {
   })
 }
 
+// 添加对 upstreamOutputType 变化的监听
+watch(
+  () => props.upstreamOutputType,
+  (newType, oldType) => {
+    debugLog('upstreamOutputType changed:', oldType, '->', newType)
+    if (newType !== oldType && showCodeEditor.value) {
+      // 清除之前的类成员信息
+      externalVariableGroups.value = externalVariableGroups.value.filter(group => 
+        group.title !== "字段"
+      )
+      externalFunctionGroups.value = externalFunctionGroups.value.filter(group => 
+        group.title !== "方法"
+      )
+      // 重新加载类成员信息
+      loadMembersForUpstreamTypeInternal()
+    }
+  }
+)
+
 async function loadScriptHelpersInternal() {
   if (!props.projectKey) return
   try {
@@ -385,11 +456,50 @@ function isSimpleType(type: string): boolean {
 
 async function loadMembersForUpstreamTypeInternal() {
   const qn = props.upstreamOutputType
-  if (!qn || qn === "OBJECT" || qn === "ARRAY" || typeof qn !== "string" || isSimpleType(qn)) return
-  if (!props.projectKey) return
+  debugLog('Loading members for upstream type:', qn)
+  
+  // 添加更详细的条件检查和日志
+  if (!qn) {
+    debugLog('No upstream output type provided')
+    return
+  }
+  
+  if (qn === "OBJECT" || qn === "ARRAY") {
+    debugLog('Skipping member loading for generic type:', qn)
+    return
+  }
+  
+  if (typeof qn !== "string") {
+    debugLog('Invalid upstream output type:', typeof qn)
+    return
+  }
+  
+  if (isSimpleType(qn)) {
+    debugLog('Skipping member loading for simple type:', qn)
+    return
+  }
+  
+  if (!props.projectKey) {
+    debugLog('No project key provided')
+    return
+  }
+  
   try {
+    debugLog('Fetching class members for:', qn)
     const fields = await api.getClassMembers(props.projectKey, { qualifiedName: qn, kind: "fields", page: 1, size: 100 })
     const methods = await api.getClassMembers(props.projectKey, { qualifiedName: qn, kind: "methods", page: 1, size: 200 })
+    
+    debugLog('Received fields:', fields)
+    debugLog('Received methods:', methods)
+    
+    // 清除之前的类成员信息
+    externalVariableGroups.value = externalVariableGroups.value.filter(group => 
+      group.title !== "字段"
+    )
+    externalFunctionGroups.value = externalFunctionGroups.value.filter(group => 
+      group.title !== "方法"
+    )
+    
     if (fields.items?.length) {
       const fieldGroup: HelperGroupInput = {
         title: "字段",
@@ -400,7 +510,9 @@ async function loadMembersForUpstreamTypeInternal() {
         })),
       }
       externalVariableGroups.value = [...externalVariableGroups.value, fieldGroup]
+      debugLog('Added field group with', fields.items.length, 'items')
     }
+    
     if (methods.items?.length) {
       const methodGroup: HelperGroupInput = {
         title: "方法",
@@ -412,9 +524,15 @@ async function loadMembersForUpstreamTypeInternal() {
         })),
       }
       externalFunctionGroups.value = [...externalFunctionGroups.value, methodGroup]
+      debugLog('Added method group with', methods.items.length, 'items')
+    }
+    
+    if (!fields.items?.length && !methods.items?.length) {
+      debugLog('No fields or methods found for:', qn)
     }
   } catch (e) {
-    // ignore
+    console.error('[ScriptEditor] Failed to load class members:', e)
+    debugLog('Error loading class members:', e)
   }
 }
 

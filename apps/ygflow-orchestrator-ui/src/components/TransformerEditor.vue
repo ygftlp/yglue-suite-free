@@ -4,6 +4,10 @@ import { useRoute } from "vue-router"
 import { api, type FlowModel, type FlowResolver, type ScriptHelpersResponse } from "../api/client"
 import ScriptEditor from "./ScriptEditor.vue"
 
+// 添加调试日志工具
+const DEBUG = false
+const debugLog = (...args: any[]) => DEBUG && console.log('[TransformerEditor]', ...args)
+
 interface Props {
   selectedNode: any | null
   nodes?: any[] | null
@@ -74,11 +78,37 @@ const externalFunctionGroups = ref<RawHelperGroup[]>([])
 
 async function loadMembersForUpstreamType() {
   const qn = upstreamOutputType.value
-  if (!qn || qn === "OBJECT" || qn === "ARRAY" || isSimpleType(qn)) return
-  if (!projectKey.value) return
+  debugLog('Loading members for upstream type:', qn)
+  
+  // 添加更详细的条件检查和日志
+  if (!qn) {
+    debugLog('No upstream output type provided')
+    return
+  }
+  
+  if (qn === "OBJECT" || qn === "ARRAY" || isSimpleType(qn)) {
+    debugLog('Skipping member loading for type:', qn)
+    return
+  }
+  
+  if (!projectKey.value) {
+    debugLog('No project key provided')
+    return
+  }
+  
   try {
+    debugLog('Fetching class members for:', qn)
     const fields = await api.getClassMembers(projectKey.value, { qualifiedName: qn, kind: "fields", page: 1, size: 100 })
     const methods = await api.getClassMembers(projectKey.value, { qualifiedName: qn, kind: "methods", page: 1, size: 200 })
+    
+    debugLog('Received fields:', fields)
+    debugLog('Received methods:', methods)
+    
+    // 清除之前的类成员信息
+    externalVariableGroups.value = externalVariableGroups.value.filter(group => 
+      group.title !== "字段"
+    )
+    
     if (fields.items?.length) {
       const fieldGroup: RawHelperGroup = {
         title: "字段",
@@ -89,7 +119,9 @@ async function loadMembersForUpstreamType() {
         })),
       }
       externalVariableGroups.value = [...externalVariableGroups.value, fieldGroup]
+      debugLog('Added field group with', fields.items.length, 'items')
     }
+    
     if (methods.items?.length) {
       const methodGroup: RawHelperGroup = {
         title: "方法",
@@ -101,9 +133,15 @@ async function loadMembersForUpstreamType() {
         })),
       }
       externalFunctionGroups.value = [...externalFunctionGroups.value, methodGroup]
+      debugLog('Added method group with', methods.items.length, 'items')
+    }
+    
+    if (!fields.items?.length && !methods.items?.length) {
+      debugLog('No fields or methods found for:', qn)
     }
   } catch (e) {
-    // ignore
+    console.error('[TransformerEditor] Failed to load class members:', e)
+    debugLog('Error loading class members:', e)
   }
 }
 

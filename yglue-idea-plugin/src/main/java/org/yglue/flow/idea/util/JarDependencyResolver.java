@@ -32,7 +32,7 @@ public final class JarDependencyResolver {
             return Collections.emptyList();
         }
         List<JarInfo> jars = new ArrayList<>();
-        enumerateLibraries(project).forEach(library -> {
+        enumerateLibraries(project).forEachLibrary(library -> {
             JarCoordinate coordinate = parseCoordinate(library.getName());
             String id = buildLibraryId(coordinate, library);
             String display = buildDisplayName(coordinate, library);
@@ -47,7 +47,7 @@ public final class JarDependencyResolver {
             return Collections.emptyMap();
         }
         Map<String, Library> map = new HashMap<>();
-        enumerateLibraries(project).forEach(library -> {
+        enumerateLibraries(project).forEachLibrary(library -> {
             JarCoordinate coordinate = parseCoordinate(library.getName());
             String id = buildLibraryId(coordinate, library);
             if (!id.isBlank() && !map.containsKey(id)) {

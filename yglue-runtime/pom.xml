@@ -48,12 +48,7 @@
       <!-- LiteFlow 流程编排框架 -->
       <dependency>
           <groupId>com.yomahub</groupId>
-          <artifactId>liteflow-core</artifactId>
-          <version>2.12.1</version>
-      </dependency>
-      <dependency>
-          <groupId>com.yomahub</groupId>
-          <artifactId>liteflow-spring</artifactId>
+          <artifactId>liteflow-spring-boot-starter</artifactId>
           <version>2.12.1</version>
       </dependency>
       <!-- 测试依赖 -->

@@ -45,11 +45,7 @@ public class NodeExecutorComponent extends NodeComponent {
         NodeExecutionContext executionContext = new NodeExecutionContext(
                 flowDefinition,
                 nodeDefinition,
-                flowContext,
-                children -> {
-                    // 子节点执行逻辑由 LiteFlow 处理
-                    // 这里可以留空或添加额外处理
-                }
+                flowContext
         );
         
         // 执行节点

@@ -107,8 +107,8 @@ public class TransformerNodeExecutor implements NodeExecutor {
     /**
      * 获取上游节点的输出
      * 转换器的输入来源优先级：
-     * 1. _lastNodeResult - 最后一个节点的输出（由 FlowExecutor 自动保存）
-     * 2. 节点配置中的 inputSource - 如果配置了特定的输入源路径（如 ctx.xxx）
+     * 1. 节点配置中的 inputSource - 如果配置了特定的输入源路径（如 ctx.xxx）
+     * 2. 上下文中的 ret（返回值）
      * 3. 上下文中的其他值（向后兼容）
      * 
      * @param context 流程上下文
@@ -134,19 +134,13 @@ public class TransformerNodeExecutor implements NodeExecutor {
             }
         }
         
-        // 优先级2：获取最后一个节点的输出（由 FlowExecutor 自动保存）
-        Object lastNodeResult = data.get("_lastNodeResult");
-        if (lastNodeResult != null) {
-            return lastNodeResult;
-        }
-        
-        // 优先级3：尝试从上下文获取 ret（返回值）
+        // 优先级2：尝试从上下文获取 ret（返回值）
         Object retValue = data.get("ret");
         if (retValue != null) {
             return retValue;
         }
         
-        // 优先级4：查找最近的非空输出值（向后兼容）
+        // 优先级3：查找最近的非空输出值（向后兼容）
         Object lastOutput = null;
         for (Map.Entry<String, Object> entry : data.entrySet()) {
             String key = entry.getKey();

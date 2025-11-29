@@ -92,21 +92,29 @@
     <select id="listJarClassesByJarIds" resultType="org.yglue.flow.orch.domain.jar.JarLibraryClass">
         SELECT id, jar_id, qualified_name, simple_name, package_name, kind, doc
         FROM yglue_jar_library_class
-        WHERE jar_id IN
-        <foreach collection="jarIds" item="id" open="(" separator="," close=")">
-            #{id}
-        </foreach>
+        <where>
+            <if test="jarIds != null and !jarIds.isEmpty()">
+                jar_id IN
+                <foreach collection="jarIds" item="id" open="(" separator="," close=")">
+                    #{id}
+                </foreach>
+            </if>
+        </where>
         ORDER BY package_name, simple_name
     </select>
 
     <select id="selectJarClassByQualifiedNameAndJarIds" resultType="org.yglue.flow.orch.domain.jar.JarLibraryClass">
         SELECT id, jar_id, qualified_name, simple_name, package_name, kind, doc
         FROM yglue_jar_library_class
-        WHERE qualified_name = #{qualifiedName}
-          AND jar_id IN
-        <foreach collection="jarIds" item="id" open="(" separator="," close=")">
-            #{id}
-        </foreach>
+        <where>
+            qualified_name = #{qualifiedName}
+            <if test="jarIds != null and !jarIds.isEmpty()">
+                AND jar_id IN
+                <foreach collection="jarIds" item="id" open="(" separator="," close=")">
+                    #{id}
+                </foreach>
+            </if>
+        </where>
         ORDER BY jar_id
         LIMIT 1
     </select>

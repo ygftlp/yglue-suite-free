@@ -7,6 +7,7 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.OrderRootType;
 import com.intellij.openapi.roots.libraries.Library;
 import com.intellij.openapi.util.Computable;
+import com.intellij.openapi.util.ThrowableComputable;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiClass;
 import com.intellij.psi.PsiField;
@@ -20,6 +21,7 @@ import com.intellij.psi.PsiType;
 import com.intellij.psi.search.FilenameIndex;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.util.PlatformUtils;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -39,6 +41,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+
 import org.jetbrains.annotations.NotNull;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -62,7 +65,7 @@ public final class CodeSnapshotExporter {
     }
 
     public static @NotNull JSONObject buildSnapshot(@NotNull Project project,
-                                                    @NotNull YgflowSettingsState settings) {
+                                                    @NotNull YgflowSettingsState settings) throws Exception {
         JSONObject root = new JSONObject();
         String projectId = settings.projectKey != null && !settings.projectKey.isBlank()
                 ? settings.projectKey
@@ -114,12 +117,12 @@ public final class CodeSnapshotExporter {
         return ide;
     }
 
-    private static @NotNull JSONArray collectProjectClasses(@NotNull Project project) {
+    private static @NotNull JSONArray collectProjectClasses(@NotNull Project project) throws Exception {
         PsiManager psiManager = PsiManager.getInstance(project);
         GlobalSearchScope scope = GlobalSearchScope.projectScope(project);
         Collection<VirtualFile> javaFiles = FilenameIndex.getAllFilesByExt(project, "java", scope);
 
-        Computable<JSONArray> task = () -> {
+        ThrowableComputable<JSONArray, Exception> task = () -> {
             JSONArray classes = new JSONArray();
             Set<String> visited = new HashSet<>();
             for (VirtualFile vf : javaFiles) {
@@ -288,8 +291,8 @@ public final class CodeSnapshotExporter {
 
     private static void processLibraryRoot(VirtualFile file,
                                            JSONArray sink,
-                                            Set<String> visited,
-                                            MessageDigest digest) throws IOException {
+                                           Set<String> visited,
+                                           MessageDigest digest) throws IOException {
         if (file == null) {
             return;
         }

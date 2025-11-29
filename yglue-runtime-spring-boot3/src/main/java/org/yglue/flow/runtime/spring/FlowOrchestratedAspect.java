@@ -312,13 +312,13 @@ public class FlowOrchestratedAspect {
     private void writeResponse(HttpServletResponse response, 
                                FlowExecutionResult result,
                                org.yglue.flow.runtime.core.definition.RestEntryPoint entryPoint) throws Exception {
-        // 优先使用流程的返回值，如果没有则尝试从上下文中获取最后一个节点的结果
+        // 优先使用流程的返回值，如果没有则尝试从上下文中获取 ret
         Object returnValue = result.getReturnValue();
         if (returnValue == null) {
-            // 尝试从上下文快照中获取最后一个节点的结果
+            // 尝试从上下文快照中获取 ret
             Map<String, Object> contextSnapshot = result.getContextSnapshot();
             if (contextSnapshot != null) {
-                returnValue = contextSnapshot.get("_lastNodeResult");
+                returnValue = contextSnapshot.get("ret");
             }
         }
         

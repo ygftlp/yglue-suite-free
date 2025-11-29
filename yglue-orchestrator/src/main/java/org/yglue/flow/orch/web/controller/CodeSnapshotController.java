@@ -12,6 +12,8 @@ import org.yglue.flow.orch.service.CodeSnapshotService.SaveResult;
 import org.yglue.flow.orch.web.dto.snapshot.request.CodeSnapshotUploadRequest;
 import org.yglue.flow.orch.web.dto.snapshot.response.CodeSnapshotUploadResponse;
 
+import java.util.Objects;
+
 @RestController
 @RequestMapping("/api/projects/{projectKey}/code-snapshots")
 public class CodeSnapshotController {
@@ -70,7 +72,7 @@ public class CodeSnapshotController {
         java.util.List<java.lang.Long> jarIds = deps.stream()
                 .filter(d -> java.lang.Boolean.TRUE.equals(d.getSelected()))
                 .map(org.yglue.flow.orch.domain.snapshot.ProjectSnapshotDependency::getJarId)
-                .filter(id -> id != null)
+                .filter(Objects::nonNull)
                 .distinct()
                 .toList();
         result.put("selectedJars", deps.stream()

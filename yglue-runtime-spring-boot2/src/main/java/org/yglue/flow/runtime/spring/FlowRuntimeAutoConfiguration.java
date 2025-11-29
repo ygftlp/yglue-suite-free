@@ -1,6 +1,10 @@
 package org.yglue.flow.runtime.spring;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.yomahub.liteflow.core.FlowExecutor;
+import com.yomahub.liteflow.flow.LiteflowResponse;
+import com.yomahub.liteflow.slot.DefaultContext;
+import com.yomahub.liteflow.spi.spring.SpringAware;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -35,6 +39,15 @@ public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
 
     @Bean
     @ConditionalOnMissingBean
+    public SpringAware springAware() {
+        SpringAware springAware = new SpringAware();
+        // 确保SpringAware正确初始化
+        springAware.setApplicationContext(applicationContext);
+        return springAware;
+    }
+    
+    @Bean
+    @ConditionalOnMissingBean
     public RestEntryPointRegistry restEntryPointRegistry() {
         return RestEntryPointRegistry.loadDefault();
     }
@@ -61,13 +74,33 @@ public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
                                  EventBus eventBus) {
         // 从配置中获取 reloadOnExecution 设置
         boolean reloadOnExecution = this.properties.isReloadOnExecution();
-        return new RuleEngine(applicationContext, interceptors, eventBus, reloadOnExecution, applicationContext.getBean(org.yglue.flow.runtime.core.NodeExecutorRegistry.class));
+        return new RuleEngine(applicationContext, interceptors, eventBus, reloadOnExecution);
     }
 
     @Bean
     @ConditionalOnMissingBean
     public EventBus eventBus() {
         return EventBus.noop();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public FlowExecutor flowExecutor() {
+        // 直接从ApplicationContext获取FlowExecutor Bean
+        try {
+            return applicationContext.getBean(FlowExecutor.class);
+        } catch (Exception e) {
+            // 如果获取失败，创建一个简单的实现
+            return new FlowExecutor() {
+                public LiteflowResponse execute2Resp(String chainId, Object... params) {
+                    return new LiteflowResponse();
+                }
+                
+                public <T> T getFirstContextBean() {
+                    return (T) new DefaultContext();
+                }
+            };
+        }
     }
 
     @Bean

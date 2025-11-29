@@ -120,7 +120,12 @@ public class ValidationException extends RuntimeException {
         body.put(format.getErrorCodeField(), format.getDefaultErrorCode());
         body.put(format.getErrorMessageField(), getMessage());
         
-        // data 字段只在成功场景下包含业务数据，错误响应时不应该包含 data 字段
+        // 添加校验错误详情（如果有的话）
+        if (format.getInputNameField() != null && !format.getInputNameField().isEmpty()) {
+            body.put(format.getInputNameField(), getInputName());
+        }
+        
+        // 注意：data 字段只在成功场景下包含业务数据，错误响应时不包含 data 字段
         // 错误信息通过 errorCode 和 message 字段已经可以表达
         
         return body;

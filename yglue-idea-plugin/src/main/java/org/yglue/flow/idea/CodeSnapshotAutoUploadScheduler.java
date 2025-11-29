@@ -10,6 +10,7 @@ import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.yglue.flow.idea.settings.YgflowSettingsState;
+import org.yglue.flow.idea.snapshot.UploadCodeSnapshotAction;
 
 @Service(Service.Level.PROJECT)
 public final class CodeSnapshotAutoUploadScheduler implements Disposable {
