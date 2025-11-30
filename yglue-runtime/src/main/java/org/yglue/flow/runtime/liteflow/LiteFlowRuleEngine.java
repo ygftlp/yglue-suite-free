@@ -135,8 +135,6 @@ public class LiteFlowRuleEngine {
             Object context = getContextFromResponse(response);
             if (context != null) {
                 contextData = extractDataFromContext(context);
-                // 过滤掉LiteFlow内部对象
-                contextData = filterNonSerializableObjects(contextData);
             }
         } catch (Exception e) {
             log.debug("[LiteFlowRuleEngine] 无法从响应中提取上下文数据", e);
@@ -146,8 +144,6 @@ public class LiteFlowRuleEngine {
         // LiteflowResponse 通常有 getData() 或类似方法获取结果
         try {
             returnValue = getResultFromResponse(response);
-            // 过滤掉LiteFlow内部对象
-            returnValue = filterNonSerializableObjects(returnValue);
         } catch (Exception e) {
             log.debug("[LiteFlowRuleEngine] 无法从响应中提取结果", e);
         }
@@ -157,56 +153,6 @@ public class LiteFlowRuleEngine {
                 contextData != null ? contextData : Map.of(),
                 returnValue
         );
-    }
-    
-    /**
-     * 过滤掉无法序列化的对象
-     * 避免Jackson序列化LiteFlow内部对象时出现异常
-     */
-    private Object filterNonSerializableObjects(Object obj) {
-        if (obj == null) {
-            return null;
-        }
-        
-        // 检查是否是LiteFlow内部对象
-        String className = obj.getClass().getName();
-        if (className.startsWith("com.yomahub.liteflow.")) {
-            // 如果是LiteFlow内部对象，返回null或简单的字符串表示
-            return "[LiteFlow Object: " + className + "]";
-        }
-        
-        // 如果是Map类型，递归过滤其中的值
-        if (obj instanceof java.util.Map) {
-            java.util.Map<?, ?> originalMap = (java.util.Map<?, ?>) obj;
-            java.util.Map<Object, Object> filteredMap = new java.util.LinkedHashMap<>();
-            for (java.util.Map.Entry<?, ?> entry : originalMap.entrySet()) {
-                filteredMap.put(entry.getKey(), filterNonSerializableObjects(entry.getValue()));
-            }
-            return filteredMap;
-        }
-        
-        // 如果是Collection类型，递归过滤其中的元素
-        if (obj instanceof java.util.Collection) {
-            java.util.Collection<?> originalCollection = (java.util.Collection<?>) obj;
-            java.util.Collection<Object> filteredCollection = new java.util.ArrayList<>();
-            for (Object item : originalCollection) {
-                filteredCollection.add(filterNonSerializableObjects(item));
-            }
-            return filteredCollection;
-        }
-        
-        // 如果是数组类型，递归过滤其中的元素
-        if (obj.getClass().isArray()) {
-            Object[] originalArray = (Object[]) obj;
-            Object[] filteredArray = new Object[originalArray.length];
-            for (int i = 0; i < originalArray.length; i++) {
-                filteredArray[i] = filterNonSerializableObjects(originalArray[i]);
-            }
-            return filteredArray;
-        }
-        
-        // 其他情况直接返回原对象
-        return obj;
     }
     
     /**
@@ -229,26 +175,54 @@ public class LiteFlowRuleEngine {
     @SuppressWarnings("unchecked")
     private Map<String, Object> extractDataFromContext(Object context) {
         if (context == null) {
-            return null;
+            return new java.util.HashMap<>();
         }
         
         try {
             // 如果上下文本身就是 Map
             if (context instanceof Map) {
-                return (Map<String, Object>) context;
+                // 创建一个新的Map，只包含可序列化的数据
+                Map<String, Object> result = new java.util.HashMap<>();
+                Map<?, ?> originalMap = (Map<?, ?>) context;
+                for (Map.Entry<?, ?> entry : originalMap.entrySet()) {
+                    // 过滤掉LiteFlow内部对象
+                    if (entry.getKey() instanceof String) {
+                        String key = (String) entry.getKey();
+                        Object value = entry.getValue();
+                        // 检查value是否是LiteFlow内部对象
+                        if (value != null && !value.getClass().getName().startsWith("com.yomahub.liteflow.")) {
+                            result.put(key, value);
+                        }
+                    }
+                }
+                return result;
             }
             
             // 尝试调用 getData() 方法
             java.lang.reflect.Method getDataMethod = context.getClass().getMethod("getData");
             Object data = getDataMethod.invoke(context);
             if (data instanceof Map) {
-                return (Map<String, Object>) data;
+                // 创建一个新的Map，只包含可序列化的数据
+                Map<String, Object> result = new java.util.HashMap<>();
+                Map<?, ?> originalMap = (Map<?, ?>) data;
+                for (Map.Entry<?, ?> entry : originalMap.entrySet()) {
+                    // 过滤掉LiteFlow内部对象
+                    if (entry.getKey() instanceof String) {
+                        String key = (String) entry.getKey();
+                        Object value = entry.getValue();
+                        // 检查value是否是LiteFlow内部对象
+                        if (value != null && !value.getClass().getName().startsWith("com.yomahub.liteflow.")) {
+                            result.put(key, value);
+                        }
+                    }
+                }
+                return result;
             }
         } catch (Exception e) {
             log.debug("[LiteFlowRuleEngine] 从上下文提取数据失败: {}", e.getMessage());
         }
         
-        return null;
+        return new java.util.HashMap<>();
     }
     
     /**
