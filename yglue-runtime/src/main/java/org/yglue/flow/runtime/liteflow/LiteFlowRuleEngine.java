@@ -135,6 +135,8 @@ public class LiteFlowRuleEngine {
             Object context = getContextFromResponse(response);
             if (context != null) {
                 contextData = extractDataFromContext(context);
+                // 过滤掉LiteFlow内部对象
+                contextData = (Map<String, Object>) filterNonSerializableObjects(contextData);
             }
         } catch (Exception e) {
             log.debug("[LiteFlowRuleEngine] 无法从响应中提取上下文数据", e);
@@ -144,6 +146,8 @@ public class LiteFlowRuleEngine {
         // LiteflowResponse 通常有 getData() 或类似方法获取结果
         try {
             returnValue = getResultFromResponse(response);
+            // 过滤掉LiteFlow内部对象
+            returnValue = filterNonSerializableObjects(returnValue);
         } catch (Exception e) {
             log.debug("[LiteFlowRuleEngine] 无法从响应中提取结果", e);
         }
@@ -237,7 +241,9 @@ public class LiteFlowRuleEngine {
             if (context != null) {
                 // 尝试从上下文中提取结果
                 // 这里假设上下文对象有 getData() 方法或类似的方法
-                return extractResultFromContext(context);
+                Object result = extractResultFromContext(context);
+                // 过滤掉LiteFlow内部对象
+                return filterNonSerializableObjects(result);
             }
             return null;
         } catch (Exception e) {
@@ -258,23 +264,88 @@ public class LiteFlowRuleEngine {
             // 尝试调用 getData() 方法获取结果
             java.lang.reflect.Method getDataMethod = context.getClass().getMethod("getData");
             Object data = getDataMethod.invoke(context);
+            // 检查data是否是LiteFlow内部对象
+            if (data != null && data.getClass().getName().startsWith("com.yomahub.liteflow.")) {
+                return null;
+            }
             return data;
         } catch (NoSuchMethodException e) {
             // 如果没有 getData() 方法，尝试其他常见方法
             try {
                 java.lang.reflect.Method getResultMethod = context.getClass().getMethod("getResult");
-                return getResultMethod.invoke(context);
+                Object result = getResultMethod.invoke(context);
+                // 检查result是否是LiteFlow内部对象
+                if (result != null && result.getClass().getName().startsWith("com.yomahub.liteflow.")) {
+                    return null;
+                }
+                return result;
             } catch (Exception ex) {
-                // 如果都没有，返回上下文对象本身
+                // 如果都没有，检查context本身是否是LiteFlow内部对象
+                if (context.getClass().getName().startsWith("com.yomahub.liteflow.")) {
+                    return null;
+                }
                 return context;
             }
         } catch (Exception e) {
             log.debug("[LiteFlowRuleEngine] 从上下文提取结果失败: {}", e.getMessage());
-            // 如果提取失败，返回上下文对象本身
+            // 如果提取失败，检查context本身是否是LiteFlow内部对象
+            if (context.getClass().getName().startsWith("com.yomahub.liteflow.")) {
+                return null;
+            }
             return context;
         }
     }
-
+    
+    /**
+     * 过滤掉无法序列化的对象
+     * 避免Jackson序列化LiteFlow内部对象时出现异常
+     */
+    private Object filterNonSerializableObjects(Object obj) {
+        if (obj == null) {
+            return null;
+        }
+        
+        // 检查是否是LiteFlow内部对象
+        String className = obj.getClass().getName();
+        if (className.startsWith("com.yomahub.liteflow.")) {
+            // 如果是LiteFlow内部对象，返回null或简单的字符串表示
+            return "[LiteFlow Object: " + className + "]";
+        }
+        
+        // 如果是Map类型，递归过滤其中的值
+        if (obj instanceof java.util.Map) {
+            java.util.Map<?, ?> originalMap = (java.util.Map<?, ?>) obj;
+            java.util.Map<Object, Object> filteredMap = new java.util.LinkedHashMap<>();
+            for (java.util.Map.Entry<?, ?> entry : originalMap.entrySet()) {
+                filteredMap.put(entry.getKey(), filterNonSerializableObjects(entry.getValue()));
+            }
+            return filteredMap;
+        }
+        
+        // 如果是Collection类型，递归过滤其中的元素
+        if (obj instanceof java.util.Collection) {
+            java.util.Collection<?> originalCollection = (java.util.Collection<?>) obj;
+            java.util.Collection<Object> filteredCollection = new java.util.ArrayList<>();
+            for (Object item : originalCollection) {
+                filteredCollection.add(filterNonSerializableObjects(item));
+            }
+            return filteredCollection;
+        }
+        
+        // 如果是数组类型，递归过滤其中的元素
+        if (obj.getClass().isArray()) {
+            Object[] originalArray = (Object[]) obj;
+            Object[] filteredArray = new Object[originalArray.length];
+            for (int i = 0; i < originalArray.length; i++) {
+                filteredArray[i] = filterNonSerializableObjects(originalArray[i]);
+            }
+            return filteredArray;
+        }
+        
+        // 其他情况直接返回原对象
+        return obj;
+    }
+    
     /**
      * 清除指定规则的缓存
      * 用于手动刷新缓存
