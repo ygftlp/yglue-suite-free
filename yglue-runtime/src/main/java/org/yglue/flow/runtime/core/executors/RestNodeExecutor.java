@@ -2,11 +2,11 @@ package org.yglue.flow.runtime.core.executors;
 
 import org.springframework.context.ApplicationContext;
 import org.yglue.flow.runtime.core.NodeExecutionContext;
-import org.yglue.flow.runtime.core.NodeExecutor;
+import org.yglue.flow.runtime.core.FlowExecutor;
 import org.yglue.flow.runtime.rest.RestInvocationContext;
 import org.yglue.flow.runtime.rest.RestInvocationRegistry;
 
-public class RestNodeExecutor implements NodeExecutor {
+public class RestNodeExecutor implements FlowExecutor {
 
     private final RestInvocationRegistry registry;
     private final ApplicationContext applicationContext;

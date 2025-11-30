@@ -2,7 +2,7 @@ package org.yglue.flow.runtime.core.executors;
 
 import org.springframework.context.ApplicationContext;
 import org.yglue.flow.runtime.core.NodeExecutionContext;
-import org.yglue.flow.runtime.core.NodeExecutor;
+import org.yglue.flow.runtime.core.FlowExecutor;
 import org.yglue.flow.runtime.core.util.ExpressionEvaluator;
 
 import java.lang.reflect.Method;
@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-public class CallNodeExecutor implements NodeExecutor {
+public class CallNodeExecutor implements FlowExecutor {
 
     private final ApplicationContext applicationContext;
 

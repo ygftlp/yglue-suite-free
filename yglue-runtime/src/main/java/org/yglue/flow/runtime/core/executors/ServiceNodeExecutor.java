@@ -6,21 +6,17 @@ import groovy.lang.GroovyShell;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.aop.framework.AopProxyUtils;
-import org.springframework.beans.factory.BeanFactory;
 import org.springframework.context.ApplicationContext;
 import org.yglue.flow.runtime.core.NodeExecutionContext;
-import org.yglue.flow.runtime.core.NodeExecutor;
+import org.yglue.flow.runtime.core.FlowExecutor;
 import org.yglue.flow.runtime.core.expression.ExpressionEngines;
 import org.yglue.flow.runtime.core.validator.*;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * 服务节点执行器
@@ -61,7 +57,7 @@ import java.util.Set;
  * @author yglue
  * @since 1.0
  */
-public class ServiceNodeExecutor implements NodeExecutor {
+public class ServiceNodeExecutor implements FlowExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(ServiceNodeExecutor.class);
 

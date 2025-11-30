@@ -232,10 +232,12 @@ public class FlowLoader {
                     config = merged;
                 }
             } else {
-                // 旧格式：直接使用节点本身作为 config
+                // 对于没有"data"字段的节点（如sample_math_flow.json中的格式），直接使用节点本身作为 config
                 config = JsonUtils.toMap(node);
                 config.remove("type");
                 config.remove("children");
+                config.remove("id");
+                config.remove("position");
             }
             
             if ("if".equalsIgnoreCase(type)) {

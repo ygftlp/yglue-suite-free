@@ -1,10 +1,12 @@
 package org.yglue.flow.runtime.spring;
 
+import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
  * Flow 运行时配置属性
  */
+@Data
 @ConfigurationProperties(prefix = "yglue.runtime.flow")
 public class FlowRuntimeProperties {
 
@@ -22,20 +24,7 @@ public class FlowRuntimeProperties {
      */
     private boolean reloadOnExecution = false;
 
-    public boolean isEnabled() {
-        return enabled;
-    }
+    private String ruleSource = "ygflow/rules/*.json";
 
-    public void setEnabled(boolean enabled) {
-        this.enabled = enabled;
-    }
-
-    public boolean isReloadOnExecution() {
-        return reloadOnExecution;
-    }
-
-    public void setReloadOnExecution(boolean reloadOnExecution) {
-        this.reloadOnExecution = reloadOnExecution;
-    }
 
 }

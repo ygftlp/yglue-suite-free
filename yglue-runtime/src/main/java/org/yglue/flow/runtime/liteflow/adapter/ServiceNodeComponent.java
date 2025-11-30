@@ -7,7 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.yglue.flow.runtime.FlowContext;
 import org.yglue.flow.runtime.core.NodeExecutionContext;
-import org.yglue.flow.runtime.core.NodeExecutor;
+import org.yglue.flow.runtime.core.FlowExecutor;
 import org.yglue.flow.runtime.core.NodeExecutorRegistry;
 import org.yglue.flow.runtime.core.definition.FlowDefinition;
 import org.yglue.flow.runtime.core.definition.NodeDefinition;
@@ -73,71 +73,124 @@ public class ServiceNodeComponent extends NodeComponent {
 
     @Override
     public void process() throws Exception {
-        // 获取组件 ID
-        // 方式1：从 tag 获取（如果使用了 tag）
-        String componentId = this.getTag();
+        // 获取实际的节点ID（即组件ID）
+        // 在LiteFlow中，当使用固定的组件ID时，getNodeId()返回的是固定ID
+        // 我们需要通过其他方式获取实际的节点ID
+        String componentId = getActualNodeId();
+        
+        // 确保 componentId 不为空
         if (componentId == null || componentId.isEmpty()) {
-            // 方式2：从 nodeId 获取（如果直接使用组件 ID）
-            componentId = this.getNodeId();
+            log.error("[ServiceNodeComponent] 组件ID为空，无法执行组件");
+            throw new IllegalArgumentException("Component ID is null or empty");
         }
-        log.debug("[ServiceNodeComponent] 开始执行组件: componentId={}, nodeId={}, tag={}", 
-                componentId, this.getNodeId(), this.getTag());
-
+        
+        log.debug("[ServiceNodeComponent] 开始执行组件: componentId={}", componentId);
+        
+        // 检查executorRegistry是否已注入
         if (executorRegistry == null) {
             log.error("[ServiceNodeComponent] NodeExecutorRegistry 未注入，无法执行组件: componentId={}", componentId);
             throw new IllegalStateException("NodeExecutorRegistry is not available");
         }
-
+        
         // 从注册表中获取组件信息
         ComponentInfo info = componentRegistry.get(componentId);
         if (info == null) {
             log.error("[ServiceNodeComponent] 组件未注册: componentId={}", componentId);
+            // 提供更详细的错误信息
+            log.error("[ServiceNodeComponent] 当前注册的组件: {}", componentRegistry.keySet());
             throw new IllegalArgumentException("Component not registered: " + componentId);
         }
-
+        
         NodeDefinition nodeDefinition = info.nodeDefinition;
         FlowDefinition flowDefinition = info.flowDefinition;
-
+        
         log.debug("[ServiceNodeComponent] 找到组件信息: componentId={}, nodeType={}, nodeId={}", 
                 componentId, nodeDefinition.getType(), nodeDefinition.getId());
-
+        
         // 从 LiteFlow 的 Context 中获取或创建 FlowContext
         FlowContext flowContext = getFlowContext();
-
+        
         // 获取对应的执行器
-        NodeExecutor executor = executorRegistry.get(nodeDefinition.getType());
+        org.yglue.flow.runtime.core.FlowExecutor executor = executorRegistry.get(nodeDefinition.getType());
         log.debug("[ServiceNodeComponent] 获取执行器: componentId={}, executorType={}", 
                 componentId, executor != null ? executor.getClass().getName() : "null");
-
+        
+        // 检查执行器是否存在
+        if (executor == null) {
+            log.error("[ServiceNodeComponent] 未找到对应的执行器: componentId={}, nodeType={}", 
+                    componentId, nodeDefinition.getType());
+            throw new IllegalStateException("Executor not found for node type: " + nodeDefinition.getType());
+        }
+        
         // 创建 NodeExecutionContext
         NodeExecutionContext executionContext = new NodeExecutionContext(
                 flowDefinition,
                 nodeDefinition,
                 flowContext
         );
-
+        
         // 执行节点
         log.info("[ServiceNodeComponent] 执行节点: componentId={}, nodeType={}, nodeId={}", 
                 componentId, nodeDefinition.getType(), nodeDefinition.getId());
         Object result = executor.execute(executionContext);
-
+        
         // 将结果保存到 LiteFlow Context
         if (result != null) {
             saveResultToContext(result, componentId);
             log.debug("[ServiceNodeComponent] 保存结果到 LiteFlow Context: componentId={}, resultType={}", 
                     componentId, result.getClass().getName());
         }
-
+        
         log.info("[ServiceNodeComponent] 组件执行完成: componentId={}, nodeType={}, nodeId={}", 
                 componentId, nodeDefinition.getType(), nodeDefinition.getId());
     }
-
+    
+    /**
+     * 获取实际的节点ID
+     * 由于我们使用固定的serviceNode组件，需要通过其他方式获取实际的节点ID
+     */
+    private String getActualNodeId() {
+        // 首先尝试使用getNodeId()获取节点ID
+        // 在LiteFlow中，当为每个节点独立注册时，getNodeId()应该返回实际的节点ID
+        try {
+            String nodeId = this.getNodeId();
+            if (nodeId != null && !nodeId.isEmpty() && !nodeId.equals("serviceNode")) {
+                return nodeId;
+            }
+        } catch (Exception e) {
+            log.debug("[ServiceNodeComponent] 无法通过getNodeId获取节点ID: {}", e.getMessage());
+        }
+        
+        // 如果getNodeId()无法获取到实际的节点ID，尝试从LiteFlow的上下文中获取节点ID
+        try {
+            // 获取当前节点的标签(Tag)
+            String tag = this.getTag();
+            if (tag != null && !tag.isEmpty()) {
+                return tag;
+            }
+        } catch (Exception e) {
+            log.debug("[ServiceNodeComponent] 无法通过getTag获取节点ID: {}", e.getMessage());
+        }
+        
+        // 如果以上方法都无法获取，返回默认值
+        return "serviceNode";
+    }
+    
     /**
      * 从 LiteFlow Context 中获取或创建 FlowContext
      */
     private FlowContext getFlowContext() {
         // 尝试从 LiteFlow Context 中获取 FlowContext
         Object contextObj = getContextBeanSafely();
+        
+        // 检查contextObj是否是LiteFlow内部对象
+        if (contextObj != null) {
+            String contextClassName = contextObj.getClass().getName();
+            if (contextClassName.startsWith("com.yomahub.liteflow.")) {
+                log.debug("[ServiceNodeComponent] Context是LiteFlow内部对象，创建新的FlowContext: className={}", contextClassName);
+                contextObj = null;
+            }
+        }
 
         if (contextObj instanceof FlowContext) {
             return (FlowContext) contextObj;
@@ -207,6 +260,15 @@ public class ServiceNodeComponent extends NodeComponent {
      */
     @SuppressWarnings("unchecked")
     private Map<String, Object> extractDataFromContext(Object contextObj) {
+        // 检查contextObj是否是LiteFlow内部对象
+        if (contextObj != null) {
+            String contextClassName = contextObj.getClass().getName();
+            if (contextClassName.startsWith("com.yomahub.liteflow.")) {
+                log.debug("[ServiceNodeComponent] Context是LiteFlow内部对象，不提取数据: className={}", contextClassName);
+                return null;
+            }
+        }
+        
         try {
             if (contextObj instanceof Map) {
                 return (Map<String, Object>) contextObj;
@@ -230,6 +292,27 @@ public class ServiceNodeComponent extends NodeComponent {
      * 在 LiteFlow 2.12.1 中，使用 Context 的 setData 方法来存储数据
      */
     private void saveResultToContext(Object result, String componentId) {
+        // 如果结果为空，不保存
+        if (result == null) {
+            log.debug("[ServiceNodeComponent] 结果为空，不保存到 Context: componentId={}", componentId);
+            return;
+        }
+        
+        // 检查结果是否是可以序列化的类型
+        // 避免保存LiteFlow内部对象，如DefaultContext等
+        if (result instanceof com.yomahub.liteflow.slot.DefaultContext) {
+            log.debug("[ServiceNodeComponent] 结果是LiteFlow内部对象，不保存到 Context: componentId={}", componentId);
+            return;
+        }
+        
+        // 检查结果是否是其他LiteFlow内部类
+        String resultClassName = result.getClass().getName();
+        if (resultClassName.startsWith("com.yomahub.liteflow.")) {
+            log.debug("[ServiceNodeComponent] 结果是LiteFlow内部类，不保存到 Context: componentId={}, className={}", 
+                    componentId, resultClassName);
+            return;
+        }
+        
         try {
             // 获取 LiteFlow Context
             Object contextObj = getContextBeanSafely();
@@ -237,7 +320,7 @@ public class ServiceNodeComponent extends NodeComponent {
                 log.debug("[ServiceNodeComponent] Context 为空，无法保存结果: componentId={}", componentId);
                 return;
             }
-
+            
             // 尝试调用 setData 方法保存结果
             // LiteFlow Context 通常有 setData(String key, Object value) 方法
             try {

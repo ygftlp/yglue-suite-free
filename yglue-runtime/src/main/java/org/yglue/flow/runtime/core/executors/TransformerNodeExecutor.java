@@ -4,7 +4,7 @@ import groovy.lang.Binding;
 import groovy.lang.GroovyShell;
 import org.yglue.flow.runtime.FlowContext;
 import org.yglue.flow.runtime.core.NodeExecutionContext;
-import org.yglue.flow.runtime.core.NodeExecutor;
+import org.yglue.flow.runtime.core.FlowExecutor;
 import org.yglue.flow.runtime.core.util.ExpressionEvaluator;
 import org.yglue.flow.runtime.core.util.ParamResolver;
 
@@ -17,7 +17,7 @@ import java.util.Map;
  * 转换器节点执行器
  * 支持字段映射和 Groovy 脚本执行，用于将流程输出转换为目标接口的请求/响应结构
  */
-public class TransformerNodeExecutor implements NodeExecutor {
+public class TransformerNodeExecutor implements FlowExecutor {
 
     @Override
     public Object execute(NodeExecutionContext context) throws Exception {

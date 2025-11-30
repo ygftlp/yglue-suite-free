@@ -3,7 +3,7 @@ package org.yglue.flow.runtime.core.executors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.yglue.flow.runtime.core.NodeExecutionContext;
-import org.yglue.flow.runtime.core.NodeExecutor;
+import org.yglue.flow.runtime.core.FlowExecutor;
 import org.yglue.flow.runtime.core.definition.FlowDefinition;
 import org.yglue.flow.runtime.core.definition.NodeDefinition;
 import org.yglue.flow.runtime.core.util.ExpressionEvaluator;
@@ -39,7 +39,7 @@ import java.util.Map;
  *   }
  * }
  */
-public class BranchNodeExecutor implements NodeExecutor {
+public class BranchNodeExecutor implements FlowExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(BranchNodeExecutor.class);
 

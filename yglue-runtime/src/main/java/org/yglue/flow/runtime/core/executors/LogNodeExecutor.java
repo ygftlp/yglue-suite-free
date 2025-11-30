@@ -3,10 +3,10 @@ package org.yglue.flow.runtime.core.executors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.yglue.flow.runtime.core.NodeExecutionContext;
-import org.yglue.flow.runtime.core.NodeExecutor;
+import org.yglue.flow.runtime.core.FlowExecutor;
 import org.yglue.flow.runtime.core.util.ExpressionEvaluator;
 
-public class LogNodeExecutor implements NodeExecutor {
+public class LogNodeExecutor implements FlowExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(LogNodeExecutor.class);
 

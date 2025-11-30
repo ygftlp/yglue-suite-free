@@ -1,14 +1,14 @@
 package org.yglue.flow.runtime.core.executors;
 
 import org.yglue.flow.runtime.core.NodeExecutionContext;
-import org.yglue.flow.runtime.core.NodeExecutor;
+import org.yglue.flow.runtime.core.FlowExecutor;
 import org.yglue.flow.runtime.core.definition.NodeDefinition;
 import org.yglue.flow.runtime.core.util.ExpressionEvaluator;
 
 import java.util.List;
 import java.util.Map;
 
-public class IfNodeExecutor implements NodeExecutor {
+public class IfNodeExecutor implements FlowExecutor {
     @Override
     public Object execute(NodeExecutionContext context) {
         Object condition = context.getNode().getConfig().get("condition");

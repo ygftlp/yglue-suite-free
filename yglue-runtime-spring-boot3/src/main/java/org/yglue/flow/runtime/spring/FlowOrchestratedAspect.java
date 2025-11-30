@@ -423,10 +423,14 @@ public class FlowOrchestratedAspect {
             
             // 如果有 detailsField（通常是 "data"），将返回值放入该字段
             if (format.getDetailsField() != null && !format.getDetailsField().isBlank()) {
-                responseBody.put(format.getDetailsField(), returnValue);
+                // 过滤掉无法序列化的对象
+                Object filteredValue = filterNonSerializableObjects(returnValue);
+                responseBody.put(format.getDetailsField(), filteredValue);
             } else {
                 // 如果没有 detailsField，将返回值直接放入 data 字段
-                responseBody.put("data", returnValue);
+                // 过滤掉无法序列化的对象
+                Object filteredValue = filterNonSerializableObjects(returnValue);
+                responseBody.put("data", filteredValue);
             }
             
             objectMapper.writeValue(response.getWriter(), responseBody);
@@ -445,9 +449,11 @@ public class FlowOrchestratedAspect {
         }
         
         // 复杂类型（Map、List、自定义对象等），序列化为 JSON
+        // 过滤掉无法序列化的对象
+        Object filteredValue = filterNonSerializableObjects(returnValue);
         response.setStatus(HttpServletResponse.SC_OK);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        writeResponseBody(response, returnValue);
+        writeResponseBody(response, filteredValue);
     }
     
     /**
@@ -590,16 +596,78 @@ public class FlowOrchestratedAspect {
             return;
         }
         
+        // 过滤掉无法序列化的对象
+        Object filteredBody = filterNonSerializableObjects(body);
+        
         // 如果是简单类型，直接写回文本
-        if (body instanceof String
-                || body instanceof Number
-                || body instanceof Boolean) {
-            response.getWriter().write(String.valueOf(body));
+        if (filteredBody instanceof String
+                || filteredBody instanceof Number
+                || filteredBody instanceof Boolean) {
+            response.getWriter().write(String.valueOf(filteredBody));
             return;
         }
         
         // 复杂类型，序列化为 JSON
-        objectMapper.writeValue(response.getWriter(), body);
+        objectMapper.writeValue(response.getWriter(), filteredBody);
+    }
+
+    /**
+     * 过滤掉无法序列化的对象
+     * 避免Jackson序列化LiteFlow内部对象时出现异常
+     */
+    private Object filterNonSerializableObjects(Object obj) {
+        if (obj == null) {
+            return null;
+        }
+        
+        // 检查是否是LiteFlow内部对象
+        String className = obj.getClass().getName();
+        if (className.startsWith("com.yomahub.liteflow.")) {
+            // 如果是LiteFlow内部对象，返回null或简单的字符串表示
+            return "[LiteFlow Object: " + className + "]";
+        }
+        
+        // 如果是Map类型，递归过滤其中的值
+        if (obj instanceof java.util.Map) {
+            java.util.Map<?, ?> originalMap = (java.util.Map<?, ?>) obj;
+            java.util.Map<Object, Object> filteredMap = new java.util.LinkedHashMap<>();
+            for (java.util.Map.Entry<?, ?> entry : originalMap.entrySet()) {
+                filteredMap.put(entry.getKey(), filterNonSerializableObjects(entry.getValue()));
+            }
+            return filteredMap;
+        }
+        
+        // 如果是Collection类型，递归过滤其中的元素
+        if (obj instanceof java.util.Collection) {
+            java.util.Collection<?> originalCollection = (java.util.Collection<?>) obj;
+            java.util.Collection<Object> filteredCollection = new java.util.ArrayList<>();
+            for (Object item : originalCollection) {
+                filteredCollection.add(filterNonSerializableObjects(item));
+            }
+            return filteredCollection;
+        }
+        
+        // 如果是数组类型，递归过滤其中的元素
+        if (obj.getClass().isArray()) {
+            Object[] originalArray = (Object[]) obj;
+            Object[] filteredArray = new Object[originalArray.length];
+            for (int i = 0; i < originalArray.length; i++) {
+                filteredArray[i] = filterNonSerializableObjects(originalArray[i]);
+            }
+            return filteredArray;
+        }
+        
+        // 如果是自定义对象，检查是否可以序列化
+        if (obj.getClass().getPackage() != null) {
+            String packageName = obj.getClass().getPackage().getName();
+            // 如果是Java内置类型或常见的可序列化类型，直接返回
+            if (packageName.startsWith("java.") || packageName.startsWith("javax.")) {
+                return obj;
+            }
+        }
+        
+        // 其他情况直接返回原对象
+        return obj;
     }
 }
 

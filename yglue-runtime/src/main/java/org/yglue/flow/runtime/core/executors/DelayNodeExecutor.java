@@ -1,9 +1,9 @@
 package org.yglue.flow.runtime.core.executors;
 
 import org.yglue.flow.runtime.core.NodeExecutionContext;
-import org.yglue.flow.runtime.core.NodeExecutor;
+import org.yglue.flow.runtime.core.FlowExecutor;
 
-public class DelayNodeExecutor implements NodeExecutor {
+public class DelayNodeExecutor implements FlowExecutor {
     @Override
     public Object execute(NodeExecutionContext context) throws InterruptedException {
         Object millis = context.getNode().getConfig().getOrDefault("millis", 0);

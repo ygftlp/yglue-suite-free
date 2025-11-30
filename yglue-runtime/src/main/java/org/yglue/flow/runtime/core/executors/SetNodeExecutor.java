@@ -1,12 +1,12 @@
 package org.yglue.flow.runtime.core.executors;
 
 import org.yglue.flow.runtime.core.NodeExecutionContext;
-import org.yglue.flow.runtime.core.NodeExecutor;
+import org.yglue.flow.runtime.core.FlowExecutor;
 import org.yglue.flow.runtime.core.util.ExpressionEvaluator;
 
 import java.util.Map;
 
-public class SetNodeExecutor implements NodeExecutor {
+public class SetNodeExecutor implements FlowExecutor {
     @Override
     public Object execute(NodeExecutionContext context) {
         Map<String, Object> config = context.getNode().getConfig();
