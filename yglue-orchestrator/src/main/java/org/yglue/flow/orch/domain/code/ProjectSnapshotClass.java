@@ -1,4 +1,4 @@
-package org.yglue.flow.orch.domain.snapshot;
+package org.yglue.flow.orch.domain.code;
 
 public class ProjectSnapshotClass {
     private Long id;

@@ -41,7 +41,7 @@ public final class CodeSnapshotAutoUploadScheduler implements Disposable {
         if (success) {
             lastUploadEpochSeconds = now;
         } else {
-            LOG.debug("Auto code snapshot upload skipped for project {}", project.getName());
+            LOG.debug("Auto code code upload skipped for project {}", project.getName());
         }
     }
 

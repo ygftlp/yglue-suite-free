@@ -1,4 +1,4 @@
-package org.yglue.flow.orch.domain.snapshot;
+package org.yglue.flow.orch.domain.code;
 
 import java.time.Instant;
 

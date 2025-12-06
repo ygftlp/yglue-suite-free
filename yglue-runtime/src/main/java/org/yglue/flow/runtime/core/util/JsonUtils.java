@@ -1,6 +1,8 @@
 package org.yglue.flow.runtime.core.util;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -8,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 public final class JsonUtils {
-
+    private static final ObjectMapper objectMapper = new ObjectMapper();
     private JsonUtils() {
     }
 
@@ -52,5 +54,35 @@ public final class JsonUtils {
             return toMap(node);
         }
         return node.asText();
+    }
+
+    /**
+     * 将对象转换为JSON字符串
+     *
+     * @param obj 待转换的对象
+     * @return JSON字符串
+     */
+    public static String toJsonString(Object obj) {
+        try {
+            return objectMapper.writeValueAsString(obj);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * 将JSON字符串转换为指定类型的对象
+     *
+     * @param json   JSON字符串
+     * @param clazz  目标类型Class
+     * @param <T>    目标类型
+     * @return 转换后的对象
+     */
+    public static <T> T toObject(String json, Class<T> clazz){
+       try {
+           return objectMapper.readValue(json, clazz);
+       }catch (Exception e){
+           return null;
+       }
     }
 }

@@ -123,8 +123,34 @@ public class LiteFlowRuleEngine {
 
     /**
      * 转换 LiteFlow 响应为 FlowExecutionResult
+     * 如果响应中包含异常，则抛出异常让上层捕获
      */
     private FlowExecutionResult convertResponse(String ruleId, LiteflowResponse response) {
+        // 首先检查 LiteFlow 执行是否成功
+        if (!response.isSuccess()) {
+            // 获取异常信息
+            Throwable cause = response.getCause();
+            String message = response.getMessage();
+            
+            log.error("[LiteFlowRuleEngine] 流程执行失败: ruleId={}, message={}", ruleId, message, cause);
+            
+            // 抛出异常，让 FlowOrchestratedAspect 捕获并处理
+            if (cause != null) {
+                // ValidationException 需要直接抛出，因为 FlowOrchestratedAspect 中有专门的处理逻辑
+                if (cause instanceof org.yglue.flow.runtime.core.validator.ValidationException) {
+                    throw (org.yglue.flow.runtime.core.validator.ValidationException) cause;
+                }
+                // RuntimeException 直接抛出
+                if (cause instanceof RuntimeException) {
+                    throw (RuntimeException) cause;
+                }
+                // 其他异常包装后抛出
+                throw new RuntimeException("流程执行失败: " + message, cause);
+            } else {
+                throw new RuntimeException("流程执行失败: " + (message != null ? message : "未知错误"));
+            }
+        }
+        
         Map<String, Object> contextData = new java.util.HashMap<>();
         Object returnValue = null;
         

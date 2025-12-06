@@ -5,30 +5,28 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
-import org.yglue.flow.orch.service.CodeSnapshotService;
-import org.yglue.flow.orch.service.CodeSnapshotService.SaveResult;
+import org.yglue.flow.orch.service.ProjectCodeService;
+import org.yglue.flow.orch.service.ProjectCodeService.SaveResult;
 import org.yglue.flow.orch.web.dto.snapshot.request.CodeSnapshotUploadRequest;
 import org.yglue.flow.orch.web.dto.snapshot.response.CodeSnapshotUploadResponse;
 
-import java.util.Objects;
-
 @RestController
 @RequestMapping("/api/projects/{projectKey}/code-snapshots")
-public class CodeSnapshotController {
+public class ProjectCodeController {
 
-    private final CodeSnapshotService codeSnapshotService;
-    private final org.yglue.flow.orch.persistence.mapper.CodeSnapshotMapper codeSnapshotMapper;
+    private final ProjectCodeService projectCodeService;
+    private final org.yglue.flow.orch.persistence.mapper.ProjectCodeMapper projectCodeMapper;
     private final org.yglue.flow.orch.persistence.mapper.JarLibraryMapper jarLibraryMapper;
     private final org.yglue.flow.orch.service.ProjectService projectService;
     private final ObjectMapper objectMapper;
 
-    public CodeSnapshotController(CodeSnapshotService codeSnapshotService,
-                                   org.yglue.flow.orch.persistence.mapper.CodeSnapshotMapper codeSnapshotMapper,
-                                   org.yglue.flow.orch.persistence.mapper.JarLibraryMapper jarLibraryMapper,
-                                   org.yglue.flow.orch.service.ProjectService projectService,
-                                   ObjectMapper objectMapper) {
-        this.codeSnapshotService = codeSnapshotService;
-        this.codeSnapshotMapper = codeSnapshotMapper;
+    public ProjectCodeController(ProjectCodeService projectCodeService,
+                                 org.yglue.flow.orch.persistence.mapper.ProjectCodeMapper projectCodeMapper,
+                                 org.yglue.flow.orch.persistence.mapper.JarLibraryMapper jarLibraryMapper,
+                                 org.yglue.flow.orch.service.ProjectService projectService,
+                                 ObjectMapper objectMapper) {
+        this.projectCodeService = projectCodeService;
+        this.projectCodeMapper = projectCodeMapper;
         this.jarLibraryMapper = jarLibraryMapper;
         this.projectService = projectService;
         this.objectMapper = objectMapper;
@@ -37,7 +35,7 @@ public class CodeSnapshotController {
     @PostMapping
     public CodeSnapshotUploadResponse upload(@PathVariable("projectKey") String projectKey,
                                              @RequestBody @Valid CodeSnapshotUploadRequest request) {
-        SaveResult result = codeSnapshotService.save(projectKey, projectKey, request);
+        SaveResult result = projectCodeService.save(projectKey, projectKey, request);
         org.yglue.flow.orch.domain.Project project = projectService.requireProject(projectKey);
         CodeSnapshotUploadResponse response = new CodeSnapshotUploadResponse();
         response.setSnapshotId(null);
@@ -58,29 +56,30 @@ public class CodeSnapshotController {
         result.put("snapshotId", null);  // 不再使用 snapshotId
 
         // 1. 查询依赖的 jar 包
-        java.util.List<org.yglue.flow.orch.domain.snapshot.ProjectSnapshotDependency> deps =
-                codeSnapshotMapper.listValidDependenciesByProject(project.getId());
-        java.util.List<java.lang.Long> jarIds = deps.stream()
+        java.util.List<org.yglue.flow.orch.domain.code.ProjectJarDependency> deps =
+                projectCodeMapper.listValidDependenciesByProject(project.getId());
+        java.util.List<String> jarKeys = deps.stream()
                 .filter(d -> java.lang.Boolean.TRUE.equals(d.getSelected()))
-                .map(org.yglue.flow.orch.domain.snapshot.ProjectSnapshotDependency::getJarId)
-                .filter(Objects::nonNull)
+                .map(org.yglue.flow.orch.domain.code.ProjectJarDependency::getJarKey)
+                .filter(key -> key != null && !key.isBlank())
                 .distinct()
                 .toList();
         result.put("selectedJars", deps.stream()
                 .filter(d -> java.lang.Boolean.TRUE.equals(d.getSelected()))
                 .map(d -> java.util.Map.of(
-                        "jarId", d.getJarId(),
-                        "name", d.getName(),
-                        "coordinate", d.getCoordinate()))
+                        "jarKey", d.getJarKey(),
+                        "groupId", d.getGroupId(),
+                        "artifactId", d.getArtifactId(),
+                        "version", d.getVersion()))
                 .toList());
 
         // 2. 查询项目类（来自 yglue_project_class_agg 表）
-        java.util.List<org.yglue.flow.orch.domain.snapshot.ProjectClassAggregate> projectClasses =
-                codeSnapshotMapper.listValidAggregatesByProject(project.getId());
+        java.util.List<org.yglue.flow.orch.domain.code.ProjectClassAggregate> projectClasses =
+                projectCodeMapper.listValidAggregatesByProject(project.getId());
         
-        // 3. 查询 jar 包中的类（来自 yglue_jar_class_agg 表）
+        // 3. 根据 jar_key 查询 jar 包中的类（来自 yglue_jar_class_agg 表）
         java.util.List<org.yglue.flow.orch.domain.jar.JarClassAggregate> jarClasses = 
-                jarIds.isEmpty() ? java.util.List.of() : jarLibraryMapper.listJarAggregatesByJarIds(jarIds);
+                jarKeys.isEmpty() ? java.util.List.of() : jarLibraryMapper.listJarAggregatesByJarKeys(jarKeys);
         
         // 4. 合并项目类和 jar 类
         java.util.List<java.util.Map<String, Object>> allClasses = new java.util.ArrayList<>();
@@ -122,8 +121,8 @@ public class CodeSnapshotController {
         int offset = Math.max(0, (Math.max(1, page) - 1) * limit);
         
         // 1. 优先查询聚合类（yglue_project_class_agg 表）
-        org.yglue.flow.orch.domain.snapshot.ProjectClassAggregate agg =
-                codeSnapshotMapper.selectAggregateByProjectAndName(project.getId(), qualifiedName);
+        org.yglue.flow.orch.domain.code.ProjectClassAggregate agg =
+                projectCodeMapper.selectAggregateByProjectAndName(project.getId(), qualifiedName);
         if (agg != null) {
             java.util.List<java.util.Map<String, Object>> items;
             try {
@@ -148,23 +147,23 @@ public class CodeSnapshotController {
             return result;
         }
         
-        // 2. 项目类不存在，尝试查询 jar 包中的类（yglue_jar_library_class 表）
-        java.util.List<org.yglue.flow.orch.domain.snapshot.ProjectSnapshotDependency> deps =
-                codeSnapshotMapper.listValidDependenciesByProject(project.getId());
-        java.util.List<java.lang.Long> jarIds = deps.stream()
+        // 2. 项目类不存在，尝试查询 jar 包中的类
+        java.util.List<org.yglue.flow.orch.domain.code.ProjectJarDependency> deps =
+                projectCodeMapper.listValidDependenciesByProject(project.getId());
+        java.util.List<String> jarKeys = deps.stream()
                 .filter(d -> java.lang.Boolean.TRUE.equals(d.getSelected()))
-                .map(org.yglue.flow.orch.domain.snapshot.ProjectSnapshotDependency::getJarId)
-                .filter(id -> id != null)
+                .map(org.yglue.flow.orch.domain.code.ProjectJarDependency::getJarKey)
+                .filter(key -> key != null && !key.isBlank())
                 .distinct()
                 .toList();
         
-        if (jarIds.isEmpty()) {
+        if (jarKeys.isEmpty()) {
             result.put("items", java.util.List.of());
             return result;
         }
         
         org.yglue.flow.orch.domain.jar.JarClassAggregate jarClass = 
-                jarLibraryMapper.selectJarAggregateByQualifiedNameAndJarIds(qualifiedName, jarIds);
+                jarLibraryMapper.selectJarAggregateByQualifiedNameAndJarKeys(qualifiedName, jarKeys);
         if (jarClass == null) {
             result.put("items", java.util.List.of());
             return result;
@@ -197,8 +196,8 @@ public class CodeSnapshotController {
             result.put("methods", java.util.List.of());
             return result;
         }
-        org.yglue.flow.orch.domain.snapshot.ProjectClassAggregate agg =
-                codeSnapshotMapper.selectAggregateByProjectAndName(project.getId(), qualifiedName);
+        org.yglue.flow.orch.domain.code.ProjectClassAggregate agg =
+                projectCodeMapper.selectAggregateByProjectAndName(project.getId(), qualifiedName);
         if (agg == null) {
             result.put("fields", java.util.List.of());
             result.put("methods", java.util.List.of());

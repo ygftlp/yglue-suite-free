@@ -1,5 +1,6 @@
 package org.yglue.flow.runtime.liteflow.model;
 
+import lombok.Data;
 import org.yglue.flow.runtime.core.definition.FlowDefinition;
 import org.yglue.flow.runtime.core.definition.NodeDefinition;
 
@@ -13,6 +14,7 @@ import java.util.List;
  * @author yglue
  * @since 1.0
  */
+@Data
 public class LiteFlowRuleModel {
     
     /** 链名称 */
@@ -96,80 +98,20 @@ public class LiteFlowRuleModel {
     /**
      * 节点组件
      */
+    @Data
     public static class NodeComponent {
         private String componentId;
         private String nodeType;
         private String componentName;  // LiteFlow 组件名称
         private NodeDefinition nodeDefinition;
         private FlowDefinition flowDefinition;
-        
-        public NodeComponent() {
-        }
-        
-        public NodeComponent(String componentId, String nodeType, NodeDefinition nodeDefinition, FlowDefinition flowDefinition) {
-            this.componentId = componentId;
-            this.nodeType = nodeType;
-            this.nodeDefinition = nodeDefinition;
-            this.flowDefinition = flowDefinition;
-            // 默认组件名为 serviceNode
-            this.componentName = "serviceNode";
-        }
-        
+
         public NodeComponent(String componentId, String nodeType, String componentName, NodeDefinition nodeDefinition, FlowDefinition flowDefinition) {
             this.componentId = componentId;
             this.nodeType = nodeType;
             this.componentName = componentName;
             this.nodeDefinition = nodeDefinition;
             this.flowDefinition = flowDefinition;
-        }
-        
-        public String getComponentId() {
-            return componentId;
-        }
-        
-        public void setComponentId(String componentId) {
-            this.componentId = componentId;
-        }
-        
-        public String getNodeType() {
-            return nodeType;
-        }
-        
-        public void setNodeType(String nodeType) {
-            this.nodeType = nodeType;
-        }
-        
-        public String getComponentName() {
-            return componentName;
-        }
-        
-        public void setComponentName(String componentName) {
-            this.componentName = componentName;
-        }
-        
-        public NodeDefinition getNodeDefinition() {
-            return nodeDefinition;
-        }
-        
-        public void setNodeDefinition(NodeDefinition nodeDefinition) {
-            this.nodeDefinition = nodeDefinition;
-        }
-        
-        public FlowDefinition getFlowDefinition() {
-            return flowDefinition;
-        }
-        
-        public void setFlowDefinition(FlowDefinition flowDefinition) {
-            this.flowDefinition = flowDefinition;
-        }
-        
-        @Override
-        public String toString() {
-            return "NodeComponent{" +
-                    "componentId='" + componentId + '\'' +
-                    ", nodeType='" + nodeType + '\'' +
-                    ", componentName='" + componentName + '\'' +
-                    '}';
         }
     }
 }

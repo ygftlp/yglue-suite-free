@@ -138,7 +138,7 @@
     <!-- 聚合：映射 -->
     <resultMap id="JarClassAggregateResultMap" type="org.yglue.flow.orch.domain.jar.JarClassAggregate">
         <id property="id" column="id"/>
-        <result property="jarId" column="jar_id"/>
+        <result property="jarKey" column="jar_key"/>
         <result property="qualifiedName" column="qualified_name"/>
         <result property="simpleName" column="simple_name"/>
         <result property="packageName" column="package_name"/>
@@ -159,9 +159,9 @@
     <insert id="upsertJarClassAggregate" parameterType="org.yglue.flow.orch.domain.jar.JarClassAggregate"
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO yglue_jar_class_agg
-          (jar_id, qualified_name, simple_name, package_name, kind, doc, fields_json, methods_json)
+          (jar_key, qualified_name, simple_name, package_name, kind, doc, fields_json, methods_json)
         VALUES
-          (#{jarId}, #{qualifiedName}, #{simpleName}, #{packageName}, #{kind}, #{doc}, #{fieldsJson}, #{methodsJson})
+          (#{jarKey}, #{qualifiedName}, #{simpleName}, #{packageName}, #{kind}, #{doc}, #{fieldsJson}, #{methodsJson})
         ON DUPLICATE KEY UPDATE
           simple_name = VALUES(simple_name),
           package_name = VALUES(package_name),
@@ -172,14 +172,48 @@
           updated_at = CURRENT_TIMESTAMP
     </insert>
 
-    <!-- 聚合：按 JAR 列表查询类名 -->
+    <!-- 聚合：根据 jar_key 列表查询类名 -->
+    <select id="listJarAggregatesByJarKeys" resultMap="JarClassAggregateResultMap">
+        SELECT id, jar_key, qualified_name, simple_name, package_name, kind, doc,
+               fields_json, methods_json, created_at, updated_at
+        FROM yglue_jar_class_agg
+        <where>
+            <if test="jarKeys != null and !jarKeys.isEmpty()">
+                jar_key IN
+                <foreach collection="jarKeys" item="key" open="(" separator="," close=")">
+                    #{key}
+                </foreach>
+            </if>
+        </where>
+        ORDER BY package_name, simple_name
+    </select>
+
+    <!-- 聚合：按类名与 jar_key 列表查询 -->
+    <select id="selectJarAggregateByQualifiedNameAndJarKeys" resultMap="JarClassAggregateResultMap">
+        SELECT id, jar_key, qualified_name, simple_name, package_name, kind, doc,
+               fields_json, methods_json, created_at, updated_at
+        FROM yglue_jar_class_agg
+        <where>
+            qualified_name = #{qualifiedName}
+            <if test="jarKeys != null and !jarKeys.isEmpty()">
+                AND jar_key IN
+                <foreach collection="jarKeys" item="key" open="(" separator="," close=")">
+                    #{key}
+                </foreach>
+            </if>
+        </where>
+        ORDER BY jar_key
+        LIMIT 1
+    </select>
+
+    <!-- @Deprecated - 聚合：按 JAR 列表查询类名 -->
     <select id="listJarAggregatesByJarIds" resultMap="JarClassAggregateResultMap">
-        SELECT id, jar_id, qualified_name, simple_name, package_name, kind, doc,
+        SELECT id, jar_key, qualified_name, simple_name, package_name, kind, doc,
                fields_json, methods_json, created_at, updated_at
         FROM yglue_jar_class_agg
         <where>
             <if test="jarIds != null and !jarIds.isEmpty()">
-                jar_id IN
+                jar_key IN
                 <foreach collection="jarIds" item="id" open="(" separator="," close=")">
                     #{id}
                 </foreach>
@@ -188,21 +222,21 @@
         ORDER BY package_name, simple_name
     </select>
 
-    <!-- 聚合：按类名与 JAR 列表查询 -->
+    <!-- @Deprecated - 聚合：按类名与 JAR 列表查询 -->
     <select id="selectJarAggregateByQualifiedNameAndJarIds" resultMap="JarClassAggregateResultMap">
-        SELECT id, jar_id, qualified_name, simple_name, package_name, kind, doc,
+        SELECT id, jar_key, qualified_name, simple_name, package_name, kind, doc,
                fields_json, methods_json, created_at, updated_at
         FROM yglue_jar_class_agg
         <where>
             qualified_name = #{qualifiedName}
             <if test="jarIds != null and !jarIds.isEmpty()">
-                AND jar_id IN
+                AND jar_key IN
                 <foreach collection="jarIds" item="id" open="(" separator="," close=")">
                     #{id}
                 </foreach>
             </if>
         </where>
-        ORDER BY jar_id
+        ORDER BY jar_key
         LIMIT 1
     </select>
 

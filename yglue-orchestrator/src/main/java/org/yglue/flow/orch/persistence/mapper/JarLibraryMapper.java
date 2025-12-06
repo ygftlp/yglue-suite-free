@@ -50,8 +50,17 @@ public interface JarLibraryMapper {
 
     void upsertJarClassAggregate(JarClassAggregate aggregate);
 
+    // 根据 jar_key 列表查询 JAR 类聚合
+    java.util.List<JarClassAggregate> listJarAggregatesByJarKeys(@Param("jarKeys") java.util.List<String> jarKeys);
+
+    // 根据 jar_key 列表和类名查询 JAR 类聚合
+    JarClassAggregate selectJarAggregateByQualifiedNameAndJarKeys(@Param("qualifiedName") String qualifiedName,
+                                                                   @Param("jarKeys") java.util.List<String> jarKeys);
+
+    // @Deprecated - 使用 listJarAggregatesByJarKeys 代替
     java.util.List<JarClassAggregate> listJarAggregatesByJarIds(@Param("jarIds") java.util.List<Long> jarIds);
 
+    // @Deprecated - 使用 selectJarAggregateByQualifiedNameAndJarKeys 代替
     JarClassAggregate selectJarAggregateByQualifiedNameAndJarIds(@Param("qualifiedName") String qualifiedName,
                                                                  @Param("jarIds") java.util.List<Long> jarIds);
 }

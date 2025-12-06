@@ -251,7 +251,7 @@ public class YgflowSettingsConfigurable implements Configurable {
             autoRuleSyncIntervalField = new JBTextField();
             autoRuleSyncIntervalField.getEmptyText().setText("60");
 
-            autoCodeSnapshotUploadCheck = new JCheckBox("Enable automatic code snapshot upload");
+            autoCodeSnapshotUploadCheck = new JCheckBox("Enable automatic code code upload");
             autoCodeSnapshotUploadCheck.addActionListener(e -> updateCodeSnapshotUploadControls());
 
             autoCodeSnapshotUploadIntervalField = new JBTextField();
@@ -839,11 +839,11 @@ public class YgflowSettingsConfigurable implements Configurable {
         try {
             int value = Integer.parseInt(trimmed);
             if (value < 5 || value > 86400) {
-                throw new ConfigurationException("Code snapshot upload interval must be between 5 and 86400 seconds.");
+                throw new ConfigurationException("Code code upload interval must be between 5 and 86400 seconds.");
             }
             return value;
         } catch (NumberFormatException ex) {
-            throw new ConfigurationException("Code snapshot upload interval must be a positive number.");
+            throw new ConfigurationException("Code code upload interval must be a positive number.");
         }
     }
 

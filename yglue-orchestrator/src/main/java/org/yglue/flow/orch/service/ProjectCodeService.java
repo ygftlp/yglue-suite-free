@@ -1,49 +1,54 @@
 package org.yglue.flow.orch.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.security.MessageDigest;
 import java.time.Instant;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.yglue.flow.orch.domain.Project;
 import org.yglue.flow.orch.domain.jar.JarLibrary;
-import org.yglue.flow.orch.domain.jar.JarLibraryClass;
-import org.yglue.flow.orch.domain.jar.JarLibraryClassField;
-import org.yglue.flow.orch.domain.jar.JarLibraryClassMethod;
-import org.yglue.flow.orch.domain.snapshot.ProjectCodeSnapshot;
-import org.yglue.flow.orch.domain.snapshot.ProjectSnapshotClass;
-import org.yglue.flow.orch.domain.snapshot.ProjectSnapshotClassField;
-import org.yglue.flow.orch.domain.snapshot.ProjectSnapshotClassMethod;
-import org.yglue.flow.orch.domain.snapshot.ProjectSnapshotDependency;
-import org.yglue.flow.orch.persistence.mapper.CodeSnapshotMapper;
+import org.yglue.flow.orch.domain.code.ProjectCodeSnapshot;
+import org.yglue.flow.orch.domain.code.ProjectJarDependency;
+import org.yglue.flow.orch.domain.code.ProjectClassAggregate;
+import org.yglue.flow.orch.persistence.mapper.ProjectCodeMapper;
 import org.yglue.flow.orch.persistence.mapper.JarLibraryMapper;
 import org.yglue.flow.orch.web.dto.snapshot.request.CodeSnapshotUploadRequest;
 
 @Service
-public class CodeSnapshotService {
+public class ProjectCodeService {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final ProjectService projectService;
-    private final CodeSnapshotMapper codeSnapshotMapper;
+    private final ProjectCodeMapper projectCodeMapper;
     private final JarLibraryMapper jarLibraryMapper;
 
-    public CodeSnapshotService(ProjectService projectService,
-                               CodeSnapshotMapper codeSnapshotMapper,
-                               JarLibraryMapper jarLibraryMapper) {
+    public ProjectCodeService(ProjectService projectService,
+                              ProjectCodeMapper projectCodeMapper,
+                              JarLibraryMapper jarLibraryMapper) {
         this.projectService = projectService;
-        this.codeSnapshotMapper = codeSnapshotMapper;
+        this.projectCodeMapper = projectCodeMapper;
         this.jarLibraryMapper = jarLibraryMapper;
     }
 
-    public record SaveResult(ProjectCodeSnapshot snapshot, boolean projectCreated) {}
+    private static JarLibrary getJarLibrary(CodeSnapshotUploadRequest.JarMetadata metadata, JarLibrary existing) {
+        JarLibrary jarLibrary = existing != null ? existing : new JarLibrary();
+        jarLibrary.setJarKey(metadata.getId());
+        jarLibrary.setName(metadata.getName());
+        jarLibrary.setGroupId(metadata.getGroupId());
+        jarLibrary.setArtifactId(metadata.getArtifactId());
+        jarLibrary.setVersion(metadata.getVersion());
+        jarLibrary.setJarType("LIBRARY");
+        jarLibrary.setSource("IDEA");
+        jarLibrary.setDescription(metadata.getCoordinate());
+        jarLibrary.setContentHash(metadata.getContentHash());
+        return jarLibrary;
+    }
 
     @Transactional
     public SaveResult save(String projectKey, String fallbackProjectName, CodeSnapshotUploadRequest request) {
@@ -59,8 +64,8 @@ public class CodeSnapshotService {
         ProjectCodeSnapshot snapshot = null;
 
         // 新逻辑：先标记聚合类为无效，再 UPSERT 聚合
-        codeSnapshotMapper.markAllAggregatesInvalid(project.getId());
-        codeSnapshotMapper.markAllDependenciesInvalid(project.getId());
+        projectCodeMapper.markAllAggregatesInvalid(project.getId());
+        projectCodeMapper.markAllDependenciesInvalid(project.getId());
 
         Map<String, Long> jarIdMap = upsertJarLibraries(request.getJarMetadata());
         upsertClassAggregates(project.getId(), request.getClasses());
@@ -71,75 +76,12 @@ public class CodeSnapshotService {
     }
 
     /**
-     * UPSERT 项目类（新逻辑）
-     */
-    private void upsertClasses(Long projectId, List<CodeSnapshotUploadRequest.ClassItem> classes) {
-        if (classes == null) {
-            return;
-        }
-        for (CodeSnapshotUploadRequest.ClassItem classItem : classes) {
-            ProjectSnapshotClass snapshotClass = new ProjectSnapshotClass();
-            snapshotClass.setProjectId(projectId);
-            snapshotClass.setQualifiedName(classItem.getQualifiedName());
-            snapshotClass.setSimpleName(classItem.getSimpleName());
-            snapshotClass.setPackageName(classItem.getPackageName());
-            snapshotClass.setKind(classItem.getKind());
-            snapshotClass.setSourceType(classItem.getSourceType() == null ? "PROJECT" : classItem.getSourceType());
-            snapshotClass.setIsValid(true);
-            codeSnapshotMapper.upsertClass(snapshotClass);
-
-            // 查询类 ID（UPSERT 后需要获取 ID）
-            if (snapshotClass.getId() == null) {
-                ProjectSnapshotClass inserted = codeSnapshotMapper.selectClassByProjectAndName(
-                    projectId, classItem.getQualifiedName());
-                if (inserted != null) {
-                    snapshotClass.setId(inserted.getId());
-                }
-            }
-
-            if (classItem.getFields() != null && snapshotClass.getId() != null) {
-                for (CodeSnapshotUploadRequest.FieldItem fieldItem : classItem.getFields()) {
-                    ProjectSnapshotClassField field = new ProjectSnapshotClassField();
-                    field.setClassId(snapshotClass.getId());
-                    field.setName(fieldItem.getName());
-                    field.setType(fieldItem.getType());
-                    field.setIsStatic(fieldItem.getIsStatic());
-                    field.setIsValid(true);
-                    codeSnapshotMapper.upsertField(field);
-                }
-            }
-
-            if (classItem.getMethods() != null && snapshotClass.getId() != null) {
-                for (CodeSnapshotUploadRequest.MethodItem methodItem : classItem.getMethods()) {
-                    ProjectSnapshotClassMethod method = new ProjectSnapshotClassMethod();
-                    method.setClassId(snapshotClass.getId());
-                    method.setName(methodItem.getName());
-                    method.setReturnType(methodItem.getReturnType());
-                    method.setIsStatic(methodItem.getIsStatic());
-                    method.setParametersJson(writeParameters(methodItem.getParameters()));
-                    
-                    // 生成方法签名哈希
-                    String hash = ProjectSnapshotClassMethod.generateSignatureHash(
-                        method.getName(),
-                        method.getReturnType(),
-                        method.getParametersJson()
-                    );
-                    method.setMethodSignatureHash(hash);
-                    method.setIsValid(true);
-                    
-                    codeSnapshotMapper.upsertMethod(method);
-                }
-            }
-        }
-    }
-
-    /**
-     * UPSERT 项目依赖（新逻辑）
+     * UPSERT 项目依赖
      */
     private void upsertDependencies(Long projectId,
-                                     List<CodeSnapshotUploadRequest.DependencyItem> dependencies,
-                                     List<String> selectedJars,
-                                     Map<String, Long> jarIdMap) {
+                                    List<CodeSnapshotUploadRequest.DependencyItem> dependencies,
+                                    List<String> selectedJars,
+                                    Map<String, Long> jarIdMap) {
         if (dependencies == null) {
             return;
         }
@@ -147,33 +89,29 @@ public class CodeSnapshotService {
                 ? Set.of()
                 : new HashSet<>(selectedJars);
         for (CodeSnapshotUploadRequest.DependencyItem dep : dependencies) {
-            ProjectSnapshotDependency dependency = new ProjectSnapshotDependency();
+            ProjectJarDependency dependency = new ProjectJarDependency();
             dependency.setProjectId(projectId);
-            dependency.setDependencyId(dep.getDependencyId());
-            dependency.setName(dep.getName());
             dependency.setGroupId(dep.getGroupId());
             dependency.setArtifactId(dep.getArtifactId());
             dependency.setVersion(dep.getVersion());
-            dependency.setCoordinate(dep.getCoordinate());
+            // jar_key 即为 Maven 坐标 (groupId:artifactId:version)
+            dependency.setJarKey(dep.getCoordinate());
             dependency.setScope(dep.getScope());
-            if (dep.getDependencyId() != null) {
-                dependency.setJarId(jarIdMap.get(dep.getDependencyId()));
-            }
             dependency.setSelected(selected.contains(dep.getDependencyId()));
             dependency.setIsValid(true);
-            codeSnapshotMapper.upsertDependency(dependency);
+            projectCodeMapper.upsertDependency(dependency);
         }
     }
 
     /**
-     * UPSERT 聚合类（按类存储 methods/fields JSON）
+     * UPSERT 项目类聚合（按类存储 methods/fields JSON）
      */
     private void upsertClassAggregates(Long projectId, List<CodeSnapshotUploadRequest.ClassItem> classes) {
         if (classes == null) {
             return;
         }
         for (CodeSnapshotUploadRequest.ClassItem classItem : classes) {
-            org.yglue.flow.orch.domain.snapshot.ProjectClassAggregate agg = new org.yglue.flow.orch.domain.snapshot.ProjectClassAggregate();
+            ProjectClassAggregate agg = new ProjectClassAggregate();
             agg.setProjectId(projectId);
             agg.setQualifiedName(classItem.getQualifiedName());
             agg.setSimpleName(classItem.getSimpleName());
@@ -184,7 +122,7 @@ public class CodeSnapshotService {
             agg.setFieldsJson(toJsonFields(classItem.getFields()));
             agg.setMethodsJson(toJsonMethods(classItem.getMethods()));
             agg.setIsValid(true);
-            codeSnapshotMapper.upsertClassAggregate(agg);
+            projectCodeMapper.upsertClassAggregate(agg);
         }
     }
 
@@ -192,16 +130,26 @@ public class CodeSnapshotService {
         if (fields == null || fields.isEmpty()) {
             return null;
         }
+
         try {
-            return OBJECT_MAPPER.writeValueAsString(fields.stream()
-                    .map(f -> java.util.Map.of(
-                            "name", f.getName(),
-                            "type", f.getType(),
-                            "static", f.getIsStatic(),
-                            "doc", f.getDoc()))
-                    .collect(java.util.stream.Collectors.toList()));
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to serialize fields", e);
+            return OBJECT_MAPPER.writeValueAsString(
+                    fields.stream()
+                            .filter(Objects::nonNull) // 过滤null元素
+                            .map(f -> {
+                                Map<String, Object> fieldMap = new HashMap<>();
+                                // 安全获取值，null值会保留为JSON的null
+                                fieldMap.put("name", f.getName());
+                                fieldMap.put("type", f.getType());
+                                // 安全处理Boolean类型，防止f.getIsStatic()返回null
+                                fieldMap.put("static", Boolean.TRUE.equals(f.getIsStatic()));
+                                fieldMap.put("doc", f.getDoc());
+                                return fieldMap;
+                            })
+                            .collect(Collectors.toList())
+            );
+        } catch (JsonProcessingException e) {
+            // 更具体的异常类型和消息
+            throw new IllegalStateException("Failed to serialize fields: " + e.getMessage(), e);
         }
     }
 
@@ -209,20 +157,41 @@ public class CodeSnapshotService {
         if (methods == null || methods.isEmpty()) {
             return null;
         }
+
         try {
-            return OBJECT_MAPPER.writeValueAsString(methods.stream()
-                    .map(m -> java.util.Map.of(
-                            "name", m.getName(),
-                            "returnType", m.getReturnType(),
-                            "static", m.getIsStatic(),
-                            "doc", m.getDoc(),
-                            "parameters", (m.getParameters() == null ? java.util.List.of() : m.getParameters().stream()
-                                    .map(p -> java.util.Map.of("name", p.getName(), "type", p.getType()))
-                                    .collect(java.util.stream.Collectors.toList()))
-                    ))
-                    .collect(java.util.stream.Collectors.toList()));
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to serialize methods", e);
+            return OBJECT_MAPPER.writeValueAsString(
+                    methods.stream()
+                            .filter(Objects::nonNull) // 过滤null方法
+                            .map(m -> {
+                                Map<String, Object> methodMap = new HashMap<>();
+
+                                // 安全添加基础属性
+                                methodMap.put("name", m.getName());
+                                methodMap.put("returnType", m.getReturnType());
+                                methodMap.put("static", Boolean.TRUE.equals(m.getIsStatic()));
+                                methodMap.put("doc", m.getDoc());
+
+                                // 安全处理参数列表
+                                List<Map<String, String>> parameters = Optional.ofNullable(m.getParameters())
+                                        .orElseGet(Collections::emptyList) // 返回空列表而不是null
+                                        .stream()
+                                        .filter(Objects::nonNull) // 过滤null参数
+                                        .map(p -> {
+                                            Map<String, String> paramMap = new HashMap<>();
+                                            // 安全添加参数属性
+                                            paramMap.put("name", p.getName());
+                                            paramMap.put("type", p.getType());
+                                            return paramMap;
+                                        })
+                                        .collect(Collectors.toList());
+
+                                methodMap.put("parameters", parameters);
+                                return methodMap;
+                            })
+                            .collect(Collectors.toList())
+            );
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize methods: " + e.getMessage(), e);
         }
     }
 
@@ -247,7 +216,7 @@ public class CodeSnapshotService {
 
             if (needRefresh) {
                 jarLibraryMapper.deleteJarClassAggregates(jarLibrary.getId());
-                insertJarClasses(jarLibrary.getId(), metadata.getClasses());
+                insertJarClasses(jarLibrary.getJarKey(), metadata.getClasses());
             }
 
             result.put(metadata.getId(), jarLibrary.getId());
@@ -255,27 +224,19 @@ public class CodeSnapshotService {
         return result;
     }
 
-    private static JarLibrary getJarLibrary(CodeSnapshotUploadRequest.JarMetadata metadata, JarLibrary existing) {
-        JarLibrary jarLibrary = existing != null ? existing : new JarLibrary();
-        jarLibrary.setJarKey(metadata.getId());
-        jarLibrary.setName(metadata.getName());
-        jarLibrary.setGroupId(metadata.getGroupId());
-        jarLibrary.setArtifactId(metadata.getArtifactId());
-        jarLibrary.setVersion(metadata.getVersion());
-        jarLibrary.setJarType("LIBRARY");
-        jarLibrary.setSource("IDEA");
-        jarLibrary.setDescription(metadata.getCoordinate());
-        jarLibrary.setContentHash(metadata.getContentHash());
-        return jarLibrary;
-    }
-
-    private void insertJarClasses(Long jarId, List<CodeSnapshotUploadRequest.JarClassItem> classes) {
+    private void insertJarClasses(String jarKey, List<CodeSnapshotUploadRequest.JarClassItem> classes) {
         if (classes == null) {
             return;
         }
+        // 从id查询jarKey
+        JarLibrary jarLibrary = jarLibraryMapper.selectByJarKey(jarKey);
+        if (jarLibrary == null) {
+            return;
+        }
+
         for (CodeSnapshotUploadRequest.JarClassItem classItem : classes) {
             org.yglue.flow.orch.domain.jar.JarClassAggregate agg = new org.yglue.flow.orch.domain.jar.JarClassAggregate();
-            agg.setJarId(jarId);
+            agg.setJarKey(jarKey);  // 使用 jarKey 代替 jarId
             agg.setQualifiedName(classItem.getQualifiedName());
             agg.setSimpleName(classItem.getSimpleName());
             agg.setPackageName(classItem.getPackageName());
@@ -304,7 +265,7 @@ public class CodeSnapshotService {
 
     private String normalizeSnapshotKey(String snapshotKey) {
         String key = snapshotKey == null || snapshotKey.isBlank()
-                ? "snapshot-" + Instant.now().toEpochMilli()
+                ? "code-" + Instant.now().toEpochMilli()
                 : snapshotKey.trim();
         return key.length() > 120 ? key.substring(0, 120) : key;
     }
@@ -347,5 +308,8 @@ public class CodeSnapshotService {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    public record SaveResult(ProjectCodeSnapshot snapshot, boolean projectCreated) {
     }
 }

@@ -157,6 +157,7 @@ public final class CodeSnapshotExporter {
         clazz.put("packageName", psiClass.getContainingFile() instanceof PsiJavaFile javaFile
                 ? javaFile.getPackageName() : "");
         clazz.put("kind", determineKind(psiClass));
+        clazz.put("doc", extractJavadoc(psiClass.getDocComment()));
         clazz.put("fields", collectFields(psiClass));
         clazz.put("methods", collectMethods(psiClass));
         sink.put(clazz);
@@ -186,6 +187,7 @@ public final class CodeSnapshotExporter {
             item.put("name", field.getName());
             item.put("type", renderType(field.getType()));
             item.put("static", field.hasModifierProperty(PsiModifier.STATIC));
+            item.put("doc", extractJavadoc(field.getDocComment()));
             fields.put(item);
         }
         return fields;
@@ -202,6 +204,7 @@ public final class CodeSnapshotExporter {
             item.put("returnType", renderType(method.getReturnType()));
             item.put("static", method.hasModifierProperty(PsiModifier.STATIC));
             item.put("parameters", collectParameters(method));
+            item.put("doc", extractJavadoc(method.getDocComment()));
             methods.put(item);
         }
         return methods;
@@ -220,6 +223,23 @@ public final class CodeSnapshotExporter {
 
     private static String renderType(PsiType type) {
         return type == null ? "void" : type.getCanonicalText();
+    }
+
+    private static String extractJavadoc(com.intellij.psi.javadoc.PsiDocComment docComment) {
+        if (docComment == null) {
+            return null;
+        }
+        String text = docComment.getText();
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        // 移除 /** 和 */ 以及每行的 * 前缀
+        return text.replaceAll("(?s)/\\*\\*|\\*/", "")
+                .lines()
+                .map(line -> line.replaceFirst("^\\s*\\*\\s?", ""))
+                .filter(line -> !line.isBlank())
+                .collect(java.util.stream.Collectors.joining("\n"))
+                .trim();
     }
 
     private static JSONArray collectProjectDependencies(List<JarDependencyResolver.JarInfo> infos) {
@@ -345,7 +365,7 @@ public final class CodeSnapshotExporter {
             byte[] hashed = digest.digest(payload.getBytes(StandardCharsets.UTF_8));
             return toHex(hashed);
         } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("Unable to compute snapshot hash", e);
+            throw new IllegalStateException("Unable to compute code hash", e);
         }
     }
 
@@ -373,6 +393,7 @@ public final class CodeSnapshotExporter {
                 clazz.put("packageName", "");
             }
             clazz.put("kind", determineKind(access));
+            clazz.put("doc", (String) null);  // JAR 类无法读取 Javadoc
             clazz.put("fields", fields);
             clazz.put("methods", methods);
         }
@@ -386,6 +407,7 @@ public final class CodeSnapshotExporter {
             field.put("name", name);
             field.put("type", Type.getType(descriptor).getClassName());
             field.put("static", (access & Opcodes.ACC_STATIC) != 0);
+            field.put("doc", (String) null);  // JAR 类无法读取 Javadoc
             fields.put(field);
             return null;
         }
@@ -400,6 +422,7 @@ public final class CodeSnapshotExporter {
             method.put("returnType", Type.getReturnType(descriptor).getClassName());
             method.put("static", (access & Opcodes.ACC_STATIC) != 0);
             method.put("parameters", renderParameters(descriptor));
+            method.put("doc", (String) null);  // JAR 类无法读取 Javadoc
             methods.put(method);
             return null;
         }

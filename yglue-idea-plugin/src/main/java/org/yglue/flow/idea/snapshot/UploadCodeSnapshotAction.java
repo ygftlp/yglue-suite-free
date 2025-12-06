@@ -58,13 +58,16 @@ public class UploadCodeSnapshotAction extends AnAction {
             }
 
             HttpClient client = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(5))
+                    .connectTimeout(Duration.ofSeconds(10))
                     .build();
+            String uploadUrl = endpoint + "/api/projects/" + projectKey + "/code-snapshots";
+            LOG.info("Uploading code snapshot to: " + uploadUrl);
+            
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(endpoint + "/api/projects/" + projectKey + "/code-snapshots"))
+                    .uri(URI.create(uploadUrl))
                     .header("Content-Type", "application/json")
-                    .header("X-YGlue-Instance", settings.instanceKey)
-                    .timeout(Duration.ofSeconds(30))
+                    .header("X-YGlue-Instance", settings.instanceKey != null ? settings.instanceKey : "")
+                    .timeout(Duration.ofSeconds(60))
                     .POST(HttpRequest.BodyPublishers.ofString(snapshot.toString()))
                     .build();
 
@@ -74,6 +77,14 @@ public class UploadCodeSnapshotAction extends AnAction {
                 return true;
             }
             handleError(project, "上传失败：HTTP " + response.statusCode() + " - " + response.body(), showDialogs);
+            return false;
+        } catch (java.net.ConnectException ex) {
+            handleError(project, "上传失败：无法连接到服务器 " + settings.baseUrl + "\n请确保后端服务已启动。", showDialogs);
+            LOG.warn("Failed to connect to yglue server: " + settings.baseUrl, ex);
+            return false;
+        } catch (java.net.http.HttpTimeoutException ex) {
+            handleError(project, "上传失败：连接超时\n请检查网络或增加超时时间。", showDialogs);
+            LOG.warn("Http timeout when uploading snapshot", ex);
             return false;
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
@@ -90,7 +101,7 @@ public class UploadCodeSnapshotAction extends AnAction {
             Messages.showInfoMessage(project, "请在 Settings 中配置 yglue 服务地址与项目标识。", "yglue");
             ShowSettingsUtil.getInstance().showSettingsDialog(project, YgflowSettingsConfigurable.class);
         } else {
-            LOG.info("yglue settings incomplete, skip code snapshot upload.");
+            LOG.info("yglue settings incomplete, skip code code upload.");
         }
     }
 

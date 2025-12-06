@@ -314,7 +314,7 @@ public class FlowDefinitionToRuleModelConverter {
         
         // 根据节点类型选择对应的组件
         String componentName = getComponentNameByNodeType(nodeType, node);
-        return new LiteFlowExpression.NodeExpression(componentName);
+        return new LiteFlowExpression.NodeExpression(node.getId(),componentName);
     }
     
     /**

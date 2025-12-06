@@ -1,18 +1,15 @@
-package org.yglue.flow.orch.domain.snapshot;
+package org.yglue.flow.orch.domain.code;
 
-public class ProjectSnapshotDependency {
+public class ProjectJarDependency {
     private Long id;
-    private Long projectId;  // 改为使用 projectId 代替 snapshotId
-    private String dependencyId;
-    private String name;
+    private Long projectId;
     private String groupId;
     private String artifactId;
     private String version;
-    private String coordinate;
+    private String jarKey;  // JAR库关联键 (Maven coordinate: groupId:artifactId:version)
     private String scope;
-    private Long jarId;
     private Boolean selected;
-    private Boolean isValid;  // 是否有效：true=有效，false=无效（已删除）
+    private Boolean isValid;
 
     public Long getId() {
         return id;
@@ -28,22 +25,6 @@ public class ProjectSnapshotDependency {
 
     public void setProjectId(Long projectId) {
         this.projectId = projectId;
-    }
-
-    public String getDependencyId() {
-        return dependencyId;
-    }
-
-    public void setDependencyId(String dependencyId) {
-        this.dependencyId = dependencyId;
-    }
-
-    public String getName() {
-        return name;
-    }
-
-    public void setName(String name) {
-        this.name = name;
     }
 
     public String getGroupId() {
@@ -70,12 +51,12 @@ public class ProjectSnapshotDependency {
         this.version = version;
     }
 
-    public String getCoordinate() {
-        return coordinate;
+    public String getJarKey() {
+        return jarKey;
     }
 
-    public void setCoordinate(String coordinate) {
-        this.coordinate = coordinate;
+    public void setJarKey(String jarKey) {
+        this.jarKey = jarKey;
     }
 
     public String getScope() {
@@ -84,14 +65,6 @@ public class ProjectSnapshotDependency {
 
     public void setScope(String scope) {
         this.scope = scope;
-    }
-
-    public Long getJarId() {
-        return jarId;
-    }
-
-    public void setJarId(Long jarId) {
-        this.jarId = jarId;
     }
 
     public Boolean getSelected() {

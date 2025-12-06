@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="org.yglue.flow.orch.persistence.mapper.ProjectCodeMapper">
+
+
+    <resultMap id="ProjectJarDependencyResultMap" type="org.yglue.flow.orch.domain.code.ProjectJarDependency">
+        <id property="id" column="id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="groupId" column="group_id"/>
+        <result property="artifactId" column="artifact_id"/>
+        <result property="version" column="version"/>
+        <result property="jarKey" column="jar_key"/>
+        <result property="scope" column="scope"/>
+        <result property="selected" column="selected_flag"/>
+        <result property="isValid" column="is_valid"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <resultMap id="ProjectSnapshotClassResultMap" type="org.yglue.flow.orch.domain.code.ProjectSnapshotClass">
+        <id property="id" column="id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="qualifiedName" column="qualified_name"/>
+        <result property="simpleName" column="simple_name"/>
+        <result property="packageName" column="package_name"/>
+        <result property="kind" column="kind"/>
+        <result property="sourceType" column="source_type"/>
+        <result property="jarId" column="jar_id"/>
+        <result property="doc" column="doc"/>
+        <result property="isValid" column="is_valid"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <resultMap id="ProjectSnapshotClassFieldResultMap" type="org.yglue.flow.orch.domain.code.ProjectSnapshotClassField">
+        <id property="id" column="id"/>
+        <result property="classId" column="class_id"/>
+        <result property="name" column="name"/>
+        <result property="type" column="type"/>
+        <result property="static" column="is_static"/>
+        <result property="isValid" column="is_valid"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <resultMap id="ProjectSnapshotClassMethodResultMap" type="org.yglue.flow.orch.domain.code.ProjectSnapshotClassMethod">
+        <id property="id" column="id"/>
+        <result property="classId" column="class_id"/>
+        <result property="name" column="name"/>
+        <result property="returnType" column="return_type"/>
+        <result property="static" column="is_static"/>
+        <result property="parametersJson" column="parameters_json"/>
+        <result property="methodSignatureHash" column="method_signature_hash"/>
+        <result property="isValid" column="is_valid"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <!-- 聚合类映射：按类聚合 methods_json / fields_json -->
+    <resultMap id="ProjectClassAggregateResultMap" type="org.yglue.flow.orch.domain.code.ProjectClassAggregate">
+        <id property="id" column="id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="qualifiedName" column="qualified_name"/>
+        <result property="simpleName" column="simple_name"/>
+        <result property="packageName" column="package_name"/>
+        <result property="kind" column="kind"/>
+        <result property="sourceType" column="source_type"/>
+        <result property="jarId" column="jar_id"/>
+        <result property="doc" column="doc"/>
+        <result property="fieldsJson" column="fields_json"/>
+        <result property="methodsJson" column="methods_json"/>
+        <result property="isValid" column="is_valid"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+
+
+
+
+
+    <!-- ======================================== -->
+    <!-- 项目 JAR 依赖管理 -->
+    <!-- ======================================== -->
+
+    <!-- 标记项目的所有依赖为无效 -->
+    <update id="markAllDependenciesInvalid">
+        UPDATE yglue_project_jar_dependency
+        SET is_valid = 0, updated_at = CURRENT_TIMESTAMP
+        WHERE project_id = #{projectId}
+    </update>
+
+    <!-- UPSERT 项目 JAR 依赖 -->
+    <insert id="upsertDependency" parameterType="org.yglue.flow.orch.domain.code.ProjectJarDependency"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO yglue_project_jar_dependency
+          (project_id, group_id, artifact_id, version, jar_key, scope, selected_flag, is_valid)
+        VALUES
+          (#{projectId}, #{groupId}, #{artifactId}, #{version}, #{jarKey}, #{scope}, #{selected}, 1)
+        ON DUPLICATE KEY UPDATE
+          group_id = VALUES(group_id),
+          artifact_id = VALUES(artifact_id),
+          version = VALUES(version),
+          scope = VALUES(scope),
+          selected_flag = VALUES(selected_flag),
+          is_valid = 1,
+          updated_at = CURRENT_TIMESTAMP
+    </insert>
+
+    <!-- 查询项目的所有有效依赖 -->
+    <select id="listValidDependenciesByProject" resultMap="ProjectJarDependencyResultMap">
+        SELECT id, project_id, group_id, artifact_id, version,
+               jar_key, scope, selected_flag, is_valid, created_at, updated_at
+        FROM yglue_project_jar_dependency
+        WHERE project_id = #{projectId} AND is_valid = 1
+        ORDER BY group_id, artifact_id
+    </select>
+
+    <!-- ======================================== -->
+    <!-- 项目类聚合管理（按类存储 methods/fields JSON） -->
+    <!-- ======================================== -->
+
+    <!-- 标记项目所有聚合类为无效 -->
+    <update id="markAllAggregatesInvalid">
+        UPDATE yglue_project_class_agg
+        SET is_valid = 0, updated_at = CURRENT_TIMESTAMP
+        WHERE project_id = #{projectId}
+    </update>
+
+    <!-- UPSERT 类聚合记录 -->
+    <insert id="upsertClassAggregate" parameterType="org.yglue.flow.orch.domain.code.ProjectClassAggregate"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO yglue_project_class_agg
+          (project_id, qualified_name, simple_name, package_name, kind, source_type, jar_id, doc, fields_json, methods_json, is_valid)
+        VALUES
+          (#{projectId}, #{qualifiedName}, #{simpleName}, #{packageName}, #{kind}, #{sourceType}, #{jarId}, #{doc}, #{fieldsJson}, #{methodsJson}, 1)
+        ON DUPLICATE KEY UPDATE
+          simple_name = VALUES(simple_name),
+          package_name = VALUES(package_name),
+          kind = VALUES(kind),
+          source_type = VALUES(source_type),
+          jar_id = VALUES(jar_id),
+          doc = VALUES(doc),
+          fields_json = VALUES(fields_json),
+          methods_json = VALUES(methods_json),
+          is_valid = 1,
+          updated_at = CURRENT_TIMESTAMP
+    </insert>
+
+    <!-- 按项目与类名查询聚合类 -->
+    <select id="selectAggregateByProjectAndName" resultMap="ProjectClassAggregateResultMap">
+        SELECT id, project_id, qualified_name, simple_name, package_name, kind, source_type, jar_id, doc,
+               fields_json, methods_json, is_valid, created_at, updated_at
+        FROM yglue_project_class_agg
+        WHERE project_id = #{projectId}
+          AND qualified_name = #{qualifiedName}
+          AND is_valid = 1
+        LIMIT 1
+    </select>
+
+    <!-- 查询项目的所有有效聚合类 -->
+    <select id="listValidAggregatesByProject" resultMap="ProjectClassAggregateResultMap">
+        SELECT id, project_id, qualified_name, simple_name, package_name, kind, source_type, jar_id, doc,
+               fields_json, methods_json, is_valid, created_at, updated_at
+        FROM yglue_project_class_agg
+        WHERE project_id = #{projectId}
+          AND is_valid = 1
+        ORDER BY package_name, simple_name
+    </select>
+
+</mapper>
