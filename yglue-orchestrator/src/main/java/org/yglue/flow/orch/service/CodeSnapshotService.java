@@ -103,7 +103,7 @@ public class CodeSnapshotService {
                     field.setClassId(snapshotClass.getId());
                     field.setName(fieldItem.getName());
                     field.setType(fieldItem.getType());
-                    field.setStatic(fieldItem.getStatic());
+                    field.setIsStatic(fieldItem.getIsStatic());
                     field.setIsValid(true);
                     codeSnapshotMapper.upsertField(field);
                 }
@@ -115,7 +115,7 @@ public class CodeSnapshotService {
                     method.setClassId(snapshotClass.getId());
                     method.setName(methodItem.getName());
                     method.setReturnType(methodItem.getReturnType());
-                    method.setStatic(methodItem.getStatic());
+                    method.setIsStatic(methodItem.getIsStatic());
                     method.setParametersJson(writeParameters(methodItem.getParameters()));
                     
                     // 生成方法签名哈希
@@ -197,7 +197,7 @@ public class CodeSnapshotService {
                     .map(f -> java.util.Map.of(
                             "name", f.getName(),
                             "type", f.getType(),
-                            "static", f.getStatic(),
+                            "static", f.getIsStatic(),
                             "doc", f.getDoc()))
                     .collect(java.util.stream.Collectors.toList()));
         } catch (Exception e) {
@@ -214,7 +214,7 @@ public class CodeSnapshotService {
                     .map(m -> java.util.Map.of(
                             "name", m.getName(),
                             "returnType", m.getReturnType(),
-                            "static", m.getStatic(),
+                            "static", m.getIsStatic(),
                             "doc", m.getDoc(),
                             "parameters", (m.getParameters() == null ? java.util.List.of() : m.getParameters().stream()
                                     .map(p -> java.util.Map.of("name", p.getName(), "type", p.getType()))
@@ -236,16 +236,7 @@ public class CodeSnapshotService {
                 continue;
             }
             JarLibrary existing = jarLibraryMapper.selectByJarKey(metadata.getId());
-            JarLibrary jarLibrary = existing != null ? existing : new JarLibrary();
-            jarLibrary.setJarKey(metadata.getId());
-            jarLibrary.setName(metadata.getName());
-            jarLibrary.setGroupId(metadata.getGroupId());
-            jarLibrary.setArtifactId(metadata.getArtifactId());
-            jarLibrary.setVersion(metadata.getVersion());
-            jarLibrary.setJarType("LIBRARY");
-            jarLibrary.setSource("IDEA");
-            jarLibrary.setDescription(metadata.getCoordinate());
-            jarLibrary.setContentHash(metadata.getContentHash());
+            JarLibrary jarLibrary = getJarLibrary(metadata, existing);
 
             boolean needRefresh = existing == null || !Objects.equals(existing.getContentHash(), metadata.getContentHash());
             if (existing == null) {
@@ -262,6 +253,20 @@ public class CodeSnapshotService {
             result.put(metadata.getId(), jarLibrary.getId());
         }
         return result;
+    }
+
+    private static JarLibrary getJarLibrary(CodeSnapshotUploadRequest.JarMetadata metadata, JarLibrary existing) {
+        JarLibrary jarLibrary = existing != null ? existing : new JarLibrary();
+        jarLibrary.setJarKey(metadata.getId());
+        jarLibrary.setName(metadata.getName());
+        jarLibrary.setGroupId(metadata.getGroupId());
+        jarLibrary.setArtifactId(metadata.getArtifactId());
+        jarLibrary.setVersion(metadata.getVersion());
+        jarLibrary.setJarType("LIBRARY");
+        jarLibrary.setSource("IDEA");
+        jarLibrary.setDescription(metadata.getCoordinate());
+        jarLibrary.setContentHash(metadata.getContentHash());
+        return jarLibrary;
     }
 
     private void insertJarClasses(Long jarId, List<CodeSnapshotUploadRequest.JarClassItem> classes) {

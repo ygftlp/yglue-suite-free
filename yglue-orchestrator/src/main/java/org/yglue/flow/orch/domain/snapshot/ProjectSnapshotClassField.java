@@ -1,5 +1,8 @@
 package org.yglue.flow.orch.domain.snapshot;
 
+import lombok.Data;
+
+@Data
 public class ProjectSnapshotClassField {
     private Long id;
     private Long classId;
@@ -8,51 +11,4 @@ public class ProjectSnapshotClassField {
     private Boolean isStatic;
     private Boolean isValid;  // 是否有效
 
-    public Long getId() {
-        return id;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
-
-    public Long getClassId() {
-        return classId;
-    }
-
-    public void setClassId(Long classId) {
-        this.classId = classId;
-    }
-
-    public String getName() {
-        return name;
-    }
-
-    public void setName(String name) {
-        this.name = name;
-    }
-
-    public String getType() {
-        return type;
-    }
-
-    public void setType(String type) {
-        this.type = type;
-    }
-
-    public Boolean getStatic() {
-        return isStatic;
-    }
-
-    public void setStatic(Boolean aStatic) {
-        isStatic = aStatic;
-    }
-
-    public Boolean getIsValid() {
-        return isValid;
-    }
-
-    public void setIsValid(Boolean isValid) {
-        this.isValid = isValid;
-    }
 }
