@@ -73,8 +73,6 @@ export function useCanvasEditor(props: CanvasEditorProps) {
     closeVersionList: flowIO.closeVersionList,
     loadVersion: flowIO.loadVersion,
     loadVersionAndSave: flowIO.loadVersionAndSave,
-    currentVersionNo: flowIO.currentVersionNo,
-    publishedVersionNo: flowIO.publishedVersionNo,
 
     paletteCollapsed: layout.paletteCollapsed,
     inspectorCollapsed: layout.inspectorCollapsed,

@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+﻿﻿<script setup lang="ts">
 import { computed, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import CanvasEditor from "../components/CanvasEditor.vue"
@@ -299,6 +299,7 @@ function safeParseConfig(configJson?: string | null): any {
         :endpoint-schema="schemaHint"
         :flow-models="flowModels"
         :flow-resolvers="flowResolvers"
+        :endpoint-id="endpointId"
       />
     </main>
   </div>

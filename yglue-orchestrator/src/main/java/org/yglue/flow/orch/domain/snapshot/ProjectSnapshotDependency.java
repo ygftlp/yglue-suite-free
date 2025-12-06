@@ -2,7 +2,7 @@ package org.yglue.flow.orch.domain.snapshot;
 
 public class ProjectSnapshotDependency {
     private Long id;
-    private Long snapshotId;
+    private Long projectId;  // 改为使用 projectId 代替 snapshotId
     private String dependencyId;
     private String name;
     private String groupId;
@@ -12,6 +12,7 @@ public class ProjectSnapshotDependency {
     private String scope;
     private Long jarId;
     private Boolean selected;
+    private Boolean isValid;  // 是否有效：true=有效，false=无效（已删除）
 
     public Long getId() {
         return id;
@@ -21,12 +22,12 @@ public class ProjectSnapshotDependency {
         this.id = id;
     }
 
-    public Long getSnapshotId() {
-        return snapshotId;
+    public Long getProjectId() {
+        return projectId;
     }
 
-    public void setSnapshotId(Long snapshotId) {
-        this.snapshotId = snapshotId;
+    public void setProjectId(Long projectId) {
+        this.projectId = projectId;
     }
 
     public String getDependencyId() {
@@ -99,5 +100,13 @@ public class ProjectSnapshotDependency {
 
     public void setSelected(Boolean selected) {
         this.selected = selected;
+    }
+
+    public Boolean getIsValid() {
+        return isValid;
+    }
+
+    public void setIsValid(Boolean isValid) {
+        this.isValid = isValid;
     }
 }

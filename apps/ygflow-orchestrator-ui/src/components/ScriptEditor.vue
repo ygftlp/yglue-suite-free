@@ -7,7 +7,7 @@ import { autocompletion, completionKeymap, CompletionContext, CompletionResult }
 import { api } from "../api/client"
 
 // 添加调试日志工具
-const DEBUG = false
+const DEBUG = true  // 开启调试日志
 const debugLog = (...args: any[]) => DEBUG && console.log('[ScriptEditor]', ...args)
 
 type HelperTab = "variables" | "functions"
@@ -117,12 +117,12 @@ function createCompletionSource(
       const prefix = importMatch[1] || ""
       debugLog('Import completion triggered with prefix:', prefix)
       
-      // 收集所有类引用作为 import 补全选项
+      // 收集所有类引用作为 import 补全选项（来自IDEA插件上报的项目类）
       const importCompletions: Array<{ label: string; type: string; detail?: string }> = []
       getVariableGroups()?.forEach((group) => {
         if (group.title === "类引用") {
           group.items?.forEach((item) => {
-            if (item.snippet && item.snippet.startsWith(prefix)) {
+            if (item.snippet && item.snippet.toLowerCase().includes(prefix.toLowerCase())) {
               importCompletions.push({
                 label: item.snippet,
                 type: "class",
@@ -178,17 +178,17 @@ function createCompletionSource(
           detail: info.description,
         }))
       
-      // 如果是在行首或者前面是空白字符，也提供类引用补全
+      // 如果是在行首或者前面是空白字符，也提供类引用补全（来自IDEA插件上报的项目类）
       const lineStartMatch = textBefore.match(/^\s*(.*)$/)
       if (lineStartMatch && prefix === lineStartMatch[1]) {
         getVariableGroups()?.forEach((group) => {
           if (group.title === "类引用") {
             group.items?.forEach((item) => {
-              if (item.label && item.label.startsWith(prefix)) {
+              if (item.label && item.label.toLowerCase().includes(prefix.toLowerCase())) {
                 variableCompletions.push({
                   label: item.label,
                   type: "class",
-                  detail: item.description || "",
+                  detail: item.snippet || "",
                 })
               }
             })
@@ -415,12 +415,20 @@ watch(
 )
 
 async function loadScriptHelpersInternal() {
-  if (!props.projectKey) return
+  debugLog('开始加载项目类信息, projectKey:', props.projectKey, 'endpointId:', props.endpointId)
+  if (!props.projectKey) {
+    debugLog('没有 projectKey，跳过加载')
+    return
+  }
   try {
     const helpers = await api.getScriptHelpers(
       props.projectKey,
       props.endpointId ? { endpointId: props.endpointId } : undefined
     )
+    debugLog('成功获取项目类信息:', helpers)
+    debugLog('类数量:', helpers.classes?.length || 0)
+    debugLog('依赖数量:', helpers.selectedJars?.length || 0)
+    
     const depGroup: HelperGroupInput = {
       title: "依赖",
       items: (helpers.selectedJars || []).map((j) => ({
@@ -440,8 +448,10 @@ async function loadScriptHelpersInternal() {
     }
     externalFunctionGroups.value = [classGroup]
     externalVariableGroups.value = [...externalVariableGroups.value, depGroup]
+    debugLog('已更新 externalFunctionGroups 和 externalVariableGroups')
+    debugLog('类引用分组项目数:', classGroup.items.length)
   } catch (e) {
-    // ignore
+    console.error('[ScriptEditor] 加载项目类信息失败:', e)
   }
 }
 

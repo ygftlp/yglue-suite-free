@@ -6,6 +6,7 @@ import org.yglue.flow.orch.domain.jar.JarLibrary;
 import org.yglue.flow.orch.domain.jar.JarLibraryClass;
 import org.yglue.flow.orch.domain.jar.JarLibraryClassField;
 import org.yglue.flow.orch.domain.jar.JarLibraryClassMethod;
+import org.yglue.flow.orch.domain.jar.JarClassAggregate;
 
 @Mapper
 public interface JarLibraryMapper {
@@ -40,4 +41,17 @@ public interface JarLibraryMapper {
     java.util.List<JarLibraryClassMethod> listJarClassMethods(@Param("classId") Long classId,
                                                              @Param("limit") int limit,
                                                              @Param("offset") int offset);
+
+    // =============================
+    // 聚合：按 JAR 存储类的 methods/fields JSON
+    // =============================
+
+    void deleteJarClassAggregates(@Param("jarId") Long jarId);
+
+    void upsertJarClassAggregate(JarClassAggregate aggregate);
+
+    java.util.List<JarClassAggregate> listJarAggregatesByJarIds(@Param("jarIds") java.util.List<Long> jarIds);
+
+    JarClassAggregate selectJarAggregateByQualifiedNameAndJarIds(@Param("qualifiedName") String qualifiedName,
+                                                                 @Param("jarIds") java.util.List<Long> jarIds);
 }

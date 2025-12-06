@@ -6,6 +6,7 @@ public class ProjectSnapshotClassField {
     private String name;
     private String type;
     private Boolean isStatic;
+    private Boolean isValid;  // 是否有效
 
     public Long getId() {
         return id;
@@ -45,5 +46,13 @@ public class ProjectSnapshotClassField {
 
     public void setStatic(Boolean aStatic) {
         isStatic = aStatic;
+    }
+
+    public Boolean getIsValid() {
+        return isValid;
+    }
+
+    public void setIsValid(Boolean isValid) {
+        this.isValid = isValid;
     }
 }

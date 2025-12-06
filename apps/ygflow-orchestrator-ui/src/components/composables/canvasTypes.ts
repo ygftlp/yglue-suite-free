@@ -14,6 +14,7 @@ export type CanvasEditorProps = {
   endpointSchema?: EndpointSchemaHint
   flowModels?: FlowModel[] | null
   flowResolvers?: FlowResolver[] | null
+  endpointId?: number  // 端点ID，用于脚本编辑器加载类成员信息
 }
 
 export type ContextMenuState = {

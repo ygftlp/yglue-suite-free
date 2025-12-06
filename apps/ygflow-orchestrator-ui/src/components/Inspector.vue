@@ -45,6 +45,8 @@ const props = defineProps<{
   entrypointPath?: string | null
   flowModels?: FlowModel[] | null
   flowResolvers?: FlowResolver[] | null
+  projectKey?: string  // 项目标识，用于加载项目类信息
+  endpointId?: number  // 端点ID，用于加载端点相关类信息
 }>()
 
 const emit = defineEmits<{
@@ -597,6 +599,8 @@ function getServiceName(comp: any): string | null {
               :variable-groups="getInputScriptVariableGroups(input)"
               :function-groups="getInputScriptFunctionGroups()"
               :hide-preview="true"
+              :project-key="props.projectKey"
+              :endpoint-id="props.endpointId"
               @update:script="(script) => updateInputScript(index, script)"
             />
             

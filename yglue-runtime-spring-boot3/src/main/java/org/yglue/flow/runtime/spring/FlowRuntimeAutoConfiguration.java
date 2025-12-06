@@ -11,7 +11,6 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.DependsOn;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
 import org.springframework.core.annotation.Order;
 import org.springframework.web.servlet.HandlerInterceptor;
@@ -46,7 +45,7 @@ public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
         this.applicationContext = applicationContext;
     }
 
-    @Order(0)
+    @Order(0)  // 确保最先初始化
     @Bean
     @ConditionalOnMissingBean
     public SpringAware springAware() {
@@ -71,6 +70,7 @@ public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
         return executor;
     }
     
+    @Order(2)  // 在 springAware 和 flowExecutor 之后初始化
     @Bean
     @ConditionalOnMissingBean
     public RestEntryPointRegistry restEntryPointRegistry() {
@@ -83,6 +83,7 @@ public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
         return new RequestSchemaValidator(objectMapper);
     }
 
+    @Order(3)  // 在所有依赖之后初始化
     @Bean
     @ConditionalOnMissingBean
     public FlowDispatchInterceptor flowDispatchInterceptor(RuleEngine ruleEngine,
@@ -92,7 +93,6 @@ public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
         return new FlowDispatchInterceptor(ruleEngine, objectMapper, entryPointRegistry, requestSchemaValidator);
     }
 
-    @DependsOn("springAware")  // 明确声明依赖关系
     @Bean
     @ConditionalOnMissingBean
     public RuleEngine ruleEngine(ApplicationContext applicationContext,

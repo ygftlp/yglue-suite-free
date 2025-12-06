@@ -55,59 +55,61 @@ public class CodeSnapshotService {
         );
         Project project = ensureResult.project();
 
-        String snapshotKey = normalizeSnapshotKey(request.getSnapshotKey());
-        ProjectCodeSnapshot existing = codeSnapshotMapper.selectByProjectAndKey(project.getId(), snapshotKey);
-        if (existing != null) {
-            codeSnapshotMapper.deleteSnapshotAssociations(existing.getId());
-            codeSnapshotMapper.deleteSnapshot(existing.getId());
-        }
+        // 不再记录快照
+        ProjectCodeSnapshot snapshot = null;
 
-        ProjectCodeSnapshot snapshot = new ProjectCodeSnapshot();
-        snapshot.setProjectId(project.getId());
-        snapshot.setSnapshotKey(snapshotKey);
-        snapshot.setCommitHash(trimToNull(request.getCommitHash()));
-        snapshot.setGeneratedAt(parseInstant(request.getGeneratedAt()));
-        snapshot.setStatus(1);
-        snapshot.setContentHash(resolveContentHash(request.getContentHash(), snapshotKey));
-        snapshot.setIdeProduct(request.getIde() != null ? request.getIde().getProductName() : null);
-        snapshot.setIdeVersion(request.getIde() != null ? request.getIde().getVersion() : null);
-        snapshot.setIdeBuild(request.getIde() != null ? request.getIde().getBuild() : null);
-        codeSnapshotMapper.insertSnapshot(snapshot);
+        // 新逻辑：先标记聚合类为无效，再 UPSERT 聚合
+        codeSnapshotMapper.markAllAggregatesInvalid(project.getId());
+        codeSnapshotMapper.markAllDependenciesInvalid(project.getId());
 
         Map<String, Long> jarIdMap = upsertJarLibraries(request.getJarMetadata());
-        persistClasses(snapshot.getId(), request.getClasses());
-        persistDependencies(snapshot.getId(), request.getDependencies(),
+        upsertClassAggregates(project.getId(), request.getClasses());
+        upsertDependencies(project.getId(), request.getDependencies(),
                 request.getSelectedJars(), jarIdMap);
 
         return new SaveResult(snapshot, ensureResult.created());
     }
 
-    private void persistClasses(Long snapshotId, List<CodeSnapshotUploadRequest.ClassItem> classes) {
+    /**
+     * UPSERT 项目类（新逻辑）
+     */
+    private void upsertClasses(Long projectId, List<CodeSnapshotUploadRequest.ClassItem> classes) {
         if (classes == null) {
             return;
         }
         for (CodeSnapshotUploadRequest.ClassItem classItem : classes) {
             ProjectSnapshotClass snapshotClass = new ProjectSnapshotClass();
-            snapshotClass.setSnapshotId(snapshotId);
+            snapshotClass.setProjectId(projectId);
             snapshotClass.setQualifiedName(classItem.getQualifiedName());
             snapshotClass.setSimpleName(classItem.getSimpleName());
             snapshotClass.setPackageName(classItem.getPackageName());
             snapshotClass.setKind(classItem.getKind());
             snapshotClass.setSourceType(classItem.getSourceType() == null ? "PROJECT" : classItem.getSourceType());
-            codeSnapshotMapper.insertSnapshotClass(snapshotClass);
+            snapshotClass.setIsValid(true);
+            codeSnapshotMapper.upsertClass(snapshotClass);
 
-            if (classItem.getFields() != null) {
+            // 查询类 ID（UPSERT 后需要获取 ID）
+            if (snapshotClass.getId() == null) {
+                ProjectSnapshotClass inserted = codeSnapshotMapper.selectClassByProjectAndName(
+                    projectId, classItem.getQualifiedName());
+                if (inserted != null) {
+                    snapshotClass.setId(inserted.getId());
+                }
+            }
+
+            if (classItem.getFields() != null && snapshotClass.getId() != null) {
                 for (CodeSnapshotUploadRequest.FieldItem fieldItem : classItem.getFields()) {
                     ProjectSnapshotClassField field = new ProjectSnapshotClassField();
                     field.setClassId(snapshotClass.getId());
                     field.setName(fieldItem.getName());
                     field.setType(fieldItem.getType());
                     field.setStatic(fieldItem.getStatic());
-                    codeSnapshotMapper.insertSnapshotClassField(field);
+                    field.setIsValid(true);
+                    codeSnapshotMapper.upsertField(field);
                 }
             }
 
-            if (classItem.getMethods() != null) {
+            if (classItem.getMethods() != null && snapshotClass.getId() != null) {
                 for (CodeSnapshotUploadRequest.MethodItem methodItem : classItem.getMethods()) {
                     ProjectSnapshotClassMethod method = new ProjectSnapshotClassMethod();
                     method.setClassId(snapshotClass.getId());
@@ -115,13 +117,26 @@ public class CodeSnapshotService {
                     method.setReturnType(methodItem.getReturnType());
                     method.setStatic(methodItem.getStatic());
                     method.setParametersJson(writeParameters(methodItem.getParameters()));
-                    codeSnapshotMapper.insertSnapshotClassMethod(method);
+                    
+                    // 生成方法签名哈希
+                    String hash = ProjectSnapshotClassMethod.generateSignatureHash(
+                        method.getName(),
+                        method.getReturnType(),
+                        method.getParametersJson()
+                    );
+                    method.setMethodSignatureHash(hash);
+                    method.setIsValid(true);
+                    
+                    codeSnapshotMapper.upsertMethod(method);
                 }
             }
         }
     }
 
-    private void persistDependencies(Long snapshotId,
+    /**
+     * UPSERT 项目依赖（新逻辑）
+     */
+    private void upsertDependencies(Long projectId,
                                      List<CodeSnapshotUploadRequest.DependencyItem> dependencies,
                                      List<String> selectedJars,
                                      Map<String, Long> jarIdMap) {
@@ -133,7 +148,7 @@ public class CodeSnapshotService {
                 : new HashSet<>(selectedJars);
         for (CodeSnapshotUploadRequest.DependencyItem dep : dependencies) {
             ProjectSnapshotDependency dependency = new ProjectSnapshotDependency();
-            dependency.setSnapshotId(snapshotId);
+            dependency.setProjectId(projectId);
             dependency.setDependencyId(dep.getDependencyId());
             dependency.setName(dep.getName());
             dependency.setGroupId(dep.getGroupId());
@@ -145,7 +160,69 @@ public class CodeSnapshotService {
                 dependency.setJarId(jarIdMap.get(dep.getDependencyId()));
             }
             dependency.setSelected(selected.contains(dep.getDependencyId()));
-            codeSnapshotMapper.insertSnapshotDependency(dependency);
+            dependency.setIsValid(true);
+            codeSnapshotMapper.upsertDependency(dependency);
+        }
+    }
+
+    /**
+     * UPSERT 聚合类（按类存储 methods/fields JSON）
+     */
+    private void upsertClassAggregates(Long projectId, List<CodeSnapshotUploadRequest.ClassItem> classes) {
+        if (classes == null) {
+            return;
+        }
+        for (CodeSnapshotUploadRequest.ClassItem classItem : classes) {
+            org.yglue.flow.orch.domain.snapshot.ProjectClassAggregate agg = new org.yglue.flow.orch.domain.snapshot.ProjectClassAggregate();
+            agg.setProjectId(projectId);
+            agg.setQualifiedName(classItem.getQualifiedName());
+            agg.setSimpleName(classItem.getSimpleName());
+            agg.setPackageName(classItem.getPackageName());
+            agg.setKind(classItem.getKind());
+            agg.setSourceType(classItem.getSourceType() == null ? "PROJECT" : classItem.getSourceType());
+            agg.setDoc(classItem.getDoc());
+            agg.setFieldsJson(toJsonFields(classItem.getFields()));
+            agg.setMethodsJson(toJsonMethods(classItem.getMethods()));
+            agg.setIsValid(true);
+            codeSnapshotMapper.upsertClassAggregate(agg);
+        }
+    }
+
+    private String toJsonFields(List<CodeSnapshotUploadRequest.FieldItem> fields) {
+        if (fields == null || fields.isEmpty()) {
+            return null;
+        }
+        try {
+            return OBJECT_MAPPER.writeValueAsString(fields.stream()
+                    .map(f -> java.util.Map.of(
+                            "name", f.getName(),
+                            "type", f.getType(),
+                            "static", f.getStatic(),
+                            "doc", f.getDoc()))
+                    .collect(java.util.stream.Collectors.toList()));
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to serialize fields", e);
+        }
+    }
+
+    private String toJsonMethods(List<CodeSnapshotUploadRequest.MethodItem> methods) {
+        if (methods == null || methods.isEmpty()) {
+            return null;
+        }
+        try {
+            return OBJECT_MAPPER.writeValueAsString(methods.stream()
+                    .map(m -> java.util.Map.of(
+                            "name", m.getName(),
+                            "returnType", m.getReturnType(),
+                            "static", m.getStatic(),
+                            "doc", m.getDoc(),
+                            "parameters", (m.getParameters() == null ? java.util.List.of() : m.getParameters().stream()
+                                    .map(p -> java.util.Map.of("name", p.getName(), "type", p.getType()))
+                                    .collect(java.util.stream.Collectors.toList()))
+                    ))
+                    .collect(java.util.stream.Collectors.toList()));
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to serialize methods", e);
         }
     }
 
@@ -178,9 +255,7 @@ public class CodeSnapshotService {
             }
 
             if (needRefresh) {
-                jarLibraryMapper.deleteJarClassMethods(jarLibrary.getId());
-                jarLibraryMapper.deleteJarClassFields(jarLibrary.getId());
-                jarLibraryMapper.deleteJarClasses(jarLibrary.getId());
+                jarLibraryMapper.deleteJarClassAggregates(jarLibrary.getId());
                 insertJarClasses(jarLibrary.getId(), metadata.getClasses());
             }
 
@@ -194,36 +269,16 @@ public class CodeSnapshotService {
             return;
         }
         for (CodeSnapshotUploadRequest.JarClassItem classItem : classes) {
-            JarLibraryClass jarClass = new JarLibraryClass();
-            jarClass.setJarId(jarId);
-            jarClass.setQualifiedName(classItem.getQualifiedName());
-            jarClass.setSimpleName(classItem.getSimpleName());
-            jarClass.setPackageName(classItem.getPackageName());
-            jarClass.setKind(classItem.getKind());
-            jarLibraryMapper.insertJarClass(jarClass);
-
-            if (classItem.getFields() != null) {
-                for (CodeSnapshotUploadRequest.JarFieldItem fieldItem : classItem.getFields()) {
-                    JarLibraryClassField field = new JarLibraryClassField();
-                    field.setClassId(jarClass.getId());
-                    field.setName(fieldItem.getName());
-                    field.setType(fieldItem.getType());
-                    field.setStatic(fieldItem.getStatic());
-                    jarLibraryMapper.insertJarClassField(field);
-                }
-            }
-
-            if (classItem.getMethods() != null) {
-                for (CodeSnapshotUploadRequest.JarMethodItem methodItem : classItem.getMethods()) {
-                    JarLibraryClassMethod method = new JarLibraryClassMethod();
-                    method.setClassId(jarClass.getId());
-                    method.setName(methodItem.getName());
-                    method.setReturnType(methodItem.getReturnType());
-                    method.setStatic(methodItem.getStatic());
-                    method.setParametersJson(writeParameters(methodItem.getParameters()));
-                    jarLibraryMapper.insertJarClassMethod(method);
-                }
-            }
+            org.yglue.flow.orch.domain.jar.JarClassAggregate agg = new org.yglue.flow.orch.domain.jar.JarClassAggregate();
+            agg.setJarId(jarId);
+            agg.setQualifiedName(classItem.getQualifiedName());
+            agg.setSimpleName(classItem.getSimpleName());
+            agg.setPackageName(classItem.getPackageName());
+            agg.setKind(classItem.getKind());
+            agg.setDoc(classItem.getDoc());
+            agg.setFieldsJson(toJsonFields(classItem.getFields()));
+            agg.setMethodsJson(toJsonMethods(classItem.getMethods()));
+            jarLibraryMapper.upsertJarClassAggregate(agg);
         }
     }
 

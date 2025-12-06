@@ -2,7 +2,7 @@ package org.yglue.flow.orch.domain.snapshot;
 
 public class ProjectSnapshotClass {
     private Long id;
-    private Long snapshotId;
+    private Long projectId;  // 改为使用 projectId 代替 snapshotId
     private String qualifiedName;
     private String simpleName;
     private String packageName;
@@ -10,6 +10,7 @@ public class ProjectSnapshotClass {
     private String sourceType;
     private Long jarId;
     private String doc;
+    private Boolean isValid;  // 是否有效：true=有效，false=无效（已删除）
 
     public Long getId() {
         return id;
@@ -19,12 +20,12 @@ public class ProjectSnapshotClass {
         this.id = id;
     }
 
-    public Long getSnapshotId() {
-        return snapshotId;
+    public Long getProjectId() {
+        return projectId;
     }
 
-    public void setSnapshotId(Long snapshotId) {
-        this.snapshotId = snapshotId;
+    public void setProjectId(Long projectId) {
+        this.projectId = projectId;
     }
 
     public String getQualifiedName() {
@@ -81,5 +82,13 @@ public class ProjectSnapshotClass {
 
     public void setDoc(String doc) {
         this.doc = doc;
+    }
+
+    public Boolean getIsValid() {
+        return isValid;
+    }
+
+    public void setIsValid(Boolean isValid) {
+        this.isValid = isValid;
     }
 }

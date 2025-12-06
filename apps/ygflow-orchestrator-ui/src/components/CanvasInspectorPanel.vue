@@ -15,6 +15,8 @@ const props = defineProps<{
   selectedEdge: any | null
   nodes: any[]
   edges: any[]
+  projectKey?: string  // 项目标识，用于加载项目类信息
+  endpointId?: number  // 端点ID
 }>()
 
 const emit = defineEmits<{
@@ -45,6 +47,8 @@ const emit = defineEmits<{
           :selected-edge="props.selectedEdge"
           :nodes="props.nodes"
           :edges="props.edges"
+          :project-key="props.projectKey"
+          :endpoint-id="props.endpointId"
           @update-node="emit('update-node', $event)"
           @update-edge="emit('update-edge', $event)"
         />
