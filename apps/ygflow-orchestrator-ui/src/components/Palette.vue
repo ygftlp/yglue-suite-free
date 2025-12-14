@@ -35,7 +35,7 @@ type LogicItem = {
   id: string
   title: string
   description: string
-  nodeType: "branch" | "transaction" | "transformer"
+  nodeType: "branch" | "transaction" | "transformer" | "serviceGroup"
   variant?: "begin" | "end"
 }
 
@@ -50,6 +50,7 @@ const searchKeyword = ref("")
 
 const logicItems: LogicItem[] = [
   { id: "branch-node", title: "条件分支", description: LABELS.branchDesc, nodeType: "branch" },
+  { id: "service-group", title: "服务组", description: "将多个服务组合在一起,可启用统一事务控制", nodeType: "serviceGroup" },
   { id: "txn-begin", title: "事务开始", description: "创建事务上下文", nodeType: "transaction", variant: "begin" },
   { id: "txn-end", title: "事务结束", description: "提交或回滚事务", nodeType: "transaction", variant: "end" },
   { id: "transformer-node", title: "脚本节点", description: "通过 Groovy 脚本处理数据转换和响应构造", nodeType: "transformer" },

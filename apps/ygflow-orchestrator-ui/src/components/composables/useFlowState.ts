@@ -1,8 +1,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue"
-import TaskNode from "../TaskNode.vue"
+import ServiceNode from "../ServiceNode.vue"
 import BranchNode from "../BranchNode.vue"
-import TransactionNode from "../TransactionNode.vue"
 import TransformerNode from "../TransformerNode.vue"
+import ServiceGroupNode from "../ServiceGroupNode.vue"
 import type { ContextMenuState } from "./canvasTypes"
 import { generateContextKey, inferValueType } from "./flowUtils"
 
@@ -14,10 +14,10 @@ export function useFlowState() {
   const contextMenu = ref<ContextMenuState>({ visible: false, x: 0, y: 0, nodeId: null, label: "" })
 
   const nodeTypes = {
-    service: TaskNode,  // service 节点使用 TaskNode 组件
+    service: ServiceNode,
     branch: BranchNode,
-    transaction: TransactionNode,
     transformer: TransformerNode,
+    serviceGroup: ServiceGroupNode,
   } as const
 
   const canDelete = computed(() => {
@@ -120,7 +120,21 @@ export function useFlowState() {
   })
 
   function handleConnect(params: any) {
+    const sourceNode = nodes.value.find((n: any) => n.id === params.source)
     const targetNode = nodes.value.find((n: any) => n.id === params.target)
+    
+    // 检查是否跨服务组边界连线
+    const sourceParent = sourceNode?.parentNode
+    const targetParent = targetNode?.parentNode
+    
+    // 如果源节点和目标节点的父节点不一致,阻止连线
+    if (sourceParent !== targetParent) {
+      if (sourceParent || targetParent) {
+        window.alert("服务组内的节点只能与同组内的节点连线")
+        return
+      }
+    }
+    
     if (targetNode?.type === "transformer") {
       const existingIncomingEdges = edges.value.filter((e: any) => e.target === params.target && e.id !== params.edge?.id)
       if (existingIncomingEdges.length >= 1) {
@@ -185,7 +199,7 @@ export function useFlowState() {
     }
   }
 
-  function addNodeFromPalette(item: any, position: { x: number; y: number }) {
+  function addNodeFromPalette(item: any, position: { x: number; y: number }, parentId?: string) {
     if (!item) return
     const id = String(Date.now())
     // 根据 endpointType 决定节点类型：FLOW_OPERATION -> service（本地服务调用）
@@ -236,6 +250,13 @@ export function useFlowState() {
         const variant = item.variant === "end" ? "end" : "begin"
         const defaultLabel = variant === "end" ? "事务结束" : "事务开始"
         return { label: item.title || defaultLabel, transaction: variant }
+      }
+      if (nodeType === "serviceGroup") {
+        return {
+          label: item.title || "服务组",
+          enableTransaction: false,
+          transactionManager: "defaultTransactionManager",
+        }
       }
       if (nodeType === "transformer") {
         return {
@@ -328,13 +349,41 @@ export function useFlowState() {
       return base
     })()
 
+    // 如果有父节点，需要将绝对坐标转换为相对坐标
+    let finalPosition = position
+    if (parentId) {
+      const parentNode = nodes.value.find((n: any) => n.id === parentId)
+      if (parentNode) {
+        finalPosition = {
+          x: position.x - parentNode.position.x,
+          y: position.y - parentNode.position.y,
+        }
+      }
+    }
+
     nodes.value = [
       ...nodes.value,
       {
         id,
-        position,
+        position: finalPosition,
         data,
         type: nodeType,
+        // 如果有parentId,设置父节点关系并限制在父节点内
+        ...(parentId ? { 
+          parentNode: parentId,
+          extent: 'parent' as const,  // 限制子节点只能在父节点范围内移动
+        } : {}),
+        // 服务组需要显式设置容器属性
+        ...(nodeType === "serviceGroup" ? {
+          style: {
+            width: 400,
+            height: 250,
+            padding: 0,
+          },
+          draggable: true,
+          // 允许其他节点作为子节点
+          expandParent: true,
+        } : {}),
       },
     ]
   }

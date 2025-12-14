@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from "vue"
 import TransformerEditor from "./TransformerEditor.vue"
-import ScriptEditor from "./ScriptEditor.vue"
-import ValidationEditor from "./ValidationEditor.vue"
+import ServiceNodeConfig from "./ServiceNodeConfig.vue"
+import ServiceGroupConfig from "./ServiceGroupConfig.vue"
 import { transactionManagers } from "../data/transactionManagers"
 import type { FlowModel, FlowResolver } from "../api/client"
 
@@ -64,9 +64,8 @@ const modelOptions = computed(() =>
 const resolverCatalog = computed(() => props.flowResolvers ?? [])
 
 const isBranchNode = computed(() => props.selectedNode?.type === "branch" || props.selectedNode?.data?.branch)
-const transactionVariant = computed(() => props.selectedNode?.data?.transaction as "begin" | "end" | undefined)
-const isTransactionNode = computed(() => Boolean(transactionVariant.value))
 const isTransformerNode = computed(() => props.selectedNode?.type === "transformer")
+const isServiceGroupNode = computed(() => props.selectedNode?.type === "serviceGroup")
 const allowCustomIO = computed(() => !props.selectedNode?.data?.comp)
 const hasSelection = computed(() => Boolean(props.selectedNode || props.selectedEdge))
 const outputInfo = computed(() => props.selectedNode?.data?.output || null)
@@ -448,307 +447,56 @@ function getServiceName(comp: any): string | null {
       <!-- 脚本节点不需要显示通用的输入参数和输出结果配置 -->
       <!-- 脚本节点的输入来自上游节点（自动），输出由脚本生成 -->
     </template>
+    <template v-else-if="isServiceGroupNode">
+      <div>
+        <div class="muted">服务组名称</div>
+        <input
+          class="input"
+          :value="selectedNode.data?.label || ''"
+          @input="updateNodeField('label', ($event.target as HTMLInputElement).value)"
+        />
+      </div>
+      <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e7eb">
+        <ServiceGroupConfig
+          :label="selectedNode.data?.label"
+          :enable-transaction="selectedNode.data?.enableTransaction"
+          :tx-mode="selectedNode.data?.txMode"
+          :transaction-manager="selectedNode.data?.transactionManager"
+          @update:label="updateNodeField('label', $event)"
+          @update:enable-transaction="updateNodeField('enableTransaction', $event)"
+          @update:tx-mode="updateNodeField('txMode', $event)"
+          @update:transaction-manager="updateNodeField('transactionManager', $event)"
+        />
+      </div>
+    </template>
     <template v-else-if="isBranchNode">
       <div class="tip">
         条件分支节点默认作为"无条件"出口，你可以在右键连线时补充条件表达式，也可以保持为空（即未命中则走该分支）。
       </div>
     </template>
-    <template v-else-if="isTransactionNode">
-      <div class="tip">
-        {{ transactionVariant === "end" ? "事务结束：用于提交或回滚前面事务范围内的节点。" : "事务开始：从此节点之后的服务共享同一事务上下文。" }}
-      </div>
-      <div v-if="transactionVariant === 'begin'">
-        <div class="muted">事务管理器</div>
-        <select
-          class="input"
-          :value="props.selectedNode?.data?.txManager || ''"
-          @change="updateNodeField('txManager', ($event.target as HTMLSelectElement).value)"
-        >
-          <option value="">默认</option>
-          <option v-for="mgr in transactionManagers" :key="mgr.value" :value="mgr.value">
-            {{ mgr.label }}
-          </option>
-        </select>
-      </div>
-    </template>
 
       <template v-else-if="selectedNode && !isTransformerNode">
-        <div>
-          <div class="muted">显示名称</div>
-        <input
-          class="input"
-          :class="{ locked: Boolean(selectedNode.data?.comp) }"
-          :readonly="Boolean(selectedNode.data?.comp)"
-          :value="selectedNode.data?.label || selectedNode.label || ''"
-          @input="!selectedNode.data?.comp && updateNodeField('label', ($event.target as HTMLInputElement).value)"
+        <ServiceNodeConfig
+          :label="selectedNode.data?.label || selectedNode.label || ''"
+          :comp="selectedNode.data?.comp"
+          :inputs="selectedNode.data?.inputs"
+          :output="selectedNode.data?.output"
+          :retry="selectedNode.data?.retry"
+          :timeout="selectedNode.data?.timeout"
+          :isolation="selectedNode.data?.isolation"
+          :tx-mode="selectedNode.data?.txMode"
+          :transaction-manager="selectedNode.data?.transactionManager"
+          :project-key="props.projectKey"
+          :endpoint-id="props.endpointId"
+          @update:label="updateNodeField('label', $event)"
+          @update:inputs="updateNodeField('inputs', $event)"
+          @update:output="updateNodeField('output', $event)"
+          @update:retry="updateNodeField('retry', $event)"
+          @update:timeout="updateNodeField('timeout', $event)"
+          @update:isolation="updateNodeField('isolation', $event)"
+          @update:tx-mode="updateNodeField('txMode', $event)"
+          @update:transaction-manager="updateNodeField('transactionManager', $event)"
         />
-      </div>
-
-      <div v-if="selectedNode.data?.comp" style="margin-top:12px">
-        <div class="muted" style="margin-bottom:6px">组件绑定</div>
-        <div class="card" style="padding:10px; display:flex; flex-direction:column; gap:8px">
-          <div>
-            <div class="muted" style="font-size:11px; margin-bottom:4px">bean 名称（Service name）</div>
-            <div style="font-size:13px; font-weight:500; color:#1f2937">
-              {{ getServiceName(selectedNode.data?.comp) || selectedNode.data?.comp?.bean || '-' }}
-            </div>
-          </div>
-          <div>
-            <div class="muted" style="font-size:11px; margin-bottom:4px">method 名称</div>
-            <div style="font-size:13px; font-weight:500; color:#1f2937">
-              {{ selectedNode.data?.comp?.method || '-' }}
-            </div>
-          </div>
-          <div v-if="selectedNode.data?.comp?.version">
-            <div class="muted" style="font-size:11px; margin-bottom:4px">版本</div>
-            <div style="font-size:13px; font-weight:500; color:#1f2937">
-              {{ selectedNode.data?.comp?.version }}
-            </div>
-          </div>
-        </div>
-      </div>
-
-        <div class="col" style="gap:8px; margin-top:12px">
-          <div class="row" style="justify-content:space-between; align-items:center">
-            <div class="muted">输入参数</div>
-            <button
-              v-if="allowCustomIO"
-              class="btn"
-              style="font-size:12px"
-              @click="addIO('inputs')"
-            >
-              新增输入
-            </button>
-            <span v-else class="muted" style="font-size:12px">来自组件方法，无法增删</span>
-          </div>
-          <div v-if="(selectedNode.data?.inputs || []).length === 0" class="muted" style="font-size:12px">暂无输入参数</div>
-          <div
-            v-for="(input, index) in selectedNode.data?.inputs || []"
-            :key="index"
-            class="card input-block"
-          >
-            <div class="input-header">
-              <div class="input-main-info">
-                <div class="input-label">
-                  <div class="muted small">参数</div>
-                  <template v-if="allowCustomIO">
-                    <input
-                      class="input"
-                      :value="input.name || ''"
-                      @input="updateIO('inputs', index, { name: ($event.target as HTMLInputElement).value })"
-                    />
-                  </template>
-                  <span v-else class="pill-text">{{ input.name }}</span>
-                </div>
-                <div class="input-label">
-                  <div class="muted small">类型</div>
-                  <template v-if="allowCustomIO">
-                    <div class="type-input-group">
-                      <select
-                        class="input"
-                        :value="input.valueType || 'STRING'"
-                        @change="updateInputType(index, ($event.target as HTMLSelectElement).value)"
-                      >
-                        <option value="STRING">String</option>
-                        <option value="NUMBER">Number</option>
-                        <option value="BOOLEAN">Boolean</option>
-                        <option value="OBJECT">Object</option>
-                        <option value="ARRAY">Array</option>
-                      </select>
-                      <input
-                        v-if="['OBJECT','ARRAY'].includes((input.valueType || '').toUpperCase())"
-                        class="input type-name-input"
-                        placeholder="类型名（如 com.example.User）"
-                        :value="input.typeName || ''"
-                        @input="updateInputTypeName(index, ($event.target as HTMLInputElement).value)"
-                      />
-                    </div>
-                  </template>
-                  <div v-else class="type-display">
-                    <span class="pill-text type-text">{{ formatInputType(input) }}</span>
-                  </div>
-                </div>
-                <!-- 值字段：独立显示在类型下方 -->
-                <div class="input-label">
-                  <div class="muted small">值</div>
-                  <textarea
-                    class="input script-value-input"
-                    :value="getInputScript(input)"
-                    placeholder="点击此处打开脚本编辑器配置参数值..."
-                    readonly
-                    @click="scriptEditorRefs[index]?.openCodeEditor()"
-                  ></textarea>
-                </div>
-              </div>
-              <div class="input-actions">
-                <button
-                  v-if="allowCustomIO"
-                  class="btn"
-                  style="font-size:12px"
-                  @click="removeIO('inputs', index)"
-                >
-                  删除
-                </button>
-              </div>
-            </div>
-            <!-- 脚本编辑器（隐藏预览，只显示弹框） -->
-            <ScriptEditor
-              :ref="(el) => { scriptEditorRefs[index] = el as any }"
-              :script="getInputScript(input)"
-              title="参数取值脚本编辑器"
-              :variable-groups="getInputScriptVariableGroups(input)"
-              :function-groups="getInputScriptFunctionGroups()"
-              :hide-preview="true"
-              :project-key="props.projectKey"
-              :endpoint-id="props.endpointId"
-              @update:script="(script) => updateInputScript(index, script)"
-            />
-            
-            <!-- 校验器配置区域 -->
-            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
-                <div class="muted small">校验器</div>
-                <button
-                  class="btn"
-                  style="font-size: 11px; padding: 4px 8px"
-                  @click="addValidator(index)"
-                >
-                  添加校验器
-                </button>
-              </div>
-              
-              <div v-if="getInputValidators(input).length === 0" class="muted" style="font-size: 11px">
-                暂无校验器
-              </div>
-              
-              <div
-                v-for="(validator, validatorIndex) in getInputValidators(input)"
-                :key="validator.id || validatorIndex"
-                class="card"
-                style="padding: 8px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center"
-              >
-                <div style="flex: 1">
-                  <div style="display: flex; align-items: center; gap: 8px">
-                    <span style="font-size: 12px; font-weight: 500">{{ getValidatorTypeLabel(validator.type) }}</span>
-                    <span v-if="!validator.enabled" style="font-size: 11px; color: #9ca3af">（已禁用）</span>
-                  </div>
-                  <div v-if="validator.message" style="font-size: 11px; color: #6b7280; margin-top: 2px">
-                    {{ validator.message }}
-                  </div>
-                </div>
-                <div style="display: flex; gap: 4px">
-                  <button
-                    class="btn"
-                    style="font-size: 11px; padding: 4px 8px"
-                    @click="editValidator(index, validatorIndex)"
-                  >
-                    编辑
-                  </button>
-                  <button
-                    class="btn"
-                    style="font-size: 11px; padding: 4px 8px"
-                    @click="removeValidator(index, validatorIndex)"
-                  >
-                    删除
-                  </button>
-                </div>
-              </div>
-              
-              <!-- 校验器编辑器 -->
-              <ValidationEditor
-                :ref="(el) => { validationEditorRefs[index] = el as any }"
-                :rule="editingValidatorRule"
-                :value-type="input.valueType || 'STRING'"
-                @save="saveValidator(index, $event)"
-                @cancel="cancelEditValidator"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div class="col" style="gap:8px; margin-top:12px">
-          <div class="row" style="justify-content:space-between; align-items:center">
-            <div class="muted">输出结果</div>
-          </div>
-          <div v-if="!outputInfo" class="muted" style="font-size:12px">暂无返回值</div>
-          <div
-            v-else
-            class="card"
-            style="padding:10px; display:flex; flex-direction:column; gap:8px"
-          >
-            <div v-if="outputInfo.description" class="input-hint">说明：{{ outputInfo.description }}</div>
-            <div class="type-pill">类型：{{ formatOutputType(outputInfo) }}</div>
-            <div v-if="isObjectOutput(outputInfo)" class="field-table">
-              <div class="field-row header">
-                <span>字段</span>
-                <span>类型</span>
-                <span>说明</span>
-              </div>
-              <div
-                v-for="(field, idx) in outputInfo.fields || []"
-                :key="idx"
-                class="field-row"
-              >
-                <span>{{ field.name }}</span>
-                <span>{{ field.type }}</span>
-                <span>{{ field.description || '-' }}</span>
-              </div>
-              <div v-if="(outputInfo.fields || []).length === 0" class="muted" style="font-size:12px">暂无字段</div>
-            </div>
-            <div v-else class="muted" style="font-size:12px">基础类型：{{ formatOutputType(outputInfo) }}</div>
-            <div class="binding-field">
-              <div class="muted" style="font-size:11px">绑定到 ctx 的 key</div>
-              <input
-                class="input"
-                placeholder="默认 retxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                :value="outputInfo.contextKey || ''"
-                @input="updateOutputField({ contextKey: ($event.target as HTMLInputElement).value })"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div style="margin-top:12px">
-          <div class="muted">执行参数</div>
-          <div class="row" style="flex-wrap:wrap; gap:8px">
-            <input
-              class="input"
-              style="flex:1 1 140px"
-              placeholder="重试次数"
-              :value="selectedNode.data?.retry || ''"
-              @input="updateNodeField('retry', ($event.target as HTMLInputElement).value)"
-            />
-            <input
-              class="input"
-              style="flex:1 1 140px"
-              placeholder="超时（ms）"
-              :value="selectedNode.data?.timeout || ''"
-              @input="updateNodeField('timeout', ($event.target as HTMLInputElement).value)"
-            />
-            <select
-              class="input"
-              style="flex:1 1 140px"
-              :value="selectedNode.data?.isolation || 'SERIAL'"
-              @change="updateNodeField('isolation', ($event.target as HTMLSelectElement).value)"
-            >
-              <option value="SERIAL">串行</option>
-              <option value="PARALLEL">并行</option>
-            </select>
-          </div>
-        </div>
-        <div>
-          <div class="muted">事务模式</div>
-          <select
-            class="input"
-            :value="selectedNode.data?.txMode || 'NONE'"
-            @change="updateNodeField('txMode', ($event.target as HTMLSelectElement).value)"
-          >
-            <option value="NONE">无</option>
-            <option value="SPRING">Spring</option>
-            <option value="SEATA">Seata</option>
-            <option value="SAGA">Saga</option>
-          </select>
-        </div>
       </template>
     </div>
   </div>

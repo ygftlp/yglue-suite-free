@@ -23,7 +23,7 @@ const emit = defineEmits<{
   (event: "node-contextmenu", payload: any): void
   (event: "edge-click", payload: any): void
   (event: "edge-contextmenu", payload: any): void
-  (event: "drop-node", payload: { item: any; position: { x: number; y: number } }): void
+  (event: "drop-node", payload: { item: any; position: { x: number; y: number }; parentId?: string }): void
   (event: "hide-context-menu"): void
   (event: "delete-selection"): void
   (event: "remove-context-menu-node"): void
@@ -39,7 +39,7 @@ const edgesModel = computed({
   set: (value: any[]) => emit("update:edges", value),
 })
 
-const { project, fitView, zoomIn, zoomOut } = useVueFlow()
+const { project, fitView, zoomIn, zoomOut, getNodes } = useVueFlow()
 
 function handleDragOver(event: DragEvent) {
   event.preventDefault()
@@ -64,7 +64,46 @@ function handleDrop(event: DragEvent) {
   const position = project
     ? project({ x: event.clientX - bounds.left, y: event.clientY - bounds.top })
     : { x: event.clientX - bounds.left, y: event.clientY - bounds.top }
-  emit("drop-node", { item, position })
+  
+  // 检测拖拽位置是否在服务组节点内
+  let parentId: string | undefined = undefined
+  const allNodes = props.nodes
+  
+  for (const node of allNodes) {
+    if (node.type === 'serviceGroup') {
+      // 服务组节点的绝对位置和尺寸
+      const nodeX = node.position.x
+      const nodeY = node.position.y
+      const nodeStyle = typeof node.style === 'object' ? node.style : {}
+      // 使用 computed dimensions 或 style 中的宽高
+      const nodeWidth = (node as any).computedPosition?.w || (node as any).dimensions?.width || (nodeStyle as any).width || 400
+      const nodeHeight = (node as any).computedPosition?.h || (node as any).dimensions?.height || (nodeStyle as any).height || 250
+      
+      console.log('[handleDrop] 检测服务组:', {
+        nodeId: node.id,
+        nodeX,
+        nodeY,
+        nodeWidth,
+        nodeHeight,
+        dropX: position.x,
+        dropY: position.y,
+      })
+      
+      // 检查拖拽位置是否在服务组范围内
+      if (
+        position.x >= nodeX &&
+        position.x <= nodeX + nodeWidth &&
+        position.y >= nodeY &&
+        position.y <= nodeY + nodeHeight
+      ) {
+        parentId = node.id
+        console.log('[handleDrop] 找到父节点:', parentId)
+        break
+      }
+    }
+  }
+  
+  emit("drop-node", { item, position, parentId })
 }
 
 function handleZoomIn() {

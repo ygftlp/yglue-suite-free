@@ -59,8 +59,8 @@ const {
 
 const gridColumns = computed(() => `${paletteWidth.value}px 1fr ${inspectorWidth.value}px`)
 
-function handleDropNode(payload: { item: any; position: { x: number; y: number } }) {
-  addNodeFromPalette(payload.item, payload.position)
+function handleDropNode(payload: { item: any; position: { x: number; y: number }; parentId?: string }) {
+  addNodeFromPalette(payload.item, payload.position, payload.parentId)
 }
 </script>
 
