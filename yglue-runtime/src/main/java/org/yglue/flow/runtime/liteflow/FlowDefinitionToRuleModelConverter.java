@@ -330,22 +330,13 @@ public class FlowDefinitionToRuleModelConverter {
             case "service":
                 // 服务节点使用 ServiceNodeComponent
                 return "serviceNode";
+            case "servicegroup":
+                // 服务组节点使用 ServiceGroupNodeComponent
+                return "serviceGroup";
             case "transformer":
                 // 转换器节点使用 TransformerNodeComponent（如果有的话）
                 // 目前也使用 serviceNode，因为 ServiceNodeComponent 能处理所有类型
                 return "serviceNode";
-            case "branch":
-                // 分支节点使用 serviceNode（条件判断逻辑在 ServiceNodeComponent 中处理）
-                return "serviceNode";
-            case "transaction":
-                // 事务节点使用 serviceNode
-                return "serviceNode";
-            case "rest":
-                // REST 调用节点使用 serviceNode
-                return "serviceNode";
-            default:
-                // 默认使用 serviceNode
-                return "serviceNode";
-        }
+
     }
 }
