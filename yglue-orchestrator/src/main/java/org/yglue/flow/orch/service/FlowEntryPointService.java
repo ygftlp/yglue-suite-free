@@ -13,8 +13,10 @@ import org.yglue.flow.orch.web.dto.flow.request.FlowEntryPointRequest;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 @Service
 public class FlowEntryPointService {
@@ -50,6 +52,7 @@ public class FlowEntryPointService {
             entry.setHttpMethod(normalizeMethod(request.getMethod()));
             entry.setRequestSchemaJson(normalizeSchemaJson(request.getRequestSchemaJson()));
             entry.setDataResponseFormat(normalizeDataResponseFormat(request.getDataResponseFormat()));
+            entry.setInboundInterceptorsJson(normalizeInboundInterceptors(request.getInboundInterceptors()));
             entry.setEnabled(request.getEnabled() == null ? Boolean.TRUE : request.getEnabled());
             entry.setCreateBy(operator);
             entry.setUpdateBy(operator);
@@ -60,6 +63,7 @@ public class FlowEntryPointService {
             existing.setHttpMethod(normalizeMethod(request.getMethod()));
             existing.setRequestSchemaJson(normalizeSchemaJson(request.getRequestSchemaJson()));
             existing.setDataResponseFormat(normalizeDataResponseFormat(request.getDataResponseFormat()));
+            existing.setInboundInterceptorsJson(normalizeInboundInterceptors(request.getInboundInterceptors()));
             existing.setEnabled(request.getEnabled() == null ? Boolean.TRUE : request.getEnabled());
             existing.setUpdateBy(operator);
             existing.setDelFlag(0);
@@ -192,5 +196,76 @@ public class FlowEntryPointService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "dataResponseFormat must be a valid JSON object or preset name", ex);
         }
+    }
+
+    private String normalizeInboundInterceptors(Object inboundInterceptors) {
+        if (inboundInterceptors == null) {
+            return null;
+        }
+        try {
+            JsonNode tree = parseInboundInterceptorsTree(inboundInterceptors);
+            validateInboundInterceptorsTree(tree);
+            return OBJECT_MAPPER.writeValueAsString(tree);
+        } catch (ResponseStatusException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "inboundInterceptors must be a valid JSON array", ex);
+        }
+    }
+
+    private JsonNode parseInboundInterceptorsTree(Object inboundInterceptors) throws Exception {
+        if (inboundInterceptors instanceof String raw) {
+            String trimmed = raw.trim();
+            if (trimmed.isEmpty()) {
+                return OBJECT_MAPPER.createArrayNode();
+            }
+            return OBJECT_MAPPER.readTree(trimmed);
+        }
+        return OBJECT_MAPPER.valueToTree(inboundInterceptors);
+    }
+
+    private void validateInboundInterceptorsTree(JsonNode tree) {
+        if (!tree.isArray()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "inboundInterceptors must be a JSON array");
+        }
+        Set<String> codes = new HashSet<>();
+        int index = 0;
+        for (JsonNode item : tree) {
+            if (!item.isObject()) {
+                throw badInboundInterceptor("inboundInterceptors[" + index + "] must be an object");
+            }
+
+            JsonNode codeNode = item.get("code");
+            String code = codeNode == null || codeNode.isNull() ? "" : codeNode.asText("").trim();
+            if (code.isEmpty()) {
+                throw badInboundInterceptor("inboundInterceptors[" + index + "].code is required");
+            }
+            if (!codes.add(code)) {
+                throw badInboundInterceptor("inboundInterceptors has duplicate code: " + code);
+            }
+
+            JsonNode enabledNode = item.get("enabled");
+            if (enabledNode != null && !enabledNode.isNull() && !enabledNode.isBoolean()) {
+                throw badInboundInterceptor("inboundInterceptors[" + index + "].enabled must be boolean");
+            }
+
+            JsonNode orderNode = item.get("order");
+            if (orderNode != null && !orderNode.isNull() && !orderNode.isNumber()) {
+                throw badInboundInterceptor("inboundInterceptors[" + index + "].order must be number");
+            }
+
+            JsonNode configNode = item.get("config");
+            if (configNode != null && !configNode.isNull() && !configNode.isObject()) {
+                throw badInboundInterceptor("inboundInterceptors[" + index + "].config must be object");
+            }
+
+            index++;
+        }
+    }
+
+    private ResponseStatusException badInboundInterceptor(String message) {
+        return new ResponseStatusException(HttpStatus.BAD_REQUEST, message);
     }
 }

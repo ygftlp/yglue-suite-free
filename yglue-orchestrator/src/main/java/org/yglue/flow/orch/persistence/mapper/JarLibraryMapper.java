@@ -53,6 +53,9 @@ public interface JarLibraryMapper {
     // 根据 jar_key 列表查询 JAR 类聚合
     java.util.List<JarClassAggregate> listJarAggregatesByJarKeys(@Param("jarKeys") java.util.List<String> jarKeys);
 
+    java.util.List<JarClassAggregate> listJarAggregatesByJarKeysLimited(@Param("jarKeys") java.util.List<String> jarKeys,
+                                                                         @Param("limit") int limit);
+
     // 根据 jar_key 列表和类名查询 JAR 类聚合
     JarClassAggregate selectJarAggregateByQualifiedNameAndJarKeys(@Param("qualifiedName") String qualifiedName,
                                                                    @Param("jarKeys") java.util.List<String> jarKeys);

@@ -12,6 +12,7 @@ import org.yglue.flow.orch.domain.FlowVersion;
 import org.yglue.flow.orch.service.FlowService;
 import org.yglue.flow.orch.web.dto.flow.request.FlowSaveRequest;
 import org.yglue.flow.orch.web.dto.flow.request.FlowPublishRequest;
+import org.yglue.flow.orch.web.dto.flow.response.FlowServiceSignatureIssueResponse;
 
 import java.util.List;
 
@@ -53,5 +54,11 @@ public class FlowController {
                                   @PathVariable("code") String code,
                                   @PathVariable("ver") Integer version) {
         return flowService.getVersion(projectKey, code, version);
+    }
+
+    @GetMapping("/issues/service-signatures")
+    public List<FlowServiceSignatureIssueResponse> listServiceSignatureIssues(
+            @PathVariable("projectKey") String projectKey) {
+        return flowService.listServiceSignatureIssues(projectKey);
     }
 }

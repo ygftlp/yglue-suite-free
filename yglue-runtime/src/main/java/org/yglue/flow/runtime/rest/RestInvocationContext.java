@@ -1,7 +1,7 @@
 package org.yglue.flow.runtime.rest;
 
 import org.springframework.context.ApplicationContext;
-import org.yglue.flow.runtime.FlowContext;
+import org.yglue.flow.runtime.core.engine.FlowContext;
 import org.yglue.flow.runtime.core.definition.NodeDefinition;
 
 import java.util.Map;

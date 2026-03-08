@@ -1,0 +1,5 @@
+org\yglue\flow\sample\TestService.class
+org\yglue\flow\sample\web\FlowRunController.class
+org\yglue\flow\sample\web\MathController.class
+org\yglue\flow\sample\YgflowSampleApplication.class
+org\yglue\flow\sample\api\MathService.class

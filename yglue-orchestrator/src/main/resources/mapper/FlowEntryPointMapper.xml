@@ -12,6 +12,7 @@
         <result property="path" column="path"/>
         <result property="requestSchemaJson" column="request_schema_json"/>
         <result property="dataResponseFormat" column="data_response_format"/>
+        <result property="inboundInterceptorsJson" column="inbound_interceptors_json"/>
         <result property="enabled" column="enabled"/>
         <result property="createTime" column="create_time"/>
         <result property="createBy" column="create_by"/>
@@ -21,15 +22,15 @@
     </resultMap>
 
     <sql id="FlowEntryPointColumns">
-        id, project_id, flow_code, http_method, path, request_schema_json, data_response_format, enabled,
+        id, project_id, flow_code, http_method, path, request_schema_json, data_response_format, inbound_interceptors_json, enabled,
         create_time, create_by, update_time, update_by, del_flag
     </sql>
 
     <insert id="insert" parameterType="org.yglue.flow.orch.domain.FlowEntryPoint" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO yglue_flow_entrypoint
-        (project_id, flow_code, http_method, path, request_schema_json, data_response_format, enabled, create_by, update_by)
+        (project_id, flow_code, http_method, path, request_schema_json, data_response_format, inbound_interceptors_json, enabled, create_by, update_by)
         VALUES
-        (#{projectId}, #{flowCode}, #{httpMethod}, #{path}, #{requestSchemaJson}, #{dataResponseFormat}, #{enabled}, #{createBy}, #{updateBy})
+        (#{projectId}, #{flowCode}, #{httpMethod}, #{path}, #{requestSchemaJson}, #{dataResponseFormat}, #{inboundInterceptorsJson}, #{enabled}, #{createBy}, #{updateBy})
     </insert>
 
     <update id="deleteByProjectAndFlow">
@@ -71,6 +72,7 @@
             path = #{path},
             request_schema_json = #{requestSchemaJson},
             data_response_format = #{dataResponseFormat},
+            inbound_interceptors_json = #{inboundInterceptorsJson},
             enabled = #{enabled},
             del_flag = #{delFlag},
             update_by = #{updateBy},

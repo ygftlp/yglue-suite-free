@@ -13,7 +13,7 @@ const props = defineProps<{
     
     <div class="exit-icon">🏁</div>
     <div class="exit-label">出口节点</div>
-    <div class="exit-hint">结果写入 ctx['ret']</div>
+    <div class="exit-hint">仅出口节点固定写入 ctx['ret']</div>
   </div>
 </template>
 

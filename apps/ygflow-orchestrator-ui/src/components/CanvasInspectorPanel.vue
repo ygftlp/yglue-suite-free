@@ -15,8 +15,8 @@ const props = defineProps<{
   selectedEdge: any | null
   nodes: any[]
   edges: any[]
-  projectKey?: string  // 项目标识，用于加载项目类信息
-  endpointId?: number  // 端点ID
+  projectKey?: string
+  endpointId?: number
 }>()
 
 const emit = defineEmits<{
@@ -65,6 +65,7 @@ const emit = defineEmits<{
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  min-width: 0;
   transition: width 0.2s ease;
 }
 
@@ -116,6 +117,7 @@ const emit = defineEmits<{
 .inspector-body {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
@@ -124,9 +126,7 @@ const emit = defineEmits<{
   flex: 1;
   padding: 12px;
   overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
 }
 </style>
-
-
-
-

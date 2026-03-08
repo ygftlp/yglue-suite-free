@@ -19,23 +19,14 @@ const emit = defineEmits<{
 }>()
 
 function handlePublishClick() {
-  console.log("[CanvasToolbar] 发布按钮被点击")
-  console.log("[CanvasToolbar] canPublish:", props.canPublish)
-  console.log("[CanvasToolbar] showPublishButton:", props.showPublishButton)
-  
   if (!props.canPublish) {
-    console.log("[CanvasToolbar] 按钮被禁用，显示提示")
     if (!props.showPublishButton) {
-      // 已发布状态
-      window.alert("当前版本已发布，无法重复发布。如需重新发布，请先修改内容并保存新版本。")
+      window.alert("当前版本已发布。若要再次发布，请先修改内容并保存新版本。")
     } else {
-      // 有发布按钮但不可用，可能是正在保存/发布中，或者没有内容
-      window.alert("无法发布流程，请检查流程内容或保存状态。")
+      window.alert("当前无法发布，请先检查流程内容或保存状态。")
     }
     return
   }
-  
-  console.log("[CanvasToolbar] 触发 publish-flow 事件")
   emit("publish-flow")
 }
 </script>
@@ -59,14 +50,14 @@ function handlePublishClick() {
         删除选中
       </button>
       <button class="btn" type="button" :disabled="!props.canSave" @click="emit('save-draft')">保存草稿</button>
-      <button 
-        class="btn primary" 
-        type="button" 
+      <button
+        class="btn primary"
+        type="button"
         :class="{ 'btn-disabled': !props.canPublish }"
         @click="handlePublishClick"
         :title="props.canPublish ? '发布当前流程' : (props.showPublishButton ? '请先修改内容' : '当前版本已发布')"
       >
-        {{ props.showPublishButton ? '发布' : '已发布' }}
+        {{ props.showPublishButton ? "发布" : "已发布" }}
       </button>
     </div>
   </div>
@@ -74,10 +65,8 @@ function handlePublishClick() {
 
 <style scoped>
 .canvas-toolbar {
-  position: absolute;
-  top: 16px;
-  left: 24px;
-  right: 24px;
+  position: sticky;
+  top: 0;
   z-index: 20;
   background: rgba(255, 255, 255, 0.98);
   border: 1px solid rgba(148, 163, 184, 0.25);
@@ -88,12 +77,18 @@ function handlePublishClick() {
   gap: 16px;
   box-shadow: 0 8px 30px rgba(15, 23, 42, 0.08);
   backdrop-filter: blur(6px);
+  pointer-events: auto;
+  flex-wrap: wrap;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .toolbar-left {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
+  flex: 1 1 280px;
 }
 
 .toolbar-title {
@@ -138,6 +133,10 @@ function handlePublishClick() {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
+  flex: 1 1 420px;
 }
 
 .btn.ghost {
@@ -156,7 +155,3 @@ function handlePublishClick() {
   opacity: 0.6;
 }
 </style>
-
-
-
-

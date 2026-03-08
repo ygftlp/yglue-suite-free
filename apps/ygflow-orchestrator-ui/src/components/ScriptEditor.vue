@@ -4,10 +4,10 @@ import { EditorState } from "@codemirror/state"
 import { EditorView, keymap, lineNumbers, drawSelection, highlightActiveLine } from "@codemirror/view"
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands"
 import { autocompletion, completionKeymap, CompletionContext, CompletionResult } from "@codemirror/autocomplete"
-import { api } from "../api/client"
+import { api, type ClassMemberResponse, type ScriptHelpersResponse } from "../api/client"
 
 // 添加调试日志工具
-const DEBUG = true  // 开启调试日志
+const DEBUG = false
 const debugLog = (...args: any[]) => DEBUG && console.log('[ScriptEditor]', ...args)
 
 type HelperTab = "variables" | "functions"
@@ -30,11 +30,47 @@ interface HelperItemInput {
   snippet?: string
   description?: string
   example?: string
+  tooltip?: string
 }
 
 interface HelperGroupInput {
   title?: string
   items?: HelperItemInput[]
+}
+
+const HELPERS_CACHE_TTL_MS = 60_000
+const MEMBERS_CACHE_TTL_MS = 60_000
+
+const helpersCache = new Map<string, { at: number; value: ScriptHelpersResponse }>()
+const classMembersCache = new Map<string, { at: number; value: ClassMemberResponse }>()
+
+function isClassReferenceSnippet(snippet?: string): boolean {
+  if (!snippet) return false
+  return /^[a-zA-Z_]\w*(\.[a-zA-Z_]\w*)+$/.test(snippet.trim())
+}
+
+function collectClassReferenceItems(groups: HelperGroup[] | undefined): HelperItem[] {
+  if (!groups?.length) return []
+  const seen = new Set<string>()
+  const items: HelperItem[] = []
+  groups.forEach((group) => {
+    group.items?.forEach((item) => {
+      if (!isClassReferenceSnippet(item.snippet)) return
+      const key = item.snippet.trim()
+      if (seen.has(key)) return
+      seen.add(key)
+      items.push(item)
+    })
+  })
+  return items
+}
+
+function buildHelpersCacheKey(projectKey?: string, endpointId?: number): string {
+  return `${projectKey || ""}::${endpointId ?? ""}`
+}
+
+function buildMembersCacheKey(projectKey: string, qualifiedName: string, kind: string, page: number, size: number): string {
+  return `${projectKey}::${qualifiedName}::${kind}::${page}::${size}`
 }
 
 const props = defineProps<{
@@ -78,16 +114,51 @@ const externalVariableGroups = ref<HelperGroupInput[]>([])
 const variableGroups = computed<HelperGroup[]>(() => normalizeHelperGroups([...(props.variableGroups || []), ...externalVariableGroups.value]))
 const externalFunctionGroups = ref<HelperGroupInput[]>([])
 const functionGroups = computed<HelperGroup[]>(() => normalizeHelperGroups([...(props.functionGroups || []), ...externalFunctionGroups.value]))
+const helperGroupsForCompletion = computed<HelperGroup[]>(() => [...variableGroups.value, ...functionGroups.value])
 const activeHelperGroups = computed<HelperGroup[]>(() =>
   helperTabState.value === "variables" ? variableGroups.value : functionGroups.value
 )
+
+function replaceExternalGroup(groups: HelperGroupInput[], title: string, nextGroup?: HelperGroupInput): HelperGroupInput[] {
+  const filtered = groups.filter((group) => group.title !== title)
+  if (nextGroup) {
+    filtered.push(nextGroup)
+  }
+  return filtered
+}
+
+function normalizeJarCoordinate(jar: any): string {
+  if (typeof jar?.coordinate === "string" && jar.coordinate.trim()) {
+    return jar.coordinate.trim()
+  }
+  if (typeof jar?.jarKey === "string" && jar.jarKey.trim()) {
+    return jar.jarKey.trim()
+  }
+  const groupId = typeof jar?.groupId === "string" ? jar.groupId.trim() : ""
+  const artifactId = typeof jar?.artifactId === "string" ? jar.artifactId.trim() : ""
+  const version = typeof jar?.version === "string" ? jar.version.trim() : ""
+  if (groupId && artifactId && version) {
+    return `${groupId}:${artifactId}:${version}`
+  }
+  return ""
+}
+
+function normalizeJarName(jar: any): string {
+  if (typeof jar?.name === "string" && jar.name.trim()) {
+    return jar.name.trim()
+  }
+  if (typeof jar?.artifactId === "string" && jar.artifactId.trim()) {
+    return jar.artifactId.trim()
+  }
+  return normalizeJarCoordinate(jar)
+}
 
 /**
  * 构建自动补全源
  * 支持变量属性自动补全，如 ctx.、input.、output. 等
  */
 function createCompletionSource(
-  getVariableGroups: () => HelperGroup[],
+  getHelperGroups: () => HelperGroup[],
   endpointSchema?: { requestSchema?: Array<{ name: string; type: string }> | null } | null
 ): (context: CompletionContext) => CompletionResult | null {
   return (context: CompletionContext) => {
@@ -97,7 +168,8 @@ function createCompletionSource(
     
     // 提取所有变量名
     const allVariables = new Map<string, { label: string; description: string; properties?: string[] }>()
-    getVariableGroups()?.forEach((group) => {
+    const helperGroups = getHelperGroups()
+    helperGroups?.forEach((group) => {
       group.items?.forEach((item) => {
         if (item.label && item.snippet) {
           const varName = item.snippet.trim().split(/[.\[]/)[0] // 提取变量名（如 ctx['xxx'] -> ctx）
@@ -119,16 +191,12 @@ function createCompletionSource(
       
       // 收集所有类引用作为 import 补全选项（来自IDEA插件上报的项目类）
       const importCompletions: Array<{ label: string; type: string; detail?: string }> = []
-      getVariableGroups()?.forEach((group) => {
-        if (group.title === "类引用") {
-          group.items?.forEach((item) => {
-            if (item.snippet && item.snippet.toLowerCase().includes(prefix.toLowerCase())) {
-              importCompletions.push({
-                label: item.snippet,
-                type: "class",
-                detail: item.description || "",
-              })
-            }
+      collectClassReferenceItems(helperGroups).forEach((item) => {
+        if (item.snippet && item.snippet.toLowerCase().includes(prefix.toLowerCase())) {
+          importCompletions.push({
+            label: item.snippet,
+            type: "class",
+            detail: item.description || "",
           })
         }
       })
@@ -147,7 +215,7 @@ function createCompletionSource(
     
     if (dotMatch) {
       const varName = dotMatch[1]
-      const completions = getVariableCompletions(varName, allVariables, getVariableGroups, "", endpointSchema)
+      const completions = getVariableCompletions(varName, allVariables, () => helperGroups, "", endpointSchema)
       if (completions.length > 0) {
         return {
           from: pos - (dotMatch[0].length - dotMatch[1].length),
@@ -157,7 +225,7 @@ function createCompletionSource(
     } else if (bracketMatch) {
       const varName = bracketMatch[1]
       const prefix = bracketMatch[2]
-      const completions = getVariableCompletions(varName, allVariables, getVariableGroups, prefix, endpointSchema)
+      const completions = getVariableCompletions(varName, allVariables, () => helperGroups, prefix, endpointSchema)
       if (completions.length > 0) {
         return {
           from: pos - prefix.length,
@@ -181,16 +249,12 @@ function createCompletionSource(
       // 如果是在行首或者前面是空白字符，也提供类引用补全（来自IDEA插件上报的项目类）
       const lineStartMatch = textBefore.match(/^\s*(.*)$/)
       if (lineStartMatch && prefix === lineStartMatch[1]) {
-        getVariableGroups()?.forEach((group) => {
-          if (group.title === "类引用") {
-            group.items?.forEach((item) => {
-              if (item.label && item.label.toLowerCase().includes(prefix.toLowerCase())) {
-                variableCompletions.push({
-                  label: item.label,
-                  type: "class",
-                  detail: item.snippet || "",
-                })
-              }
+        collectClassReferenceItems(helperGroups).forEach((item) => {
+          if (item.label && item.label.toLowerCase().includes(prefix.toLowerCase())) {
+            variableCompletions.push({
+              label: item.label,
+              type: "class",
+              detail: item.snippet || "",
             })
           }
         })
@@ -371,6 +435,7 @@ function normalizeHelperItem(item?: HelperItemInput): HelperItem | null {
     snippet,
     description: typeof item.description === "string" ? item.description : "",
     example: typeof item.example === "string" ? item.example : undefined,
+    tooltip: typeof item.tooltip === "string" ? item.tooltip : undefined,
   }
 }
 
@@ -414,6 +479,33 @@ watch(
   }
 )
 
+async function getScriptHelpersCached(projectKey: string, endpointId?: number): Promise<ScriptHelpersResponse> {
+  const key = buildHelpersCacheKey(projectKey, endpointId)
+  const now = Date.now()
+  const cached = helpersCache.get(key)
+  if (cached && now - cached.at < HELPERS_CACHE_TTL_MS) {
+    return cached.value
+  }
+  const value = await api.getScriptHelpers(projectKey, endpointId ? { endpointId } : undefined)
+  helpersCache.set(key, { at: now, value })
+  return value
+}
+
+async function getClassMembersCached(
+  projectKey: string,
+  params: { qualifiedName: string; kind: "methods" | "fields"; page: number; size: number }
+): Promise<ClassMemberResponse> {
+  const key = buildMembersCacheKey(projectKey, params.qualifiedName, params.kind, params.page, params.size)
+  const now = Date.now()
+  const cached = classMembersCache.get(key)
+  if (cached && now - cached.at < MEMBERS_CACHE_TTL_MS) {
+    return cached.value
+  }
+  const value = await api.getClassMembers(projectKey, params)
+  classMembersCache.set(key, { at: now, value })
+  return value
+}
+
 async function loadScriptHelpersInternal() {
   debugLog('开始加载项目类信息, projectKey:', props.projectKey, 'endpointId:', props.endpointId)
   if (!props.projectKey) {
@@ -421,21 +513,25 @@ async function loadScriptHelpersInternal() {
     return
   }
   try {
-    const helpers = await api.getScriptHelpers(
-      props.projectKey,
-      props.endpointId ? { endpointId: props.endpointId } : undefined
-    )
+    const helpers = await getScriptHelpersCached(props.projectKey, props.endpointId)
     debugLog('成功获取项目类信息:', helpers)
     debugLog('类数量:', helpers.classes?.length || 0)
     debugLog('依赖数量:', helpers.selectedJars?.length || 0)
     
     const depGroup: HelperGroupInput = {
       title: "依赖",
-      items: (helpers.selectedJars || []).map((j) => ({
-        label: j.name,
-        snippet: j.coordinate || "",
-        description: (j.coordinate || "") || "依赖坐标",
-      })),
+      items: (helpers.selectedJars || [])
+        .map((j) => {
+          const coordinate = normalizeJarCoordinate(j)
+          const name = normalizeJarName(j)
+          if (!name || !coordinate) return null
+          return {
+            label: name,
+            snippet: coordinate,
+            description: coordinate || "依赖坐标",
+          }
+        })
+        .filter((item): item is HelperItemInput => !!item),
     }
     const classGroup: HelperGroupInput = {
       title: "类引用",
@@ -446,8 +542,9 @@ async function loadScriptHelpersInternal() {
         tooltip: c.kind,
       })),
     }
-    externalFunctionGroups.value = [classGroup]
-    externalVariableGroups.value = [...externalVariableGroups.value, depGroup]
+    externalFunctionGroups.value = replaceExternalGroup(externalFunctionGroups.value, "类引用", classGroup)
+    externalVariableGroups.value = replaceExternalGroup(externalVariableGroups.value, "依赖", depGroup)
+    externalVariableGroups.value = replaceExternalGroup(externalVariableGroups.value, "类引用", classGroup)
     debugLog('已更新 externalFunctionGroups 和 externalVariableGroups')
     debugLog('类引用分组项目数:', classGroup.items.length)
   } catch (e) {
@@ -496,19 +593,17 @@ async function loadMembersForUpstreamTypeInternal() {
   
   try {
     debugLog('Fetching class members for:', qn)
-    const fields = await api.getClassMembers(props.projectKey, { qualifiedName: qn, kind: "fields", page: 1, size: 100 })
-    const methods = await api.getClassMembers(props.projectKey, { qualifiedName: qn, kind: "methods", page: 1, size: 200 })
+    const [fields, methods] = await Promise.all([
+      getClassMembersCached(props.projectKey, { qualifiedName: qn, kind: "fields", page: 1, size: 100 }),
+      getClassMembersCached(props.projectKey, { qualifiedName: qn, kind: "methods", page: 1, size: 200 }),
+    ])
     
     debugLog('Received fields:', fields)
     debugLog('Received methods:', methods)
     
     // 清除之前的类成员信息
-    externalVariableGroups.value = externalVariableGroups.value.filter(group => 
-      group.title !== "字段"
-    )
-    externalFunctionGroups.value = externalFunctionGroups.value.filter(group => 
-      group.title !== "方法"
-    )
+    externalVariableGroups.value = replaceExternalGroup(externalVariableGroups.value, "字段")
+    externalFunctionGroups.value = replaceExternalGroup(externalFunctionGroups.value, "方法")
     
     if (fields.items?.length) {
       const fieldGroup: HelperGroupInput = {
@@ -519,7 +614,7 @@ async function loadMembersForUpstreamTypeInternal() {
           description: String(f.type || ""),
         })),
       }
-      externalVariableGroups.value = [...externalVariableGroups.value, fieldGroup]
+      externalVariableGroups.value = replaceExternalGroup(externalVariableGroups.value, "字段", fieldGroup)
       debugLog('Added field group with', fields.items.length, 'items')
     }
     
@@ -530,10 +625,14 @@ async function loadMembersForUpstreamTypeInternal() {
           label: String(m.name),
           snippet: `${qn}.${String(m.name)}()`,
           description: String(m.returnType || ""),
-          tooltip: m.parametersJson ? String(m.parametersJson) : undefined,
+          tooltip: m.parametersJson
+            ? String(m.parametersJson)
+            : m.parameters
+            ? JSON.stringify(m.parameters)
+            : undefined,
         })),
       }
-      externalFunctionGroups.value = [...externalFunctionGroups.value, methodGroup]
+      externalFunctionGroups.value = replaceExternalGroup(externalFunctionGroups.value, "方法", methodGroup)
       debugLog('Added method group with', methods.items.length, 'items')
     }
     
@@ -576,7 +675,7 @@ function initCodeEditor() {
     },
   ])
   // 构建自动补全源（需要访问 props，所以放在函数内部）
-  const completionSource = createCompletionSource(() => variableGroups.value, props.endpointSchema)
+  const completionSource = createCompletionSource(() => helperGroupsForCompletion.value, props.endpointSchema)
   
   const extensions = [
     history(),

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue"
-import { api, type FlowVersion } from "../api/client"
+import { api, type FlowServiceSignatureIssue, type FlowVersion } from "../api/client"
 import { Clock, CheckCircle2, Circle } from "lucide-vue-next"
 
 const props = defineProps<{
@@ -20,6 +20,7 @@ const emit = defineEmits<{
 const versions = ref<FlowVersion[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
+const currentFlowSignatureIssue = ref<FlowServiceSignatureIssue | null>(null)
 
 // 格式化时间
 function formatTime(timeStr?: string): string {
@@ -45,7 +46,12 @@ async function loadVersions() {
   loading.value = true
   error.value = null
   try {
-    versions.value = await api.listFlowVersions(props.projectKey, props.flowCode)
+    const [versionList, issueList] = await Promise.all([
+      api.listFlowVersions(props.projectKey, props.flowCode),
+      api.listFlowServiceSignatureIssues(props.projectKey),
+    ])
+    versions.value = versionList
+    currentFlowSignatureIssue.value = (issueList || []).find((item) => item.flowCode === props.flowCode) || null
     // 按版本号降序排列（最新版本在前）
     versions.value.sort((a, b) => (b.versionNo || 0) - (a.versionNo || 0))
   } catch (err) {
@@ -75,8 +81,24 @@ function handleLoadVersionAndSave(version: FlowVersion, publishAfterLoad: boolea
   emit("close")
 }
 
+function handlePublishFromVersion(version: FlowVersion) {
+  if (hasSignatureIssue(version)) {
+    const confirmed = window.confirm(
+      `版本 v${version.versionNo} 存在服务签名异常，建议先加载并修复后再发布。\n是否仍继续“保存并发布”？`
+    )
+    if (!confirmed) return
+  }
+  handleLoadVersionAndSave(version, true)
+}
+
 function handleClose() {
   emit("close")
+}
+
+function hasSignatureIssue(version: FlowVersion): boolean {
+  if (!currentFlowSignatureIssue.value) return false
+  if (typeof currentFlowSignatureIssue.value.versionNo !== "number") return false
+  return version.versionNo === currentFlowSignatureIssue.value.versionNo
 }
 </script>
 
@@ -93,6 +115,9 @@ function handleClose() {
         <div v-else-if="error" class="error">{{ error }}</div>
         <div v-else-if="versions.length === 0" class="empty">暂无版本</div>
         <div v-else class="version-list">
+          <div v-if="currentFlowSignatureIssue" class="issue-tip">
+            检测到当前流程存在服务签名问题（{{ currentFlowSignatureIssue.issueCount }} 处），请先加载并修复配置再发布。
+          </div>
           <div
             v-for="version in versions"
             :key="version.id"
@@ -100,6 +125,7 @@ function handleClose() {
             :class="{
               'version-current': version.versionNo === currentVersionNo,
               'version-published': version.published,
+              'version-signature-issue': hasSignatureIssue(version),
             }"
           >
             <div class="version-content" @click="handleLoadVersion(version, false)">
@@ -108,6 +134,7 @@ function handleClose() {
                   <span class="version-no">v{{ version.versionNo }}</span>
                   <span v-if="version.published" class="version-badge published">已发布</span>
                   <span v-if="version.versionNo === currentVersionNo" class="version-badge current">当前</span>
+                  <span v-if="hasSignatureIssue(version)" class="version-badge issue">签名异常</span>
                 </div>
                 <div class="version-time">
                   <Clock :size="12" />
@@ -122,8 +149,9 @@ function handleClose() {
               <button 
                 class="btn-action btn-publish" 
                 type="button"
-                @click="handleLoadVersionAndSave(version, true)"
-                title="加载并发布为新版本"
+                :class="{ warn: hasSignatureIssue(version) }"
+                @click="handlePublishFromVersion(version)"
+                :title="hasSignatureIssue(version) ? '该版本存在签名异常，点击后会二次确认' : '加载并发布为新版本'"
               >
                 保存并发布
               </button>
@@ -221,6 +249,16 @@ function handleClose() {
   gap: 12px;
 }
 
+.issue-tip {
+  border: 1px solid #f59e0b;
+  background: #fff7ed;
+  color: #92400e;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .version-item {
   padding: 16px;
   border: 1px solid rgba(148, 163, 184, 0.2);
@@ -285,6 +323,16 @@ function handleClose() {
   border-color: #1d4ed8;
 }
 
+.btn-publish.warn {
+  background: #b45309;
+  border-color: #b45309;
+}
+
+.btn-publish.warn:hover {
+  background: #92400e;
+  border-color: #92400e;
+}
+
 .version-item.version-current {
   border-color: #2563eb;
   background: rgba(37, 99, 235, 0.08);
@@ -292,6 +340,11 @@ function handleClose() {
 
 .version-item.version-published {
   border-left: 3px solid #10b981;
+}
+
+.version-item.version-signature-issue {
+  border-left: 3px solid #ef4444;
+  background: #fff5f5;
 }
 
 .version-header {
@@ -327,6 +380,11 @@ function handleClose() {
 
 .version-badge.current {
   background: #2563eb;
+  color: white;
+}
+
+.version-badge.issue {
+  background: #ef4444;
   color: white;
 }
 

@@ -44,15 +44,15 @@ public class RuleSyncService {
     /**
      * 构造函数
      *
-     * @param settings 插件设置状态
-     * @param resolvedEndpoint 解析后的服务器端点
+     * @param settings           插件设置状态
+     * @param resolvedEndpoint   解析后的服务器端点
      * @param resolvedProjectKey 解析后的项目标识
-     * @param rulesDirectory 规则文件目录
+     * @param rulesDirectory     规则文件目录
      */
     public RuleSyncService(@NotNull YgflowSettingsState settings,
-                           @NotNull String resolvedEndpoint,
-                           @NotNull String resolvedProjectKey,
-                           @NotNull Path rulesDirectory) {
+            @NotNull String resolvedEndpoint,
+            @NotNull String resolvedProjectKey,
+            @NotNull Path rulesDirectory) {
         this.settings = settings;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
@@ -82,11 +82,11 @@ public class RuleSyncService {
 
         boolean needSync = heartbeat.optBoolean("needSync", false);
         JSONArray pending = heartbeat.optJSONArray("pendingFlows");
-        
+
         Files.createDirectories(rulesDirectory);
-        
+
         List<SyncResult.Entry> entries = new ArrayList<>();
-        
+
         // 处理待同步的流程
         if (needSync && pending != null && pending.length() > 0) {
             indicator.setIndeterminate(false);
@@ -109,23 +109,27 @@ public class RuleSyncService {
                 indicator.setFraction((double) (i + 1) / pending.length());
             }
         }
-        
+
         // 检查本地文件是否存在，如果缺失则重新下载
         indicator.setIndeterminate(true);
         indicator.setText("Checking local rule files...");
         List<SyncResult.Entry> missingFiles = checkAndDownloadMissingFiles(indicator);
         entries.addAll(missingFiles);
-        
+
         indicator.setFraction(1.0);
         downloadEntryPoints();
-        
+        downloadProjectInfo();
+        downloadModels();
+        downloadResolvers();
+        downloadEndpoints();
+
         if (entries.isEmpty()) {
             return SyncResult.upToDate();
         } else {
             return SyncResult.synced(entries);
         }
     }
-    
+
     /**
      * 检查本地规则文件是否存在，如果缺失则重新下载
      * <p>
@@ -139,16 +143,16 @@ public class RuleSyncService {
      */
     private List<SyncResult.Entry> checkAndDownloadMissingFiles(@NotNull ProgressIndicator indicator) throws Exception {
         List<SyncResult.Entry> entries = new ArrayList<>();
-        
+
         // 获取所有流程列表
         JSONArray allFlows = fetchAllFlows();
         if (allFlows == null || allFlows.length() == 0) {
             return entries;
         }
-        
+
         indicator.setIndeterminate(false);
         indicator.setText("Checking missing local files...");
-        
+
         for (int i = 0; i < allFlows.length(); i++) {
             indicator.checkCanceled();
             JSONObject flowObj = allFlows.getJSONObject(i);
@@ -156,21 +160,21 @@ public class RuleSyncService {
             if (flowCode.isBlank()) {
                 continue;
             }
-            
+
             // 检查本地文件是否存在
             String fileName = sanitizeFileName(flowCode) + ".json";
             Path localFile = rulesDirectory.resolve(fileName);
             if (Files.exists(localFile)) {
                 continue; // 文件存在，跳过
             }
-            
+
             // 文件不存在，获取已发布的版本并下载
             try {
                 JSONArray versions = fetchFlowVersions(flowCode);
                 if (versions == null || versions.length() == 0) {
                     continue;
                 }
-                
+
                 // 查找已发布的版本
                 Integer publishedVersionNo = null;
                 for (int j = 0; j < versions.length(); j++) {
@@ -180,13 +184,13 @@ public class RuleSyncService {
                         break;
                     }
                 }
-                
+
                 // 如果没有已发布的版本，使用最新版本
                 if (publishedVersionNo == null || publishedVersionNo < 0) {
                     JSONObject latestVersion = versions.getJSONObject(0);
                     publishedVersionNo = latestVersion.optInt("versionNo", -1);
                 }
-                
+
                 if (publishedVersionNo != null && publishedVersionNo > 0) {
                     indicator.setText("Downloading missing file: " + flowCode + " v" + publishedVersionNo);
                     String json = fetchFlowContent(flowCode, publishedVersionNo);
@@ -200,13 +204,13 @@ public class RuleSyncService {
                 // 这里可以添加日志记录
                 continue;
             }
-            
+
             indicator.setFraction((double) (i + 1) / allFlows.length());
         }
-        
+
         return entries;
     }
-    
+
     /**
      * 获取所有流程列表
      *
@@ -227,7 +231,7 @@ public class RuleSyncService {
         ensureSuccess(response, "Fetch all flows failed");
         return new JSONArray(response.body());
     }
-    
+
     /**
      * 获取指定流程的所有版本
      *
@@ -284,7 +288,7 @@ public class RuleSyncService {
     /**
      * 获取流程内容
      *
-     * @param flowCode 流程代码
+     * @param flowCode  流程代码
      * @param versionNo 版本号
      * @return 流程内容 JSON 字符串
      * @throws Exception 如果请求失败
@@ -310,7 +314,7 @@ public class RuleSyncService {
      * 确认插件实例已成功同步到指定版本的流程。
      * </p>
      *
-     * @param flowCode 流程代码
+     * @param flowCode  流程代码
      * @param versionNo 版本号
      * @throws Exception 如果请求失败
      */
@@ -334,7 +338,7 @@ public class RuleSyncService {
     /**
      * 写入规则文件
      *
-     * @param flowCode 流程代码
+     * @param flowCode    流程代码
      * @param contentJson 内容 JSON 字符串
      * @return 写入的文件路径
      * @throws Exception 如果写入失败
@@ -377,10 +381,68 @@ public class RuleSyncService {
     }
 
     /**
+     * 下载项目基础信息配置文件
+     */
+    private void downloadProjectInfo() throws Exception {
+        downloadGlobalResource("/", "project.json", "Download project info failed");
+    }
+
+    /**
+     * 下载模型配置文件
+     */
+    private void downloadModels() throws Exception {
+        downloadGlobalResource("/models", "models.json", "Download models failed");
+    }
+
+    /**
+     * 下载解析器配置文件
+     */
+    private void downloadResolvers() throws Exception {
+        downloadGlobalResource("/resolvers", "resolvers.json", "Download resolvers failed");
+    }
+
+    /**
+     * 下载端点配置文件
+     */
+    private void downloadEndpoints() throws Exception {
+        downloadGlobalResource("/endpoints", "endpoints.json", "Download endpoints failed");
+    }
+
+    /**
+     * 通用的项目级资源下载器
+     *
+     * @param subPath  相对路径 (例如 "/models")
+     * @param fileName 保存的文件名
+     * @param errorMsg 失败时的报错信息
+     * @throws Exception 如果下载失败
+     */
+    private void downloadGlobalResource(String subPath, String fileName, String errorMsg) throws Exception {
+        String uriStr = endpoint + "/api/projects/" + encode(projectKey) + (subPath.equals("/") ? "" : subPath);
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(uriStr))
+                .timeout(Duration.ofSeconds(15))
+                .GET()
+                .build();
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() == 404) {
+            return;
+        }
+        ensureSuccess(response, errorMsg);
+        Path baseDir = rulesDirectory.getParent();
+        if (baseDir == null) {
+            baseDir = rulesDirectory;
+        }
+        Files.createDirectories(baseDir);
+        Path file = baseDir.resolve(fileName);
+        Files.writeString(file, response.body(), StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+
+    /**
      * 确保 HTTP 响应成功
      *
      * @param response HTTP 响应
-     * @param message 错误消息前缀
+     * @param message  错误消息前缀
      * @throws Exception 如果响应状态码不在 2xx 范围内
      */
     private void ensureSuccess(HttpResponse<?> response, String message) throws Exception {
@@ -460,7 +522,7 @@ public class RuleSyncService {
          * 构造函数
          *
          * @param upToDate 是否已是最新
-         * @param entries 同步条目列表
+         * @param entries  同步条目列表
          */
         private SyncResult(boolean upToDate, List<Entry> entries) {
             this.upToDate = upToDate;
@@ -490,9 +552,10 @@ public class RuleSyncService {
          * 同步条目记录
          *
          * @param flowCode 流程代码
-         * @param version 版本号
-         * @param file 文件路径
+         * @param version  版本号
+         * @param file     文件路径
          */
-        public record Entry(String flowCode, int version, Path file) {}
+        public record Entry(String flowCode, int version, Path file) {
+        }
     }
 }

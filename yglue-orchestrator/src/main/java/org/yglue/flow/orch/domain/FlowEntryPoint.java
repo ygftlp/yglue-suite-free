@@ -10,6 +10,7 @@ public class FlowEntryPoint {
     private String path;
     private String requestSchemaJson;
     private String dataResponseFormat;
+    private String inboundInterceptorsJson;
     private Boolean enabled;
     private Instant createTime;
     private Instant updateTime;
@@ -71,6 +72,14 @@ public class FlowEntryPoint {
 
     public void setDataResponseFormat(String dataResponseFormat) {
         this.dataResponseFormat = dataResponseFormat;
+    }
+
+    public String getInboundInterceptorsJson() {
+        return inboundInterceptorsJson;
+    }
+
+    public void setInboundInterceptorsJson(String inboundInterceptorsJson) {
+        this.inboundInterceptorsJson = inboundInterceptorsJson;
     }
 
     public Boolean getEnabled() {

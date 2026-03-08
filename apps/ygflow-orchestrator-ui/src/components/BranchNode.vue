@@ -1,7 +1,25 @@
 ﻿<script setup lang="ts">
+import { computed } from "vue"
 import { Handle, Position } from "@vue-flow/core"
 
-const props = defineProps<{ data?: { label?: string; expression?: string } }>()
+const props = defineProps<{
+  data?: {
+    label?: string
+    expression?: string
+    conditionV2?: { op?: string; rules?: any[] } | null
+    tempVars?: Array<{ key?: string }> | null
+  }
+}>()
+
+const conditionMeta = computed(() => {
+  const tempCount = Array.isArray(props.data?.tempVars)
+    ? props.data?.tempVars.filter((item) => (item?.key || "").trim()).length
+    : 0
+  if (tempCount > 0) {
+    return `在线条配置条件 · 临时变量 ${tempCount}`
+  }
+  return "在线条上配置分支条件"
+})
 </script>
 
 <template>
@@ -9,7 +27,7 @@ const props = defineProps<{ data?: { label?: string; expression?: string } }>()
     <div class="diamond">
       <div class="content">
         <div class="label">{{ props.data?.label || '条件分支' }}</div>
-        <div class="meta">{{ props.data?.expression || '请配置分支条件' }}</div>
+        <div class="meta">{{ conditionMeta }}</div>
       </div>
     </div>
 

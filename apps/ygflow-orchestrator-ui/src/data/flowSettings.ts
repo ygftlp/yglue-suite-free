@@ -1,4 +1,4 @@
-﻿export type LogPolicy = {
+export type LogPolicy = {
   enabled: boolean
   level: "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR"
   collectInputs: boolean
@@ -29,12 +29,22 @@ export type DataResponseFormatConfig = {
   customFields?: CustomField[] // 自定义数据字段列表
 }
 
+export type DataResponseFormatValue = DataResponseFormatConfig | string | null
+
+export type InboundInterceptorConfig = {
+  code: string
+  enabled?: boolean
+  order?: number
+  config?: Record<string, any>
+}
+
 export type FlowEntrypoint = {
   path: string
   method: string
   enabled?: boolean
   requestSchemaJson?: string | null
-  dataResponseFormat?: DataResponseFormatConfig | null
+  dataResponseFormat?: DataResponseFormatValue
+  inboundInterceptors?: InboundInterceptorConfig[] | null
 }
 
 export type FlowSettings = {
@@ -89,4 +99,3 @@ export function createDefaultFlowSettings(): FlowSettings {
     },
   }
 }
-

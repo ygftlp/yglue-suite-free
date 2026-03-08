@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue"
+import { computed, ref, watch } from "vue"
 import FlowSettingsPanel from "./FlowSettingsPanel.vue"
 import CanvasPalettePanel from "./CanvasPalettePanel.vue"
 import CanvasToolbar from "./CanvasToolbar.vue"
@@ -34,6 +34,7 @@ const {
   toggleInspector,
   deleteSelection,
   clearSelection,
+  focusNodeById,
   saveDraft,
   publishFlow,
   openFlowSettings,
@@ -58,6 +59,41 @@ const {
 } = useCanvasEditor(props)
 
 const gridColumns = computed(() => `${paletteWidth.value}px 1fr ${inspectorWidth.value}px`)
+const surfaceFocusNodeId = ref<string | null>(null)
+const surfaceFocusNonce = ref(0)
+
+watch(
+  () => props.issueFocusRequest,
+  (request) => {
+    const path = String(request?.path || "").trim()
+    if (!path) return
+    const nodeIndex = parseNodeIndexFromIssuePath(path)
+    if (nodeIndex == null) {
+      window.alert(`Cannot locate non-node issue path: ${path}`)
+      return
+    }
+    const targetNode = nodes.value[nodeIndex]
+    if (!targetNode?.id) {
+      window.alert(`Cannot find node for index=${nodeIndex}. Refresh signature check and try again.`)
+      return
+    }
+    const focused = focusNodeById(String(targetNode.id))
+    if (!focused) {
+      window.alert(`Node focus failed: ${targetNode.id}`)
+      return
+    }
+    surfaceFocusNodeId.value = String(targetNode.id)
+    surfaceFocusNonce.value = Number(request?.nonce || Date.now())
+  },
+  { deep: true },
+)
+
+function parseNodeIndexFromIssuePath(path: string): number | null {
+  const match = path.match(/^\$\.nodes\[(\d+)\]/)
+  if (!match) return null
+  const index = Number.parseInt(match[1], 10)
+  return Number.isFinite(index) && index >= 0 ? index : null
+}
 
 function handleDropNode(payload: { item: any; position: { x: number; y: number }; parentId?: string }) {
   addNodeFromPalette(payload.item, payload.position, payload.parentId)
@@ -102,6 +138,8 @@ function handleDropNode(payload: { item: any; position: { x: number; y: number }
         @hide-context-menu="hideContextMenu"
         @delete-selection="deleteSelection"
         @remove-context-menu-node="removeContextMenuNode"
+        :focus-node-id="surfaceFocusNodeId"
+        :focus-nonce="surfaceFocusNonce"
       />
     </div>
     <CanvasInspectorPanel
@@ -127,6 +165,7 @@ function handleDropNode(payload: { item: any; position: { x: number; y: number }
     v-model="flowSettings"
     :request-schema-fields="props.endpointSchema?.requestSchema ?? undefined"
     :response-schema="props.endpointSchema?.responseSchema ?? undefined"
+    :inbound-interceptor-catalog="props.inboundInterceptorCatalog ?? undefined"
     @close="closeFlowSettings"
   />
   <VersionList
@@ -152,6 +191,12 @@ function handleDropNode(payload: { item: any; position: { x: number; y: number }
 .canvas-area {
   position: relative;
   background: #f9fafb;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
 }
 
 :global(.rule-preview-modal) {

@@ -7,9 +7,7 @@ const props = defineProps<{ data?: { label?: string; comp?: any; model?: any } }
 <template>
   <div class="task-node">
     <Handle id="in-left" type="target" :position="Position.Left" />
-    <Handle id="in-top" type="target" :position="Position.Top" />
     <Handle id="out-right" type="source" :position="Position.Right" />
-    <Handle id="out-bottom" type="source" :position="Position.Bottom" />
 
     <div class="task-label">{{ props.data?.label || '节点' }}</div>
     <div v-if="props.data?.comp" class="task-meta">

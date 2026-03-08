@@ -7,6 +7,7 @@ public class RestEntryPointResponse {
     private String flowCode;
     private String requestSchemaJson;
     private Object dataResponseFormat;
+    private Object inboundInterceptors;
     private boolean enabled;
 
     public RestEntryPointResponse() {
@@ -18,6 +19,7 @@ public class RestEntryPointResponse {
                                   String flowCode,
                                   String requestSchemaJson,
                                   Object dataResponseFormat,
+                                  Object inboundInterceptors,
                                   boolean enabled) {
         this.id = id;
         this.path = path;
@@ -25,6 +27,7 @@ public class RestEntryPointResponse {
         this.flowCode = flowCode;
         this.requestSchemaJson = requestSchemaJson;
         this.dataResponseFormat = dataResponseFormat;
+        this.inboundInterceptors = inboundInterceptors;
         this.enabled = enabled;
     }
 
@@ -74,6 +77,14 @@ public class RestEntryPointResponse {
 
     public void setDataResponseFormat(Object dataResponseFormat) {
         this.dataResponseFormat = dataResponseFormat;
+    }
+
+    public Object getInboundInterceptors() {
+        return inboundInterceptors;
+    }
+
+    public void setInboundInterceptors(Object inboundInterceptors) {
+        this.inboundInterceptors = inboundInterceptors;
     }
 
     public boolean isEnabled() {

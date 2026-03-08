@@ -3,6 +3,8 @@ package org.yglue.flow.runtime.core.definition;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.Data;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -21,6 +23,9 @@ public class RestEntryPoint {
 
     @com.fasterxml.jackson.annotation.JsonAlias("request_schema_json")
     private String requestSchemaJson;
+
+    @com.fasterxml.jackson.annotation.JsonAlias("inbound_interceptors_json")
+    private Object inboundInterceptors;
     
     /**
      * 数据响应格式配置
@@ -53,5 +58,21 @@ public class RestEntryPoint {
         }
         
         return ErrorResponseFormat.STANDARD;
+    }
+
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> inboundInterceptorsView() {
+        if (inboundInterceptors instanceof List<?> list) {
+            List<Map<String, Object>> result = new ArrayList<>();
+            for (Object item : list) {
+                if (item instanceof Map<?, ?> map) {
+                    Map<String, Object> converted = new java.util.LinkedHashMap<>();
+                    map.forEach((k, v) -> converted.put(String.valueOf(k), v));
+                    result.add(converted);
+                }
+            }
+            return result;
+        }
+        return List.of();
     }
 }

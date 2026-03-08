@@ -13,6 +13,8 @@ public class FlowEntryPointRequest {
 
     private Object dataResponseFormat;
 
+    private Object inboundInterceptors;
+
     private Boolean enabled;
 
     public String getPath() {
@@ -45,6 +47,14 @@ public class FlowEntryPointRequest {
 
     public void setDataResponseFormat(Object dataResponseFormat) {
         this.dataResponseFormat = dataResponseFormat;
+    }
+
+    public Object getInboundInterceptors() {
+        return inboundInterceptors;
+    }
+
+    public void setInboundInterceptors(Object inboundInterceptors) {
+        this.inboundInterceptors = inboundInterceptors;
     }
 
     public Boolean getEnabled() {

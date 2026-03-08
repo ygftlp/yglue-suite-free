@@ -39,6 +39,9 @@ public final class YgflowSettingsState implements PersistentStateComponent<Ygflo
     public boolean codeSnapshotAutoUploadEnabled = true;
     public int codeSnapshotUploadIntervalSeconds = 30;
 
+    public String scanIncludes = "";
+    public String scanExcludes = "";
+
     /**
      * 获取设置实例
      *
@@ -100,7 +103,8 @@ public final class YgflowSettingsState implements PersistentStateComponent<Ygflo
         this.autoUploadIntervalSeconds = state.autoUploadIntervalSeconds > 0 ? state.autoUploadIntervalSeconds : 60;
         this.heartbeatIntervalSeconds = state.heartbeatIntervalSeconds > 0 ? state.heartbeatIntervalSeconds : 60;
         this.autoRuleSyncEnabled = state.autoRuleSyncEnabled;
-        this.autoRuleSyncIntervalSeconds = state.autoRuleSyncIntervalSeconds > 0 ? state.autoRuleSyncIntervalSeconds : 60;
+        this.autoRuleSyncIntervalSeconds = state.autoRuleSyncIntervalSeconds > 0 ? state.autoRuleSyncIntervalSeconds
+                : 60;
         this.jarUploadEnabled = state.jarUploadEnabled;
         this.selectedJarCoordinates = state.selectedJarCoordinates == null
                 ? new HashSet<>()
@@ -109,6 +113,8 @@ public final class YgflowSettingsState implements PersistentStateComponent<Ygflo
         this.codeSnapshotUploadIntervalSeconds = state.codeSnapshotUploadIntervalSeconds > 0
                 ? state.codeSnapshotUploadIntervalSeconds
                 : 30;
+        this.scanIncludes = state.scanIncludes == null ? "" : state.scanIncludes;
+        this.scanExcludes = state.scanExcludes == null ? "" : state.scanExcludes;
         ensureInstanceKey();
     }
 

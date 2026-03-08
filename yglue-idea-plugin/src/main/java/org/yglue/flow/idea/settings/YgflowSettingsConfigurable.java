@@ -97,6 +97,8 @@ public class YgflowSettingsConfigurable implements Configurable {
     private JButton jarRefreshButton;
     private JBLabel jarListHint;
     private final Set<String> jarSelectionState = new HashSet<>();
+    private JBTextField scanIncludesField;
+    private JBTextField scanExcludesField;
 
     private static String trim(String value) {
         return value == null ? "" : value.trim();
@@ -197,12 +199,12 @@ public class YgflowSettingsConfigurable implements Configurable {
             } else {
                 textField.setToolTipText("默认: " + DEFAULT_RULES_DIR);
             }
-            
+
             // 配置文件夹选择器
             FileChooserDescriptor folderDescriptor = FileChooserDescriptorFactory.createSingleFolderDescriptor();
             folderDescriptor.setTitle("Select Rules Directory");
             folderDescriptor.setDescription("Choose the directory where flow rules will be stored");
-            
+
             rulesDirField.addBrowseFolderListener(
                     "Select Rules Directory",
                     "Choose the directory where flow rules will be stored",
@@ -236,8 +238,7 @@ public class YgflowSettingsConfigurable implements Configurable {
                                 }
                             }
                         }
-                    }
-            );
+                    });
 
             autoUploadCheck = new JCheckBox("Enable automatic metadata upload");
             autoUploadCheck.addActionListener(e -> updateAutoUploadControls());
@@ -303,18 +304,26 @@ public class YgflowSettingsConfigurable implements Configurable {
             jarPanel.add(jarScrollPane, BorderLayout.CENTER);
             jarPanel.add(jarFooter, BorderLayout.SOUTH);
 
+            scanIncludesField = new JBTextField();
+            scanIncludesField.getEmptyText().setText("e.g. com.example.service, com.example.logic");
+            scanExcludesField = new JBTextField();
+            scanExcludesField.getEmptyText().setText("e.g. com.example.service.internal");
+
             JPanel form = FormBuilder.createFormBuilder()
                     .addLabeledComponent("Orchestrator Base URL:", baseUrlField)
                     .addLabeledComponent("Project Key:", projectKeyField)
                     .addComponent(projectKeySourceLabel)
                     .addLabeledComponent("Instance Key:", instancePanel)
                     .addLabeledComponent("Rules Directory:", rulesDirField)
+                    .addLabeledComponent("Scan Includes (comma separated):", scanIncludesField)
+                    .addLabeledComponent("Scan Excludes (comma separated):", scanExcludesField)
                     .addComponent(autoUploadCheck)
                     .addLabeledComponent("Auto Upload Interval (seconds):", autoUploadIntervalField)
                     .addComponent(autoRuleSyncCheck)
                     .addLabeledComponent("Auto Rule Sync Interval (seconds):", autoRuleSyncIntervalField)
                     .addComponent(autoCodeSnapshotUploadCheck)
-                    .addLabeledComponent("Code Snapshot Upload Interval (seconds):", autoCodeSnapshotUploadIntervalField)
+                    .addLabeledComponent("Code Snapshot Upload Interval (seconds):",
+                            autoCodeSnapshotUploadIntervalField)
                     .addLabeledComponent("Auto Check Interval (s):", statusIntervalField)
                     .addLabeledComponent("Service Status:", statusPanel)
                     .addComponent(jarPanel)
@@ -338,7 +347,9 @@ public class YgflowSettingsConfigurable implements Configurable {
         }
         boolean modified = !Objects.equals(trim(baseUrlField.getText()), trim(state.baseUrl))
                 || !Objects.equals(trim(instanceKeyField.getText()), trim(state.instanceKey))
-                || !Objects.equals(trim(rulesDirField.getText()), trim(state.rulesDir));
+                || !Objects.equals(trim(rulesDirField.getText()), trim(state.rulesDir))
+                || !Objects.equals(trim(scanIncludesField.getText()), trim(state.scanIncludes))
+                || !Objects.equals(trim(scanExcludesField.getText()), trim(state.scanExcludes));
         if (!modified) {
             String intervalText = trim(statusIntervalField.getText());
             try {
@@ -407,6 +418,8 @@ public class YgflowSettingsConfigurable implements Configurable {
         state.baseUrl = trimOrDefault(baseUrlField.getText(), DEFAULT_BASE_URL);
         state.instanceKey = trimOrDefault(instanceKeyField.getText(), UUID.randomUUID().toString());
         state.rulesDir = trimOrDefault(rulesDirField.getText(), DEFAULT_RULES_DIR);
+        state.scanIncludes = trim(scanIncludesField.getText());
+        state.scanExcludes = trim(scanExcludesField.getText());
         state.statusCheckIntervalSeconds = validateIntervalSeconds(statusIntervalField.getText());
         state.autoUploadEnabled = autoUploadCheck.isSelected();
         state.autoUploadIntervalSeconds = validateAutoUploadIntervalSeconds(autoUploadIntervalField.getText());
@@ -415,8 +428,8 @@ public class YgflowSettingsConfigurable implements Configurable {
         state.jarUploadEnabled = jarUploadCheck != null && jarUploadCheck.isSelected();
         state.selectedJarCoordinates = new HashSet<>(jarSelectionState);
         state.codeSnapshotAutoUploadEnabled = autoCodeSnapshotUploadCheck.isSelected();
-        state.codeSnapshotUploadIntervalSeconds =
-                validateCodeSnapshotIntervalSeconds(autoCodeSnapshotUploadIntervalField.getText());
+        state.codeSnapshotUploadIntervalSeconds = validateCodeSnapshotIntervalSeconds(
+                autoCodeSnapshotUploadIntervalField.getText());
         state.ensureInstanceKey();
         scheduleAutomaticStatusChecks();
         for (Project project : ProjectManager.getInstance().getOpenProjects()) {
@@ -453,6 +466,8 @@ public class YgflowSettingsConfigurable implements Configurable {
         applyProjectKeyDisplay(projectDisplay);
         instanceKeyField.setText(trim(state.instanceKey));
         rulesDirField.setText(trim(state.rulesDir));
+        scanIncludesField.setText(trim(state.scanIncludes));
+        scanExcludesField.setText(trim(state.scanExcludes));
         autoUploadCheck.setSelected(state.autoUploadEnabled);
         autoUploadIntervalField.setText(String.valueOf(Math.max(5, state.autoUploadIntervalSeconds)));
         autoRuleSyncCheck.setSelected(state.autoRuleSyncEnabled);
@@ -470,7 +485,8 @@ public class YgflowSettingsConfigurable implements Configurable {
         reloadJarOptions();
         updateJarUploadControls();
         autoCodeSnapshotUploadCheck.setSelected(state.codeSnapshotAutoUploadEnabled);
-        autoCodeSnapshotUploadIntervalField.setText(String.valueOf(Math.max(5, state.codeSnapshotUploadIntervalSeconds)));
+        autoCodeSnapshotUploadIntervalField
+                .setText(String.valueOf(Math.max(5, state.codeSnapshotUploadIntervalSeconds)));
         updateCodeSnapshotUploadControls();
         markStatusUnknown();
         scheduleAutomaticStatusChecks();
@@ -490,6 +506,8 @@ public class YgflowSettingsConfigurable implements Configurable {
         autoUploadIntervalField = null;
         autoRuleSyncCheck = null;
         autoRuleSyncIntervalField = null;
+        scanIncludesField = null;
+        scanExcludesField = null;
         statusIntervalField = null;
         statusLabel = null;
         jarUploadCheck = null;
@@ -627,8 +645,7 @@ public class YgflowSettingsConfigurable implements Configurable {
                 System.getProperty("ygflow.project"),
                 System.getenv("YGLUE_PROJECT"),
                 System.getenv("YGFLOW_PROJECT"),
-                trim(state.projectKey)
-        );
+                trim(state.projectKey));
         if (!configured.isBlank()) {
             return new DisplayValue(configured, configuredSourceLabel(configured));
         }
@@ -753,7 +770,8 @@ public class YgflowSettingsConfigurable implements Configurable {
             jarListHint.setText("Loading...");
         }
         CompletableFuture
-                .supplyAsync(() -> JarDependencyResolver.listProjectJars(project), AppExecutorUtil.getAppExecutorService())
+                .supplyAsync(() -> JarDependencyResolver.listProjectJars(project),
+                        AppExecutorUtil.getAppExecutorService())
                 .whenComplete((list, error) -> {
                     List<JarDependencyResolver.JarInfo> safe = error == null ? list : List.of();
                     EdtExecutorService.getInstance().execute(() -> {
@@ -853,4 +871,3 @@ public class YgflowSettingsConfigurable implements Configurable {
     private record ConnectionCheckResult(boolean ok, String message) {
     }
 }
-

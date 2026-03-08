@@ -1,11 +1,11 @@
 package org.yglue.flow.runtime.core.validator;
 
-import org.yglue.flow.runtime.FlowContext;
+import org.yglue.flow.runtime.core.engine.FlowContext;
 
 /**
- * 校验上下文
+ * 校验上下�?
  * <p>
- * 提供校验过程中需要的上下文信息，如流程上下文、表达式引擎等。
+ * 提供校验过程中需要的上下文信息，如流程上下文、表达式引擎等�?
  * </p>
  *
  * @author yglue
@@ -19,12 +19,12 @@ public class ValidationContext {
     private final String valueType;
     
     /**
-     * 构造函数
+     * 构造函�?
      *
-     * @param flowContext 流程上下文
-     * @param expressionEngine 表达式引擎
+     * @param flowContext 流程上下�?
+     * @param expressionEngine 表达式引�?
      * @param inputName 输入参数名称
-     * @param valueType 值类型
+     * @param valueType 值类�?
      */
     public ValidationContext(FlowContext flowContext,
                              org.yglue.flow.runtime.core.expression.ExpressionEngine expressionEngine,

@@ -1,5 +1,6 @@
-import { computed, onBeforeUnmount, onMounted, ref } from "vue"
+﻿import { computed, onBeforeUnmount, onMounted, ref } from "vue"
 import ServiceNode from "../ServiceNode.vue"
+import RestNode from "../RestNode.vue"
 import BranchNode from "../BranchNode.vue"
 import TransformerNode from "../TransformerNode.vue"
 import ServiceGroupNode from "../ServiceGroupNode.vue"
@@ -15,6 +16,7 @@ export function useFlowState() {
 
   const nodeTypes = {
     service: ServiceNode,
+    rest: RestNode,
     branch: BranchNode,
     transformer: TransformerNode,
     serviceGroup: ServiceGroupNode,
@@ -30,7 +32,7 @@ export function useFlowState() {
   }
 
   function setGraph(newNodes: any[], newEdges: any[]) {
-    console.log("[useFlowState] setGraph called:", { 
+    console.log("[useFlowState] setGraph called:", {
       newNodesCount: Array.isArray(newNodes) ? newNodes.length : 0,
       newEdgesCount: Array.isArray(newEdges) ? newEdges.length : 0,
       currentNodesCount: nodes.value.length,
@@ -94,6 +96,19 @@ export function useFlowState() {
     hideContextMenu()
   }
 
+  function focusNodeById(nodeId: string): boolean {
+    const exists = nodes.value.some((node) => node.id === nodeId)
+    if (!exists) return false
+    nodes.value = nodes.value.map((node) => ({
+      ...node,
+      selected: node.id === nodeId,
+    }))
+    selected.value = nodes.value.find((node) => node.id === nodeId) ?? null
+    selectedEdge.value = null
+    hideContextMenu()
+    return true
+  }
+
   function handleGlobalClick() {
     if (contextMenu.value.visible) hideContextMenu()
   }
@@ -119,45 +134,108 @@ export function useFlowState() {
     window.removeEventListener("keydown", handleKeydown)
   })
 
+  function hasPath(fromNodeId: string, toNodeId: string, adjacency: Map<string, Set<string>>) {
+    if (fromNodeId === toNodeId) return true
+    const visited = new Set<string>()
+    const stack = [fromNodeId]
+    while (stack.length) {
+      const current = stack.pop()!
+      if (current === toNodeId) return true
+      if (visited.has(current)) continue
+      visited.add(current)
+      const nextSet = adjacency.get(current)
+      if (!nextSet) continue
+      for (const next of nextSet) {
+        if (!visited.has(next)) stack.push(next)
+      }
+    }
+    return false
+  }
+
+  function createsCycle(sourceId: string, targetId: string) {
+    const adjacency = new Map<string, Set<string>>()
+    for (const edge of edges.value) {
+      const source = String(edge.source || "")
+      const target = String(edge.target || "")
+      if (!source || !target) continue
+      if (!adjacency.has(source)) adjacency.set(source, new Set())
+      adjacency.get(source)!.add(target)
+    }
+    if (!adjacency.has(sourceId)) adjacency.set(sourceId, new Set())
+    adjacency.get(sourceId)!.add(targetId)
+    return hasPath(targetId, sourceId, adjacency)
+  }
+
+  function isSingleOutgoingType(nodeType?: string) {
+    return nodeType === "service" || nodeType === "rest" || nodeType === "transaction" || nodeType === "transformer"
+  }
+
+  function isSingleIncomingType(nodeType?: string) {
+    return nodeType === "service" || nodeType === "rest" || nodeType === "branch" || nodeType === "transaction" || nodeType === "transformer"
+  }
+
   function handleConnect(params: any) {
+    if (!params?.source || !params?.target) return
+
     const sourceNode = nodes.value.find((n: any) => n.id === params.source)
     const targetNode = nodes.value.find((n: any) => n.id === params.target)
-    
-    // 检查是否跨服务组边界连线
-    const sourceParent = sourceNode?.parentNode
-    const targetParent = targetNode?.parentNode
-    
-    // 如果源节点和目标节点的父节点不一致,阻止连线
-    if (sourceParent !== targetParent) {
-      if (sourceParent || targetParent) {
-        window.alert("服务组内的节点只能与同组内的节点连线")
-        return
-      }
-    }
-    
-    if (targetNode?.type === "transformer") {
-      const existingIncomingEdges = edges.value.filter((e: any) => e.target === params.target && e.id !== params.edge?.id)
-      if (existingIncomingEdges.length >= 1) {
-        window.alert("脚本节点只能有一条输入连线，请先删除现有连线")
-        return
-      }
-    }
-    if (params.source === params.target) {
-      console.warn("不允许连接到自身")
+    if (!sourceNode || !targetNode) return
+
+    if (sourceNode.type === "serviceGroup" || targetNode.type === "serviceGroup") {
+      window.alert("服务组是容器节点，不能直接连线")
       return
     }
+
+    const sourceParent = sourceNode.parentNode
+    const targetParent = targetNode.parentNode
+    if (sourceParent !== targetParent && (sourceParent || targetParent)) {
+      window.alert("服务组内节点只能与同组节点连线")
+      return
+    }
+
+    if (params.source === params.target) {
+      window.alert("不允许节点连接到自身")
+      return
+    }
+
+    const duplicated = edges.value.some((e: any) => e.source === params.source && e.target === params.target)
+    if (duplicated) {
+      window.alert("已存在相同连线，不能重复添加")
+      return
+    }
+
+    if (isSingleOutgoingType(sourceNode.type)) {
+      const outCount = edges.value.filter((e: any) => e.source === params.source).length
+      if (outCount >= 1) {
+        window.alert("该节点仅允许 1 条出线")
+        return
+      }
+    }
+
+    if (isSingleIncomingType(targetNode.type)) {
+      const inCount = edges.value.filter((e: any) => e.target === params.target).length
+      if (inCount >= 1) {
+        window.alert("该节点仅允许 1 条入线")
+        return
+      }
+    }
+
+    if (createsCycle(String(params.source), String(params.target))) {
+      window.alert("不允许形成环路")
+      return
+    }
+
     const edge = {
       ...params,
       type: "smoothstep",
       id: String(Date.now()),
-      data: { label: "" },
+      data: { label: "", priority: 100, conditionV2: null, expression: "" },
       label: "",
     }
     edges.value = [...edges.value, edge]
     selectedEdge.value = edge
     selected.value = null
   }
-
   function onNodeClick({ node }: any) {
     selected.value = node
     selectedEdge.value = null
@@ -194,7 +272,7 @@ export function useFlowState() {
   function onEdgeContextMenu({ edge, event }: any) {
     event?.preventDefault()
     hideContextMenu()
-    if (confirm("确认删除这条连线？")) {
+    if (confirm("确认删除这条连线吗？")) {
       removeEdgeById(edge.id)
     }
   }
@@ -202,36 +280,34 @@ export function useFlowState() {
   function addNodeFromPalette(item: any, position: { x: number; y: number }, parentId?: string) {
     if (!item) return
     const id = String(Date.now())
-    // 根据 endpointType 决定节点类型：FLOW_OPERATION -> service（本地服务调用）
+    // 鏍规嵁 endpointType 鍐冲畾鑺傜偣绫诲瀷锛欶LOW_OPERATION -> service锛堟湰鍦版湇鍔¤皟鐢級
     let nodeType = item.nodeType
     if (!nodeType && item.endpointType) {
       const endpointType = String(item.endpointType).toUpperCase()
       if (endpointType === "FLOW_OPERATION") {
-        nodeType = "service"  // 本地服务调用使用 service 节点
+        nodeType = "service"  // 鏈湴鏈嶅姟璋冪敤浣跨敤 service 鑺傜偣
       } else if (endpointType === "REST" || endpointType === "HTTP") {
-        nodeType = "rest"  // REST 调用使用 rest 节点
+        nodeType = "rest"  // REST 璋冪敤浣跨敤 rest 鑺傜偣
       }
     }
-    nodeType = nodeType ?? "service"  // 默认使用 service 节点
+    nodeType = nodeType ?? "service"  // 榛樿浣跨敤 service 鑺傜偣
+    if (nodeType === "transformer") {
+      window.alert("脚本节点已下线，请使用服务节点或 HTTP 节点。")
+      return
+    }
     const label =
       nodeType === "branch"
         ? item.title || item.displayName || "Branch"
-        : item.displayName || item.title || item.bean || item.fqcn || item.name || "节点"
+        : item.displayName || item.title || item.bean || item.fqcn || item.name || "鑺傜偣"
 
     const mapInputs = (list: any[] = []) =>
       list.map((input: any) => ({
-        name: input.name,
-        description: input.description,
+        name: input.name || "",
+        description: input.description || "",
         valueType: (input.valueType || "STRING").toUpperCase(),
         typeName: input.typeName || "",
-        transformer: input.transformer || "",
-        resolver:
-          input.resolver || {
-            type: input.sourceType || "request",
-            path: input.path || "",
-            cast: input.cast || "STRING",
-            default: input.default || "",
-          },
+        // 淇濈暀 IDE 涓婃姤鐨勫畬鏁?JSON Schema锛屼緵 ParamPlanBuilder 娓叉煋宓屽瀛楁鏄犲皠
+        schema: input.schema || null,
       }))
 
     const mapOutput = (output: any) => ({
@@ -244,7 +320,7 @@ export function useFlowState() {
 
     const data = (() => {
       if (nodeType === "branch") {
-        return { label, branch: true, expression: "", fallbackNote: "" }
+        return { label, branch: true, expression: "", fallbackNote: "", tempVars: [] }
       }
       if (nodeType === "transaction") {
         const variant = item.variant === "end" ? "end" : "begin"
@@ -260,11 +336,26 @@ export function useFlowState() {
       }
       if (nodeType === "transformer") {
         return {
-          label: item.title || "脚本节点",
+          label: item.title || "鑴氭湰鑺傜偣",
           mappingConfig: {
             fieldMappings: [],
           },
           script: "",
+        }
+      }
+      if (nodeType === "rest") {
+        return {
+          label: item.title || item.displayName || "HTTP 调用",
+          method: "GET",
+          url: "",
+          headers: [],
+          query: [],
+          body: "",
+          timeoutSeconds: 10,
+          retryCount: 0,
+          retryBackoffMs: 0,
+          retryOnStatuses: [429, 500, 502, 503, 504],
+          as: generateContextKey(),
         }
       }
       const base = {
@@ -310,11 +401,12 @@ export function useFlowState() {
                       valueType: inferValueType(param.type || ""),
                       typeName: param.type || "",
                       description: param.description || "",
+                      schema: param.schema || null,  // 浼犻€掓潵鑷?IDE 鎻掍欢涓婃姤鐨勫畬鏁村叆鍙?JSON Schema
                     }))
                   )
                 }
               } catch {
-                // 忽略解析错误
+                // 蹇界暐瑙ｆ瀽閿欒
               }
             }
             return mapInputs(item.inputs)
@@ -331,7 +423,7 @@ export function useFlowState() {
                   })
                 }
               } catch {
-                // 忽略解析错误
+                // 蹇界暐瑙ｆ瀽閿欒
               }
             }
             return mapOutput(item.output)
@@ -349,7 +441,7 @@ export function useFlowState() {
       return base
     })()
 
-    // 如果有父节点，需要将绝对坐标转换为相对坐标
+    // Convert absolute position to relative position when dropped inside a parent node.
     let finalPosition = position
     if (parentId) {
       const parentNode = nodes.value.find((n: any) => n.id === parentId)
@@ -368,12 +460,12 @@ export function useFlowState() {
         position: finalPosition,
         data,
         type: nodeType,
-        // 如果有parentId,设置父节点关系并限制在父节点内
-        ...(parentId ? { 
+        // If dropped into a service group, attach as child node.
+        ...(parentId ? {
           parentNode: parentId,
-          extent: 'parent' as const,  // 限制子节点只能在父节点范围内移动
+          extent: "parent" as const,
         } : {}),
-        // 服务组需要显式设置容器属性
+        // Service group works as a container node.
         ...(nodeType === "serviceGroup" ? {
           style: {
             width: 400,
@@ -381,7 +473,6 @@ export function useFlowState() {
             padding: 0,
           },
           draggable: true,
-          // 允许其他节点作为子节点
           expandParent: true,
         } : {}),
       },
@@ -399,6 +490,7 @@ export function useFlowState() {
     setGraph,
     resetGraph,
     hideContextMenu,
+    focusNodeById,
     removeContextMenuNode,
     deleteSelection,
     clearSelection,

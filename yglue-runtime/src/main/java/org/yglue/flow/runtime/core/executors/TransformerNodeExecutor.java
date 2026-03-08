@@ -1,10 +1,9 @@
 package org.yglue.flow.runtime.core.executors;
 
-import groovy.lang.Binding;
-import groovy.lang.GroovyShell;
-import org.yglue.flow.runtime.FlowContext;
+import org.yglue.flow.runtime.core.engine.FlowContext;
 import org.yglue.flow.runtime.core.NodeExecutionContext;
 import org.yglue.flow.runtime.core.FlowExecutor;
+import org.yglue.flow.runtime.core.script.GroovyScriptEngine;
 import org.yglue.flow.runtime.core.util.ExpressionEvaluator;
 import org.yglue.flow.runtime.core.util.ParamResolver;
 
@@ -15,19 +14,20 @@ import java.util.Map;
 
 /**
  * 转换器节点执行器
- * 支持字段映射和 Groovy 脚本执行，用于将流程输出转换为目标接口的请求/响应结构
+ * 支持字段映射�?Groovy 脚本执行，用于将流程输出转换为目标接口的请求/响应结构
  */
 public class TransformerNodeExecutor implements FlowExecutor {
+
+    private static final GroovyScriptEngine GROOVY_SCRIPT_ENGINE = GroovyScriptEngine.shared();
 
     @Override
     public Object execute(NodeExecutionContext context) throws Exception {
         Map<String, Object> config = context.getNode().getConfig();
         FlowContext flowContext = context.getContext();
 
-        // 获取上游节点的输出（通常是前一个节点的结果）
-        Object input = getUpstreamOutput(flowContext, config);
+        // 获取上游节点的输出（通常是前一个节点的结果�?        Object input = getUpstreamOutput(flowContext, config);
 
-        // 获取输出类型：object（对象）或 single（单值）
+        // 获取输出类型：object（对象）�?single（单值）
         String outputType = getString(config, "outputType");
         boolean isSingleValue = "single".equals(outputType);
         
@@ -38,8 +38,7 @@ public class TransformerNodeExecutor implements FlowExecutor {
         Map<String, Object> output;
         Object singleValue = null;
         if (isSingleValue && !(mappingResult instanceof Map)) {
-            // 单值模式且返回的是单值
-            singleValue = mappingResult;
+            // 单值模式且返回的是单�?            singleValue = mappingResult;
             output = new LinkedHashMap<>();
         } else {
             // 对象模式或单值模式但返回的是对象
@@ -50,17 +49,14 @@ public class TransformerNodeExecutor implements FlowExecutor {
             output = mapResult;
         }
 
-        // 执行 Groovy 脚本（如果配置了）
-        String script = getString(config, "script");
+        // 执行 Groovy 脚本（如果配置了�?        String script = getString(config, "script");
         if (script != null && !script.trim().isEmpty()) {
             Map<String, Object> scriptOutput = executeGroovyScript(script, flowContext, input, output);
             
             if (isSingleValue && singleValue != null) {
-                // 单值模式下，如果脚本返回的是 Map，检查是否应该提取单值
-                if (scriptOutput != null && scriptOutput.size() == 1) {
+                // 单值模式下，如果脚本返回的�?Map，检查是否应该提取单�?                if (scriptOutput != null && scriptOutput.size() == 1) {
                     Object scriptValue = scriptOutput.values().iterator().next();
-                    // 检查目标字段是否为空
-                    @SuppressWarnings("unchecked")
+                    // 检查目标字段是否为�?                    @SuppressWarnings("unchecked")
                     Map<String, Object> mappingConfig = (Map<String, Object>) config.get("mappingConfig");
                     if (mappingConfig != null) {
                         Object fieldMappingsObj = mappingConfig.get("fieldMappings");
@@ -84,8 +80,7 @@ public class TransformerNodeExecutor implements FlowExecutor {
             }
         }
 
-        // 单值模式处理：如果目标字段为空，直接返回单值
-        if (isSingleValue && singleValue != null) {
+        // 单值模式处理：如果目标字段为空，直接返回单�?        if (isSingleValue && singleValue != null) {
             String alias = getString(config, "as");
             if (alias != null && !alias.isEmpty()) {
                 flowContext.set(alias, singleValue);
@@ -94,8 +89,7 @@ public class TransformerNodeExecutor implements FlowExecutor {
             return singleValue;
         }
 
-        // 将结果保存到上下文
-        String alias = getString(config, "as");
+        // 将结果保存到上下�?        String alias = getString(config, "as");
         if (alias != null && !alias.isEmpty()) {
             flowContext.set(alias, output);
         }
@@ -105,21 +99,15 @@ public class TransformerNodeExecutor implements FlowExecutor {
     }
 
     /**
-     * 获取上游节点的输出
-     * 转换器的输入来源优先级：
-     * 1. 节点配置中的 inputSource - 如果配置了特定的输入源路径（如 ctx.xxx）
-     * 2. 上下文中的 ret（返回值）
-     * 3. 上下文中的其他值（向后兼容）
-     * 
-     * @param context 流程上下文
-     * @param config 节点配置
-     * @return 上游节点的输出
-     */
+     * 获取上游节点的输�?     * 转换器的输入来源优先级：
+     * 1. 节点配置中的 inputSource - 如果配置了特定的输入源路径（�?ctx.xxx�?     * 2. 上下文中�?ret（返回值）
+     * 3. 上下文中的其他值（向后兼容�?     * 
+     * @param context 流程上下�?     * @param config 节点配置
+     * @return 上游节点的输�?     */
     private Object getUpstreamOutput(FlowContext context, Map<String, Object> config) {
         Map<String, Object> data = context.data();
         
-        // 优先级1：从配置中获取指定的输入源路径
-        Object inputSourceObj = config.get("inputSource");
+        // 优先�?：从配置中获取指定的输入源路�?        Object inputSourceObj = config.get("inputSource");
         if (inputSourceObj != null) {
             String inputSource = String.valueOf(inputSourceObj);
             if (!inputSource.isEmpty() && !inputSource.equals("null")) {
@@ -134,14 +122,13 @@ public class TransformerNodeExecutor implements FlowExecutor {
             }
         }
         
-        // 优先级2：尝试从上下文获取 ret（返回值）
+        // 优先�?：尝试从上下文获�?ret（返回值）
         Object retValue = data.get("ret");
         if (retValue != null) {
             return retValue;
         }
         
-        // 优先级3：查找最近的非空输出值（向后兼容）
-        Object lastOutput = null;
+        // 优先�?：查找最近的非空输出值（向后兼容�?        Object lastOutput = null;
         for (Map.Entry<String, Object> entry : data.entrySet()) {
             String key = entry.getKey();
             // 跳过系统内部使用的key
@@ -161,10 +148,8 @@ public class TransformerNodeExecutor implements FlowExecutor {
      * 应用字段映射配置
      * 
      * @param config 节点配置
-     * @param context 流程上下文
-     * @param input 输入数据
-     * @param isSingleValue 是否为单值模式
-     * @return 映射结果：单值模式下如果目标字段为空返回单值，否则返回 Map
+     * @param context 流程上下�?     * @param input 输入数据
+     * @param isSingleValue 是否为单值模�?     * @return 映射结果：单值模式下如果目标字段为空返回单值，否则返回 Map
      */
     @SuppressWarnings("unchecked")
     private Object applyFieldMappings(Map<String, Object> config, 
@@ -186,8 +171,7 @@ public class TransformerNodeExecutor implements FlowExecutor {
         
         List<Map<String, Object>> fieldMappings = (List<Map<String, Object>>) fieldMappingsObj;
         
-        // 单值模式：只处理第一个映射
-        if (isSingleValue && !fieldMappings.isEmpty()) {
+        // 单值模式：只处理第一个映�?        if (isSingleValue && !fieldMappings.isEmpty()) {
             Map<String, Object> firstMapping = fieldMappings.get(0);
             String sourceField = getString(firstMapping, "sourceField");
             String targetField = getString(firstMapping, "targetField");
@@ -197,11 +181,9 @@ public class TransformerNodeExecutor implements FlowExecutor {
             Object value = null;
             
             if ("constant".equals(transformation)) {
-                // 常量赋值
-                value = defaultValue;
+                // 常量赋�?                value = defaultValue;
             } else if ("script".equals(transformation)) {
-                // 脚本转换（简单脚本，复杂逻辑用 Groovy 脚本）
-                String script = getString(firstMapping, "script");
+                // 脚本转换（简单脚本，复杂逻辑�?Groovy 脚本�?                String script = getString(firstMapping, "script");
                 if (script != null && !script.trim().isEmpty()) {
                     value = evaluateScript(script, context, input);
                 } else {
@@ -219,8 +201,7 @@ public class TransformerNodeExecutor implements FlowExecutor {
                     value = input;
                 }
                 
-                // 如果值为空，使用默认值
-                if (value == null && defaultValue != null && !defaultValue.isEmpty()) {
+                // 如果值为空，使用默认�?                if (value == null && defaultValue != null && !defaultValue.isEmpty()) {
                     value = defaultValue;
                 }
             }
@@ -235,8 +216,7 @@ public class TransformerNodeExecutor implements FlowExecutor {
             }
         }
         
-        // 对象模式：处理所有映射
-        for (Map<String, Object> mapping : fieldMappings) {
+        // 对象模式：处理所有映�?        for (Map<String, Object> mapping : fieldMappings) {
             String sourceField = getString(mapping, "sourceField");
             String targetField = getString(mapping, "targetField");
             String transformation = getString(mapping, "transformation");
@@ -250,11 +230,9 @@ public class TransformerNodeExecutor implements FlowExecutor {
             Object value = null;
             
             if ("constant".equals(transformation)) {
-                // 常量赋值
-                value = defaultValue;
+                // 常量赋�?                value = defaultValue;
             } else if ("script".equals(transformation)) {
-                // 脚本转换（简单脚本，复杂逻辑用 Groovy 脚本）
-                String script = getString(mapping, "script");
+                // 脚本转换（简单脚本，复杂逻辑�?Groovy 脚本�?                String script = getString(mapping, "script");
                 if (script != null && !script.trim().isEmpty()) {
                     value = evaluateScript(script, context, input);
                 } else {
@@ -272,8 +250,7 @@ public class TransformerNodeExecutor implements FlowExecutor {
                     value = input;
                 }
                 
-                // 如果值为空，使用默认值
-                if (value == null && defaultValue != null && !defaultValue.isEmpty()) {
+                // 如果值为空，使用默认�?                if (value == null && defaultValue != null && !defaultValue.isEmpty()) {
                     value = defaultValue;
                 }
             }
@@ -295,33 +272,30 @@ public class TransformerNodeExecutor implements FlowExecutor {
                                                    Object input, 
                                                    Map<String, Object> output) {
         try {
-            Binding binding = new Binding();
-            binding.setVariable("ctx", context.data());
-            binding.setVariable("input", input);
-            binding.setVariable("output", output);
-            
-            GroovyShell shell = new GroovyShell(binding);
-            Object result = shell.evaluate(script);
+            Map<String, Object> variables = new HashMap<>();
+            variables.put("ctx", context.data());
+            variables.put("input", input);
+            variables.put("output", output);
+
+            Object result = GROOVY_SCRIPT_ENGINE.evaluate(script, variables);
             
             if (result instanceof Map) {
                 return (Map<String, Object>) result;
             } else if (result != null) {
-                // 如果脚本返回非 Map 类型，将其包装
-                Map<String, Object> wrapped = new LinkedHashMap<>();
+                // 如果脚本返回�?Map 类型，将其包�?                Map<String, Object> wrapped = new LinkedHashMap<>();
                 wrapped.put("result", result);
                 return wrapped;
             }
             
             return output;
         } catch (Exception e) {
-            // 检测常见的拼写错误，提供更友好的错误提示
-            String errorMessage = e.getMessage();
+            // 检测常见的拼写错误，提供更友好的错误提�?            String errorMessage = e.getMessage();
             String helpfulHint = "";
             if (errorMessage != null) {
                 if (errorMessage.contains("retrun") && errorMessage.contains("No signature of method")) {
-                    helpfulHint = " (提示：可能是拼写错误，请检查是否将 'return' 写成了 'retrun')";
+                    helpfulHint = " (提示：可能是拼写错误，请检查是否将 'return' 写成�?'retrun')";
                 } else if (errorMessage.contains("retun") && errorMessage.contains("No signature of method")) {
-                    helpfulHint = " (提示：可能是拼写错误，请检查是否将 'return' 写成了 'retun')";
+                    helpfulHint = " (提示：可能是拼写错误，请检查是否将 'return' 写成�?'retun')";
                 }
             }
             throw new RuntimeException("Groovy script execution failed: " + errorMessage + helpfulHint 
@@ -345,8 +319,7 @@ public class TransformerNodeExecutor implements FlowExecutor {
     }
 
     /**
-     * 获取嵌套字段值（支持点号分隔的路径，如 "user.name"）
-     */
+     * 获取嵌套字段值（支持点号分隔的路径，�?"user.name"�?     */
     @SuppressWarnings("unchecked")
     private Object getNestedValue(Object obj, String path) {
         if (obj == null || path == null || path.isEmpty()) {
@@ -364,8 +337,7 @@ public class TransformerNodeExecutor implements FlowExecutor {
             if (current instanceof Map) {
                 current = ((Map<String, Object>) current).get(part);
             } else {
-                // 尝试使用反射获取属性
-                try {
+                // 尝试使用反射获取属�?                try {
                     java.lang.reflect.Field field = current.getClass().getDeclaredField(part);
                     field.setAccessible(true);
                     current = field.get(current);
@@ -404,11 +376,9 @@ public class TransformerNodeExecutor implements FlowExecutor {
     }
 
     /**
-     * 安全获取字符串值
-     */
+     * 安全获取字符串�?     */
     private String getString(Map<String, Object> map, String key) {
         Object value = map.get(key);
         return value != null ? String.valueOf(value) : null;
     }
 }
-

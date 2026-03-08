@@ -1,6 +1,6 @@
 package org.yglue.flow.runtime.core.util;
 
-import org.yglue.flow.runtime.FlowContext;
+import org.yglue.flow.runtime.core.engine.FlowContext;
 import org.yglue.flow.runtime.core.expression.ExpressionEngine;
 import org.yglue.flow.runtime.core.expression.ExpressionEvaluationContext;
 import org.yglue.flow.runtime.core.expression.ExpressionEngines;

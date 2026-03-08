@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue"
+import { computed, nextTick, watch } from "vue"
 import { ConnectionMode, VueFlow, useVueFlow } from "@vue-flow/core"
 import { Controls } from "@vue-flow/controls"
 import { MiniMap } from "@vue-flow/minimap"
@@ -13,6 +13,8 @@ const props = defineProps<{
   nodeTypes: Record<string, any>
   contextMenu: ContextMenuState
   canDelete: boolean
+  focusNodeId?: string | null
+  focusNonce?: number
 }>()
 
 const emit = defineEmits<{
@@ -39,7 +41,22 @@ const edgesModel = computed({
   set: (value: any[]) => emit("update:edges", value),
 })
 
-const { project, fitView, zoomIn, zoomOut, getNodes } = useVueFlow()
+const { project, fitView, zoomIn, zoomOut } = useVueFlow()
+
+watch(
+  () => [props.focusNodeId, props.focusNonce] as const,
+  async ([nodeId]) => {
+    const id = String(nodeId || "").trim()
+    if (!id) return
+    try {
+      await fitView?.({ nodes: [id], padding: 0.35, duration: 260 })
+    } catch (error) {
+      console.warn("Failed to focus node by id", error)
+    }
+    await nextTick()
+    highlightNode(id)
+  },
+)
 
 function handleDragOver(event: DragEvent) {
   event.preventDefault()
@@ -51,58 +68,45 @@ function handleDragOver(event: DragEvent) {
 function handleDrop(event: DragEvent) {
   event.preventDefault()
   emit("hide-context-menu")
+
   const raw = event.dataTransfer?.getData("application/json") || event.dataTransfer?.getData("text/plain")
   if (!raw) return
+
   let item: any
   try {
     item = JSON.parse(raw)
   } catch (error) {
-    console.warn("解析拖拽数据失败", error)
+    console.warn("Failed to parse drag payload", error)
     return
   }
+
   const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect()
   const position = project
     ? project({ x: event.clientX - bounds.left, y: event.clientY - bounds.top })
     : { x: event.clientX - bounds.left, y: event.clientY - bounds.top }
-  
-  // 检测拖拽位置是否在服务组节点内
-  let parentId: string | undefined = undefined
-  const allNodes = props.nodes
-  
-  for (const node of allNodes) {
-    if (node.type === 'serviceGroup') {
-      // 服务组节点的绝对位置和尺寸
-      const nodeX = node.position.x
-      const nodeY = node.position.y
-      const nodeStyle = typeof node.style === 'object' ? node.style : {}
-      // 使用 computed dimensions 或 style 中的宽高
-      const nodeWidth = (node as any).computedPosition?.w || (node as any).dimensions?.width || (nodeStyle as any).width || 400
-      const nodeHeight = (node as any).computedPosition?.h || (node as any).dimensions?.height || (nodeStyle as any).height || 250
-      
-      console.log('[handleDrop] 检测服务组:', {
-        nodeId: node.id,
-        nodeX,
-        nodeY,
-        nodeWidth,
-        nodeHeight,
-        dropX: position.x,
-        dropY: position.y,
-      })
-      
-      // 检查拖拽位置是否在服务组范围内
-      if (
-        position.x >= nodeX &&
-        position.x <= nodeX + nodeWidth &&
-        position.y >= nodeY &&
-        position.y <= nodeY + nodeHeight
-      ) {
-        parentId = node.id
-        console.log('[handleDrop] 找到父节点:', parentId)
-        break
-      }
+
+  // Detect whether dropped into a serviceGroup node.
+  let parentId: string | undefined
+  for (const node of props.nodes) {
+    if (node.type !== "serviceGroup") continue
+
+    const nodeX = node.position.x
+    const nodeY = node.position.y
+    const nodeStyle = typeof node.style === "object" ? node.style : {}
+    const nodeWidth = (node as any).computedPosition?.w || (node as any).dimensions?.width || (nodeStyle as any).width || 400
+    const nodeHeight = (node as any).computedPosition?.h || (node as any).dimensions?.height || (nodeStyle as any).height || 250
+
+    if (
+      position.x >= nodeX &&
+      position.x <= nodeX + nodeWidth &&
+      position.y >= nodeY &&
+      position.y <= nodeY + nodeHeight
+    ) {
+      parentId = node.id
+      break
     }
   }
-  
+
   emit("drop-node", { item, position, parentId })
 }
 
@@ -116,6 +120,19 @@ function handleZoomOut() {
 
 function handleFocus() {
   fitView?.({ padding: 0.2, duration: 300 })
+}
+
+function highlightNode(nodeId: string) {
+  const root = document.querySelector(".flow-root")
+  if (!root) return
+  const nodeElement = root.querySelector(`.vue-flow__node[data-id="${nodeId}"]`) as HTMLElement | null
+  if (!nodeElement) return
+  nodeElement.classList.remove("node-focus-flash")
+  void nodeElement.offsetWidth
+  nodeElement.classList.add("node-focus-flash")
+  window.setTimeout(() => {
+    nodeElement.classList.remove("node-focus-flash")
+  }, 1200)
 }
 </script>
 
@@ -139,6 +156,7 @@ function handleFocus() {
       <MiniMap />
       <Controls />
     </VueFlow>
+
     <div class="action-rail">
       <button class="rail-btn" type="button" title="放大" @click="handleZoomIn">
         <Plus :size="14" />
@@ -153,6 +171,7 @@ function handleFocus() {
         <Trash2 :size="14" />
       </button>
     </div>
+
     <div
       v-if="props.contextMenu.visible"
       class="context-menu"
@@ -167,8 +186,13 @@ function handleFocus() {
 
 <style scoped>
 .canvas-surface {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  z-index: 1;
+  border-radius: 12px;
+  overflow: hidden;
 }
 
 .flow-root {
@@ -180,6 +204,22 @@ function handleFocus() {
   transition: transform 0.15s ease;
 }
 
+.flow-root :deep(.vue-flow__node.node-focus-flash) {
+  animation: node-focus-flash 1.2s ease;
+}
+
+@keyframes node-focus-flash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.55);
+  }
+  35% {
+    box-shadow: 0 0 0 10px rgba(37, 99, 235, 0.2);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0);
+  }
+}
+
 .flow-root :deep(.vue-flow__pane) {
   background-image: radial-gradient(circle, rgba(148, 163, 184, 0.22) 1px, transparent 1px);
   background-size: 24px 24px;
@@ -188,7 +228,7 @@ function handleFocus() {
 .action-rail {
   position: absolute;
   right: 20px;
-  top: 130px;
+  top: 20px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -260,7 +300,3 @@ function handleFocus() {
   background: rgba(220, 38, 38, 0.08);
 }
 </style>
-
-
-
-

@@ -1,10 +1,25 @@
 import type { EndpointResponseSchema, EndpointSchemaField, FlowModel, FlowResolver } from "../../api/client"
 import type { FlowEntrypoint } from "../../data/flowSettings"
 
+export type InboundInterceptorCatalogItem = {
+  code: string
+  label?: string
+  description?: string
+  defaultOrder?: number
+  defaultConfig?: Record<string, any>
+  configSchema?: Record<string, any> | null
+  source?: "builtin" | "project" | string
+}
+
 export type EndpointSchemaHint = {
   requestSchema?: EndpointSchemaField[] | null
   requestSchemaJson?: string | null
   responseSchema?: EndpointResponseSchema | null
+} | null
+
+export type IssueFocusRequest = {
+  path: string
+  nonce: number
 } | null
 
 export type CanvasEditorProps = {
@@ -14,7 +29,9 @@ export type CanvasEditorProps = {
   endpointSchema?: EndpointSchemaHint
   flowModels?: FlowModel[] | null
   flowResolvers?: FlowResolver[] | null
-  endpointId?: number  // 端点ID，用于脚本编辑器加载类成员信息
+  inboundInterceptorCatalog?: InboundInterceptorCatalogItem[] | null
+  endpointId?: number
+  issueFocusRequest?: IssueFocusRequest
 }
 
 export type ContextMenuState = {
@@ -24,4 +41,3 @@ export type ContextMenuState = {
   nodeId: string | null
   label: string
 }
-

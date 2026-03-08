@@ -9,6 +9,8 @@ import org.springframework.web.servlet.HandlerMapping;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -54,7 +56,7 @@ class FlowRequestPayloadExtractor {
             } else if (values.length == 1) {
                 result.put(key, values[0]);
             } else {
-                result.put(key, List.of(values));
+                result.put(key, new ArrayList<>(Arrays.asList(values)));
             }
         });
         return result;

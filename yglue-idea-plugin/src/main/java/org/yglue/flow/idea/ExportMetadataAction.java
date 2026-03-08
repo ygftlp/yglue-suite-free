@@ -28,11 +28,16 @@ import com.intellij.psi.search.GlobalSearchScope;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.yglue.flow.idea.schema.SchemaGenerator;
+import org.yglue.flow.idea.settings.YgflowSettingsState;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -59,33 +64,26 @@ public class ExportMetadataAction extends AnAction {
     private static final String FLOW_RESOLVER_ANNOTATION = "org.yglue.flow.annotations.FlowResolver";
 
     private static final Set<String> API_ANNOTATIONS = Set.of(
-            "org.yglue.flow.annotations.FlowApi"
-    );
+            "org.yglue.flow.annotations.FlowApi");
 
     private static final Set<String> OPERATION_ANNOTATIONS = Set.of(
             "org.yglue.flow.annotations.FlowOperation",
-            "org.yglue.flow.annotations.DevflowOperation"
-    );
+            "org.yglue.flow.annotations.DevflowOperation");
 
     private static final Set<String> REST_CONTROLLER_ANNOTATIONS = Set.of(
-            "org.springframework.web.bind.annotation.RestController"
-    );
+            "org.springframework.web.bind.annotation.RestController");
     private static final Set<String> CONTROLLER_ANNOTATIONS = Set.of(
-            "org.springframework.stereotype.Controller"
-    );
+            "org.springframework.stereotype.Controller");
     private static final Set<String> RESPONSE_BODY_ANNOTATIONS = Set.of(
-            "org.springframework.web.bind.annotation.ResponseBody"
-    );
+            "org.springframework.web.bind.annotation.ResponseBody");
     private static final Set<String> CLASS_MAPPING_ANNOTATIONS = Set.of(
-            "org.springframework.web.bind.annotation.RequestMapping"
-    );
+            "org.springframework.web.bind.annotation.RequestMapping");
     private static final Map<String, String> METHOD_FIXED_MAPPINGS = Map.ofEntries(
             Map.entry("org.springframework.web.bind.annotation.GetMapping", "GET"),
             Map.entry("org.springframework.web.bind.annotation.PostMapping", "POST"),
             Map.entry("org.springframework.web.bind.annotation.PutMapping", "PUT"),
             Map.entry("org.springframework.web.bind.annotation.DeleteMapping", "DELETE"),
-            Map.entry("org.springframework.web.bind.annotation.PatchMapping", "PATCH")
-    );
+            Map.entry("org.springframework.web.bind.annotation.PatchMapping", "PATCH"));
     private static final Set<String> METHOD_MAPPING_ANNOTATIONS = new LinkedHashSet<>(METHOD_FIXED_MAPPINGS.keySet());
     static {
         METHOD_MAPPING_ANNOTATIONS.add("org.springframework.web.bind.annotation.RequestMapping");
@@ -99,7 +97,8 @@ public class ExportMetadataAction extends AnAction {
     @Override
     public void actionPerformed(AnActionEvent e) {
         Project project = e.getProject();
-        if (project == null) return;
+        if (project == null)
+            return;
 
         try {
             Path outFile = exportProject(project);
@@ -122,11 +121,12 @@ public class ExportMetadataAction extends AnAction {
     public static Path exportProject(Project project) throws Exception {
         JSONObject json = scanProject(project);
         String base = project.getBasePath();
-        if (base == null) throw new IllegalStateException("Project basePath is null");
+        if (base == null)
+            throw new IllegalStateException("Project basePath is null");
         Path outDir = Path.of(base, ".ygflow");
         Files.createDirectories(outDir);
         Path outFile = outDir.resolve("export.json");
-        Files.writeString(outFile, json.toString(2));
+        Files.writeString(outFile, json.toString(2), StandardCharsets.UTF_8);
         return outFile;
     }
 
@@ -143,11 +143,35 @@ public class ExportMetadataAction extends AnAction {
         JSONArray models = new JSONArray();
         JSONArray resolvers = new JSONArray();
         result.put("project", project.getName());
+        result.put("schemaVersion", "1.0");
+        result.put("generatedAt", Instant.now().toString());
+        result.put("generator", "yglue-idea-plugin");
         result.put("services", services);
         result.put("rests", restEndpoints);
         result.put("models", models);
         result.put("resolvers", resolvers);
         appendBuiltinResolvers(resolvers);
+
+        YgflowSettingsState settingsState = YgflowSettingsState.getInstance();
+        FilterConfig filterConfig;
+        if (settingsState != null) {
+            String includesStr = settingsState.scanIncludes == null ? "" : settingsState.scanIncludes;
+            String excludesStr = settingsState.scanExcludes == null ? "" : settingsState.scanExcludes;
+
+            List<String> includesList = new ArrayList<>();
+            for (String s : includesStr.split(",")) {
+                if (!s.isBlank())
+                    includesList.add(s.trim());
+            }
+            List<String> excludesList = new ArrayList<>();
+            for (String s : excludesStr.split(",")) {
+                if (!s.isBlank())
+                    excludesList.add(s.trim());
+            }
+            filterConfig = new FilterConfig(includesList, excludesList);
+        } else {
+            filterConfig = new FilterConfig(List.of(), List.of());
+        }
 
         PsiManager psiManager = PsiManager.getInstance(project);
         GlobalSearchScope scope = GlobalSearchScope.projectScope(project);
@@ -156,9 +180,13 @@ public class ExportMetadataAction extends AnAction {
         ReadAction.run(() -> {
             for (VirtualFile vf : vfs) {
                 PsiFile psi = psiManager.findFile(vf);
-                if (!(psi instanceof PsiJavaFile psiJavaFile)) continue;
+                if (!(psi instanceof PsiJavaFile psiJavaFile))
+                    continue;
 
                 for (PsiClass clazz : psiJavaFile.getClasses()) {
+                    if (!filterConfig.isIncluded(clazz))
+                        continue;
+
                     handleFlowApiClass(clazz, services);
                     handleFlowModelClass(clazz, models);
                     handleFlowResolverClass(clazz, resolvers);
@@ -168,6 +196,41 @@ public class ExportMetadataAction extends AnAction {
         });
 
         return result;
+    }
+
+    // `readFilterConfig(Project)` 已经被抛弃，现在使用 IDEA PersistentStateComponent
+    // (YgflowSettingsState)
+
+    /**
+     * 过滤器配置模型
+     */
+    private record FilterConfig(List<String> includes, List<String> excludes) {
+        public boolean isIncluded(PsiClass clazz) {
+            String qName = clazz.getQualifiedName();
+            if (qName == null)
+                return true;
+
+            // 如果配置了 includes，必须匹配其中之一
+            if (!includes.isEmpty()) {
+                boolean matchInit = false;
+                for (String inc : includes) {
+                    if (qName.startsWith(inc)) {
+                        matchInit = true;
+                        break;
+                    }
+                }
+                if (!matchInit)
+                    return false;
+            }
+
+            // 检查 excludes
+            for (String exc : excludes) {
+                if (qName.startsWith(exc)) {
+                    return false;
+                }
+            }
+            return true;
+        }
     }
 
     /**
@@ -183,14 +246,14 @@ public class ExportMetadataAction extends AnAction {
     private static String extractBeanNameFromSpringAnnotation(PsiClass aClass) {
         String beanName = null;
         boolean hasSpringAnnotation = false;
-        
+
         // 检查 @Service 注解
         PsiAnnotation serviceAnno = aClass.getAnnotation("org.springframework.stereotype.Service");
         if (serviceAnno != null) {
             hasSpringAnnotation = true;
             beanName = getAttr(serviceAnno, "value");
         }
-        
+
         // 检查 @Component 注解（如果 @Service 不存在）
         if (!hasSpringAnnotation) {
             PsiAnnotation componentAnno = aClass.getAnnotation("org.springframework.stereotype.Component");
@@ -199,7 +262,7 @@ public class ExportMetadataAction extends AnAction {
                 beanName = getAttr(componentAnno, "value");
             }
         }
-        
+
         // 如果类有 Spring 注解但未指定 value，使用 Spring 默认规则（类名首字母小写）
         if (hasSpringAnnotation) {
             if (beanName == null || beanName.isBlank()) {
@@ -208,10 +271,10 @@ public class ExportMetadataAction extends AnAction {
             }
             return beanName;
         }
-        
+
         return null;
     }
-    
+
     /**
      * 生成默认的 bean 名称（类名首字母小写）
      */
@@ -228,58 +291,109 @@ public class ExportMetadataAction extends AnAction {
      * 提取带有 @FlowApi 注解的类信息，包括服务信息和操作列表。
      * </p>
      *
-     * @param aClass 类对象
+     * @param aClass   类对象
      * @param services 服务数组（输出）
      */
     private static void handleFlowApiClass(PsiClass aClass, JSONArray services) {
         PsiAnnotation apiAnno = findAnnotation(aClass, API_ANNOTATIONS);
-        if (apiAnno != null) {
+        String bean = extractBeanNameFromSpringAnnotation(aClass);
+
+        // 如果有 @FlowApi 注解 或者 是个 Spring Bean，都一并上报
+        if (apiAnno != null || bean != null) {
             JSONObject serviceObj = new JSONObject();
             String qualifiedName = aClass.getQualifiedName();
             serviceObj.put("class", qualifiedName != null ? qualifiedName : aClass.getName());
 
-            // 获取 bean 名称（Service name）：优先从 Spring 注解获取，其次从 @FlowApi 的 value 获取，最后从 name 获取
-            String bean = extractBeanNameFromSpringAnnotation(aClass);
             if (bean == null || bean.isBlank()) {
-                // 从 @FlowApi 的 value 获取
-                bean = getAttr(apiAnno, "value");
-                if (bean.isBlank()) {
-                    // 从 @FlowApi 的 name 获取
-                    bean = getAttr(apiAnno, "name");
+                // 如果没有 Spring 注解，尝试从 @FlowApi 获取
+                if (apiAnno != null) {
+                    bean = getAttr(apiAnno, "value");
                     if (bean.isBlank()) {
-                        // 默认使用类名首字母小写
-                        String className = aClass.getName();
-                        bean = generateDefaultBeanName(className);
+                        // 从 @FlowApi 的 name 获取
+                        bean = getAttr(apiAnno, "name");
+                        if (bean.isBlank()) {
+                            // 默认使用类名首字母小写
+                            String className = aClass.getName();
+                            bean = generateDefaultBeanName(className);
+                        }
                     }
+                } else {
+                    // 如果纯 Spring 组件没有指定名字，使用默认生成
+                    String className = aClass.getName();
+                    bean = generateDefaultBeanName(className);
                 }
             }
-            
-            // Service 显示名称：从 @FlowApi 的 name 获取，如果没有则使用类名
-            String serviceName = emptyToDefault(getAttr(apiAnno, "name"), aClass.getName());
-            serviceObj.put("name", serviceName);
-            serviceObj.put("bean", bean);  // bean 名称字段
-            serviceObj.put("description", getAttr(apiAnno, "description"));
 
-            String version = getAttr(apiAnno, "version");
+            // Service 显示名称：从 @FlowApi 的 name 获取（如果存在），如果没有则尝试获取 JavaDoc 第一行，否则使用类名
+            String annoName = apiAnno != null ? getAttr(apiAnno, "name") : "";
+            String docSummary = extractDocSummary(aClass);
+            String serviceName = emptyToDefault(annoName, emptyToDefault(docSummary, aClass.getName()));
+            serviceObj.put("name", serviceName);
+            serviceObj.put("bean", bean); // bean 名称字段
+
+            String annoDesc = apiAnno != null ? getAttr(apiAnno, "description") : "";
+            String docDesc = extractDocDescription(aClass);
+            serviceObj.put("description", emptyToDefault(annoDesc, emptyToDefault(docDesc, docSummary)));
+
+            String version = apiAnno != null ? getAttr(apiAnno, "version") : "";
             serviceObj.put("version", version.isBlank() ? "1.0.0" : version);
 
-            // 只统计带有 @FlowOperation 注解的方法
+            // 统计所有 public 方法，哪怕没有 @FlowOperation 注解
             JSONArray ops = new JSONArray();
             for (PsiMethod m : aClass.getMethods()) {
+                // 过滤非公共方法、静态方法、构造函数
+                if (!m.hasModifierProperty(com.intellij.psi.PsiModifier.PUBLIC)
+                        || m.hasModifierProperty(com.intellij.psi.PsiModifier.STATIC)
+                        || m.isConstructor()) {
+                    continue;
+                }
+
+                // 过滤 Object 基类的方法
+                String mn = m.getName();
+                if (mn.equals("equals") || mn.equals("hashCode") || mn.equals("toString")
+                        || mn.equals("getClass") || mn.equals("notify") || mn.equals("notifyAll")
+                        || mn.equals("wait")) {
+                    continue;
+                }
+
                 PsiAnnotation opAnno = findAnnotation(m, OPERATION_ANNOTATIONS);
-                if (opAnno == null) continue;
 
                 JSONObject opObj = new JSONObject();
                 opObj.put("method", m.getName());
-                opObj.put("name", getAttr(opAnno, "name"));
-                opObj.put("description", getAttr(opAnno, "description"));
-                opObj.put("tags", toJsonArray(getStringArray(opAnno, "tags")));
+                String methodSignature = renderMethodSignature(m);
+                opObj.put("methodSignature", methodSignature);
+                opObj.put("methodSignatureHash", hashText(methodSignature));
 
+                String opName = opAnno != null ? getAttr(opAnno, "name") : "";
+                String opDocSummary = extractDocSummary(m);
+                opObj.put("name", emptyToDefault(opName, emptyToDefault(opDocSummary, m.getName())));
+
+                String opDescription = opAnno != null ? getAttr(opAnno, "description") : "";
+                if (opDescription == null || opDescription.isBlank()) {
+                    opDescription = extractDocDescription(m);
+                }
+                opObj.put("description", opDescription);
+                if (opAnno != null) {
+                    opObj.put("tags", toJsonArray(getStringArray(opAnno, "tags")));
+                } else {
+                    opObj.put("tags", new JSONArray());
+                }
+
+                Map<String, String> paramDocMap = extractMethodParamDocMap(m);
                 JSONArray params = new JSONArray();
                 for (PsiParameter p : m.getParameterList().getParameters()) {
                     JSONObject pObj = new JSONObject();
                     pObj.put("name", p.getName());
                     pObj.put("type", renderType(p.getType()));
+                    pObj.put("description", paramDocMap.getOrDefault(p.getName(), ""));
+                    // 为复杂类型（对象、集合）生成完整的字段层级 Schema，前端可以据此渲染嵌套映射表单
+                    try {
+                        JSONObject paramSchema = SchemaGenerator.generateParamSchema(p.getType(), p.getProject());
+                        pObj.put("schema", paramSchema);
+                        pObj.put("required", paramSchema.optBoolean("x-required", false));
+                    } catch (Exception ignored) {
+                        // Schema 生成失败时不影响主流程，schema 字段留空即可
+                    }
                     params.put(pObj);
                 }
                 opObj.put("params", params);
@@ -304,7 +418,7 @@ public class ExportMetadataAction extends AnAction {
      * </p>
      *
      * @param aClass 类对象
-     * @param sink 解析器数组（输出）
+     * @param sink   解析器数组（输出）
      */
     private static void handleFlowResolverClass(PsiClass aClass, JSONArray sink) {
         PsiAnnotation resolverAnno = aClass.getAnnotation(FLOW_RESOLVER_ANNOTATION);
@@ -316,9 +430,16 @@ public class ExportMetadataAction extends AnAction {
         }
         JSONObject item = new JSONObject();
         String type = getAttr(resolverAnno, "value");
-        item.put("type", type.isBlank() ? (aClass.getQualifiedName() == null ? aClass.getName() : aClass.getQualifiedName()) : type);
-        item.put("name", getAttr(resolverAnno, "name"));
-        item.put("description", getAttr(resolverAnno, "description"));
+        item.put("type",
+                type.isBlank() ? (aClass.getQualifiedName() == null ? aClass.getName() : aClass.getQualifiedName())
+                        : type);
+        String nameAttr = getAttr(resolverAnno, "name");
+        String docSummary = extractDocSummary(aClass);
+        item.put("name", emptyToDefault(nameAttr, docSummary));
+
+        String descAttr = getAttr(resolverAnno, "description");
+        String docDesc = extractDocDescription(aClass);
+        item.put("description", emptyToDefault(descAttr, emptyToDefault(docDesc, docSummary)));
         item.put("category", getAttr(resolverAnno, "category"));
         item.put("configSchema", getAttr(resolverAnno, "configSchema"));
         item.put("builtin", Boolean.parseBoolean(getAttr(resolverAnno, "builtin")));
@@ -383,11 +504,16 @@ public class ExportMetadataAction extends AnAction {
         JSONObject modelObj = new JSONObject();
         String qualifiedName = aClass.getQualifiedName();
         modelObj.put("class", qualifiedName != null ? qualifiedName : aClass.getName());
-        String name = emptyToDefault(getAttr(modelAnno, "name"), aClass.getName());
+        String annoName = getAttr(modelAnno, "name");
+        String docSummary = extractDocSummary(aClass);
+        String name = emptyToDefault(annoName, emptyToDefault(docSummary, aClass.getName()));
         String identifier = emptyToDefault(getAttr(modelAnno, "value"), name);
         modelObj.put("id", identifier);
         modelObj.put("name", name);
-        modelObj.put("description", getAttr(modelAnno, "description"));
+
+        String annoDesc = getAttr(modelAnno, "description");
+        String docDesc = extractDocDescription(aClass);
+        modelObj.put("description", emptyToDefault(annoDesc, emptyToDefault(docDesc, docSummary)));
         modelObj.put("category", getAttr(modelAnno, "category"));
         String version = getAttr(modelAnno, "version");
         modelObj.put("version", version.isBlank() ? "1.0.0" : version);
@@ -403,7 +529,7 @@ public class ExportMetadataAction extends AnAction {
      * </p>
      *
      * @param clazz 控制器类对象
-     * @param sink REST 端点数组（输出）
+     * @param sink  REST 端点数组（输出）
      */
     private static void collectRestEndpoints(PsiClass clazz, JSONArray sink) {
         if (!isRestController(clazz)) {
@@ -434,38 +560,38 @@ public class ExportMetadataAction extends AnAction {
                         JSONObject endpoint = new JSONObject();
                         endpoint.put("class", Objects.toString(clazz.getQualifiedName(), clazz.getName()));
                         endpoint.put("method", method.getName());
-                          endpoint.put("path", fullPath);
-                          endpoint.put("httpMethod", mapping.httpMethod());
-                          endpoint.put("produces", new JSONArray(mapping.produces()));
-                          endpoint.put("consumes", new JSONArray(mapping.consumes()));
-                          
-                          // 提取 JavaDoc 注释
-                          String docSummary = extractDocSummary(method);
-                          String docDescription = extractDocDescription(method);
-                          
-                          // name: 优先使用 JavaDoc 的第一行（简洁描述），如果没有则使用方法名
-                          if (!docSummary.isBlank()) {
-                              endpoint.put("name", docSummary);
-                          } else {
-                              // 如果没有 JavaDoc，使用方法名作为名称
-                              endpoint.put("name", method.getName());
-                          }
-                          
-                          // description: 使用完整的 JavaDoc 描述（包括 @param、@return 等），如果没有则使用 name
-                          if (!docDescription.isBlank()) {
-                              endpoint.put("description", docDescription);
-                          } else if (!docSummary.isBlank()) {
-                              endpoint.put("description", docSummary);
-                          }
-                          
-                          // 统一使用 requestSchemaJson（字符串形式），与后端 FlowEntryPoint 保持一致
-                          JSONObject requestSchemaObj = SchemaGenerator.generateRequestSchema(method);
-                          endpoint.put("requestSchemaJson", requestSchemaObj.toString());
-                          endpoint.put("responseSchema", buildResponseSchema(method));
-                          sink.put(endpoint);
-                      }
-                  }
-              }
+                        endpoint.put("path", fullPath);
+                        endpoint.put("httpMethod", mapping.httpMethod());
+                        endpoint.put("produces", new JSONArray(mapping.produces()));
+                        endpoint.put("consumes", new JSONArray(mapping.consumes()));
+
+                        // 提取 JavaDoc 注释
+                        String docSummary = extractDocSummary(method);
+                        String docDescription = extractDocDescription(method);
+
+                        // name: 优先使用 JavaDoc 的第一行（简洁描述），如果没有则使用方法名
+                        if (!docSummary.isBlank()) {
+                            endpoint.put("name", docSummary);
+                        } else {
+                            // 如果没有 JavaDoc，使用方法名作为名称
+                            endpoint.put("name", method.getName());
+                        }
+
+                        // description: 使用完整的 JavaDoc 描述（包括 @param、@return 等），如果没有则使用 name
+                        if (!docDescription.isBlank()) {
+                            endpoint.put("description", docDescription);
+                        } else if (!docSummary.isBlank()) {
+                            endpoint.put("description", docSummary);
+                        }
+
+                        // 统一使用 requestSchemaJson（字符串形式），与后端 FlowEntryPoint 保持一致
+                        JSONObject requestSchemaObj = SchemaGenerator.generateRequestSchema(method);
+                        endpoint.put("requestSchemaJson", requestSchemaObj.toString());
+                        endpoint.put("responseSchema", buildResponseSchema(method));
+                        sink.put(endpoint);
+                    }
+                }
+            }
         }
 
         for (PsiClass inner : clazz.getInnerClasses()) {
@@ -545,7 +671,7 @@ public class ExportMetadataAction extends AnAction {
     /**
      * 从修饰符列表中提取路径列表
      *
-     * @param modifiers 修饰符列表
+     * @param modifiers   修饰符列表
      * @param annotations 注解全限定名集合
      * @return 路径列表
      */
@@ -567,7 +693,7 @@ public class ExportMetadataAction extends AnAction {
      * 从注解中提取字符串数组属性值
      *
      * @param annotation 注解对象
-     * @param attribute 属性名
+     * @param attribute  属性名
      * @return 字符串列表
      */
     private static List<String> extractStrings(PsiAnnotation annotation, String attribute) {
@@ -652,7 +778,7 @@ public class ExportMetadataAction extends AnAction {
      * 合并类路径和方法路径，确保以 / 开头，并移除多余的斜杠。
      * </p>
      *
-     * @param classPath 类路径
+     * @param classPath  类路径
      * @param methodPath 方法路径
      * @return 规范化后的路径
      */
@@ -675,22 +801,24 @@ public class ExportMetadataAction extends AnAction {
      * HTTP 映射信息记录
      *
      * @param httpMethod HTTP 方法
-     * @param paths 路径列表
-     * @param produces 支持的响应类型列表
-     * @param consumes 支持的请求类型列表
+     * @param paths      路径列表
+     * @param produces   支持的响应类型列表
+     * @param consumes   支持的请求类型列表
      */
-    private record Mapping(String httpMethod, List<String> paths, List<String> produces, List<String> consumes) {}
+    private record Mapping(String httpMethod, List<String> paths, List<String> produces, List<String> consumes) {
+    }
 
     /**
      * 从注解中获取属性值
      *
      * @param anno 注解对象
-     * @param key 属性名
+     * @param key  属性名
      * @return 属性值字符串，如果不存在则返回空字符串
      */
     private static String getAttr(PsiAnnotation anno, String key) {
         PsiAnnotationMemberValue v = anno.findAttributeValue(key);
-        if (v == null) return "";
+        if (v == null)
+            return "";
         return extractString(v);
     }
 
@@ -700,7 +828,7 @@ public class ExportMetadataAction extends AnAction {
      * 在修饰符列表所有者上查找指定全限定名的注解。
      * </p>
      *
-     * @param owner 修饰符列表所有者
+     * @param owner          修饰符列表所有者
      * @param annotationFqns 注解全限定名集合
      * @return 找到的注解，如果不存在则返回 null
      */
@@ -732,7 +860,7 @@ public class ExportMetadataAction extends AnAction {
      * 从注解中获取字符串数组属性值
      *
      * @param anno 注解对象
-     * @param key 属性名
+     * @param key  属性名
      * @return 字符串集合
      */
     private static Set<String> getStringArray(PsiAnnotation anno, String key) {
@@ -788,10 +916,38 @@ public class ExportMetadataAction extends AnAction {
         return type != null ? type.getCanonicalText() : "";
     }
 
+    private static String renderMethodSignature(PsiMethod method) {
+        if (method == null) {
+            return "";
+        }
+        List<String> paramTypes = new ArrayList<>();
+        for (PsiParameter parameter : method.getParameterList().getParameters()) {
+            paramTypes.add(renderType(parameter.getType()));
+        }
+        return method.getName() + "(" + String.join(",", paramTypes) + ")";
+    }
+
+    private static String hashText(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (Exception ignored) {
+            return Integer.toHexString(value.hashCode());
+        }
+    }
+
     /**
      * 如果值为空则返回默认值
      *
-     * @param value 值
+     * @param value    值
      * @param fallback 默认值
      * @return 值或默认值
      */
@@ -816,11 +972,10 @@ public class ExportMetadataAction extends AnAction {
      * 提取 JavaDoc 的第一行摘要（用于 name 字段）
      * 只提取第一行，作为简洁的名称描述
      */
-    private static String extractDocSummary(PsiMethod method) {
-        if (!(method instanceof PsiDocCommentOwner)) {
+    private static String extractDocSummary(PsiDocCommentOwner owner) {
+        if (owner == null) {
             return "";
         }
-        PsiDocCommentOwner owner = (PsiDocCommentOwner) method;
         PsiDocComment doc = owner.getDocComment();
         if (doc == null) {
             return "";
@@ -849,16 +1004,15 @@ public class ExportMetadataAction extends AnAction {
         }
         return firstLine;
     }
-    
+
     /**
      * 提取完整的 JavaDoc 描述（用于 description 字段）
      * 包括所有描述内容，但不包括 @param、@return 等标签
      */
-    private static String extractDocDescription(PsiMethod method) {
-        if (!(method instanceof PsiDocCommentOwner)) {
+    private static String extractDocDescription(PsiDocCommentOwner owner) {
+        if (owner == null) {
             return "";
         }
-        PsiDocCommentOwner owner = (PsiDocCommentOwner) method;
         PsiDocComment doc = owner.getDocComment();
         if (doc == null) {
             return "";
@@ -871,5 +1025,42 @@ public class ExportMetadataAction extends AnAction {
             }
         }
         return sb.toString().replaceAll("\\s+", " ").trim();
+    }
+
+    private static Map<String, String> extractMethodParamDocMap(PsiMethod method) {
+        Map<String, String> map = new HashMap<>();
+        if (!(method instanceof PsiDocCommentOwner)) {
+            return map;
+        }
+        PsiDocCommentOwner owner = (PsiDocCommentOwner) method;
+        PsiDocComment doc = owner.getDocComment();
+        if (doc == null) {
+            return map;
+        }
+        String[] lines = doc.getText().split("\\r?\\n");
+        for (String raw : lines) {
+            String line = raw == null ? "" : raw.trim();
+            if (line.startsWith("*")) {
+                line = line.substring(1).trim();
+            }
+            if (!line.startsWith("@param")) {
+                continue;
+            }
+            String content = line.substring("@param".length()).trim();
+            if (content.isEmpty()) {
+                continue;
+            }
+            int split = content.indexOf(' ');
+            if (split <= 0) {
+                map.put(content, "");
+                continue;
+            }
+            String name = content.substring(0, split).trim();
+            String desc = content.substring(split + 1).trim();
+            if (!name.isEmpty()) {
+                map.put(name, desc);
+            }
+        }
+        return map;
     }
 }

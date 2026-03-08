@@ -51,4 +51,7 @@ public interface ProjectCodeMapper {
      * 查询项目的所有有效聚合类
      */
     java.util.List<ProjectClassAggregate> listValidAggregatesByProject(@Param("projectId") Long projectId);
+
+    java.util.List<ProjectClassAggregate> listValidAggregatesByProjectLimited(@Param("projectId") Long projectId,
+                                                                               @Param("limit") int limit);
 }

@@ -71,6 +71,7 @@ public class FlowEntryPointController {
     private RestEntryPointResponse toResponse(FlowEntryPoint entryPoint) {
         boolean enabled = entryPoint.getEnabled() == null || entryPoint.getEnabled();
         Object dataResponseFormat = parseDataResponseFormat(entryPoint.getDataResponseFormat());
+        Object inboundInterceptors = parseInboundInterceptors(entryPoint.getInboundInterceptorsJson());
         return new RestEntryPointResponse(
                 entryPoint.getId(),
                 entryPoint.getPath(),
@@ -78,6 +79,7 @@ public class FlowEntryPointController {
                 entryPoint.getFlowCode(),
                 entryPoint.getRequestSchemaJson(),
                 dataResponseFormat,
+                inboundInterceptors,
                 enabled);
     }
 
@@ -95,6 +97,18 @@ public class FlowEntryPointController {
         } catch (Exception e) {
             // 如果不是 JSON，返回原字符串（可能是预设名称如 "standard"）
             return dataResponseFormat;
+        }
+    }
+
+    private Object parseInboundInterceptors(String inboundInterceptorsJson) {
+        if (inboundInterceptorsJson == null || inboundInterceptorsJson.isBlank()) {
+            return null;
+        }
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(
+                    inboundInterceptorsJson, Object.class);
+        } catch (Exception e) {
+            return null;
         }
     }
 }

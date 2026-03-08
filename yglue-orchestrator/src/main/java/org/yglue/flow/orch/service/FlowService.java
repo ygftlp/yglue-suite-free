@@ -9,14 +9,24 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 import org.yglue.flow.orch.domain.Flow;
+import org.yglue.flow.orch.domain.ProjectEndpoint;
 import org.yglue.flow.orch.domain.FlowVersion;
 import org.yglue.flow.orch.domain.Project;
 import org.yglue.flow.orch.persistence.mapper.FlowMapper;
 import org.yglue.flow.orch.persistence.mapper.FlowVersionMapper;
 import org.yglue.flow.orch.web.dto.flow.request.FlowSaveRequest;
 import org.yglue.flow.orch.web.dto.flow.request.FlowPublishRequest;
+import org.yglue.flow.orch.web.dto.flow.response.FlowServiceSignatureIssueResponse;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 流程服务
@@ -45,6 +55,9 @@ public class FlowService {
     
     /** 流程入口点服务 */
     private final FlowEntryPointService flowEntryPointService;
+    
+    /** 项目端点服务（用于发布前签名校验） */
+    private final ProjectEndpointService projectEndpointService;
 
     /**
      * 构造函数
@@ -57,11 +70,13 @@ public class FlowService {
     public FlowService(ProjectService projectService,
                        FlowMapper flowMapper,
                        FlowVersionMapper flowVersionMapper,
-                       FlowEntryPointService flowEntryPointService) {
+                       FlowEntryPointService flowEntryPointService,
+                       ProjectEndpointService projectEndpointService) {
         this.projectService = projectService;
         this.flowMapper = flowMapper;
         this.flowVersionMapper = flowVersionMapper;
         this.flowEntryPointService = flowEntryPointService;
+        this.projectEndpointService = projectEndpointService;
     }
 
     /**
@@ -141,6 +156,68 @@ public class FlowService {
             version.setPublished(isPublished);
         }
         return versions;
+    }
+
+    /**
+     * 列出项目中“最新版本”存在服务签名失效的流程。
+     */
+    public List<FlowServiceSignatureIssueResponse> listServiceSignatureIssues(String projectKey) {
+        Project project = projectService.requireProject(projectKey);
+        List<Flow> flows = flowMapper.selectByProject(project.getId());
+        if (flows.isEmpty()) {
+            return List.of();
+        }
+        List<Long> latestIds = flows.stream()
+                .map(Flow::getLatestVersionId)
+                .filter(id -> id != null && id > 0)
+                .distinct()
+                .collect(Collectors.toList());
+        if (latestIds.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, FlowVersion> latestVersionMap = new HashMap<>();
+        for (FlowVersion version : flowVersionMapper.selectByIds(latestIds)) {
+            if (version != null && version.getId() != null) {
+                latestVersionMap.put(version.getId(), version);
+            }
+        }
+        Set<String> validSignatures = loadValidServiceSignatures(projectKey);
+        if (validSignatures.isEmpty()) {
+            return List.of();
+        }
+
+        List<FlowServiceSignatureIssueResponse> issues = new ArrayList<>();
+        for (Flow flow : flows) {
+            if (flow.getLatestVersionId() == null) {
+                continue;
+            }
+            FlowVersion version = latestVersionMap.get(flow.getLatestVersionId());
+            if (version == null) {
+                continue;
+            }
+            List<String> invalidRefs;
+            try {
+                invalidRefs = findInvalidServiceRefs(version.getContentJson(), validSignatures);
+            } catch (ResponseStatusException ex) {
+                invalidRefs = List.of("Flow content JSON 无法解析：" + ex.getReason());
+            }
+            if (invalidRefs.isEmpty()) {
+                continue;
+            }
+            FlowServiceSignatureIssueResponse item = new FlowServiceSignatureIssueResponse();
+            item.setFlowCode(flow.getCode());
+            item.setFlowName(flow.getName());
+            item.setVersionId(version.getId());
+            item.setVersionNo(version.getVersionNo());
+            item.setIssueCount(invalidRefs.size());
+            item.setIssueSamples(invalidRefs.stream().limit(5).collect(Collectors.toList()));
+            issues.add(item);
+        }
+
+        issues.sort(Comparator
+                .comparing(FlowServiceSignatureIssueResponse::getIssueCount, Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(FlowServiceSignatureIssueResponse::getFlowCode, Comparator.nullsLast(String::compareToIgnoreCase)));
+        return issues;
     }
 
     /**
@@ -312,6 +389,7 @@ public class FlowService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND,
                     "Flow version not found: " + code + "@" + req.versionNo);
         }
+        validateServiceMethodSignaturesOnPublish(projectKey, code, version);
         flowMapper.updatePublishedVersion(flow.getId(), version.getId(), req.publishedBy);
         flow.setPublishedVersionId(version.getId());
         version.setPublished(Boolean.TRUE);
@@ -337,5 +415,156 @@ public class FlowService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Flow not found: " + code);
         }
         return flow;
+    }
+
+    /**
+     * 发布前校验流程中的 serviceRef 是否都能在当前项目服务目录中命中。
+     */
+    private void validateServiceMethodSignaturesOnPublish(String projectKey, String flowCode, FlowVersion version) {
+        Set<String> validSignatures = loadValidServiceSignatures(projectKey);
+        if (validSignatures.isEmpty()) {
+            return;
+        }
+        List<String> errors = findInvalidServiceRefs(version.getContentJson(), validSignatures);
+        if (!errors.isEmpty()) {
+            String first = errors.get(0);
+            String suffix = errors.size() > 1 ? "；其余 " + (errors.size() - 1) + " 处同类问题" : "";
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "发布失败：检测到失效的服务签名引用。flow=" + flowCode + "，示例=" + first + suffix
+                            + "。请在参数/分支配置中重新选择服务方法后再发布。"
+            );
+        }
+    }
+
+    private List<String> findInvalidServiceRefs(String contentJson, Set<String> validSignatures) {
+        if (contentJson == null || contentJson.isBlank()) {
+            return List.of();
+        }
+        JsonNode root;
+        try {
+            root = OBJECT_MAPPER.readTree(contentJson);
+        } catch (Exception ex) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Flow content JSON is invalid, cannot publish: " + ex.getMessage()
+            );
+        }
+        List<String> errors = new ArrayList<>();
+        collectInvalidServiceRefs(root, "$", validSignatures, errors);
+        return errors;
+    }
+
+    private Set<String> loadValidServiceSignatures(String projectKey) {
+        Set<String> signatures = new LinkedHashSet<>();
+        List<ProjectEndpoint> endpoints = projectEndpointService.list(projectKey);
+        for (ProjectEndpoint endpoint : endpoints) {
+            if (endpoint == null) {
+                continue;
+            }
+            String endpointType = endpoint.getEndpointType() == null ? "" : endpoint.getEndpointType().trim().toUpperCase(Locale.ROOT);
+            if (!"SERVICE".equals(endpointType) && !"FLOW_OPERATION".equals(endpointType)) {
+                continue;
+            }
+            String rawConfig = endpoint.getConfigJson();
+            if (rawConfig == null || rawConfig.isBlank()) {
+                continue;
+            }
+            try {
+                JsonNode config = OBJECT_MAPPER.readTree(rawConfig);
+                if ("SERVICE".equals(endpointType)) {
+                    String bean = text(config, "bean");
+                    JsonNode operations = config.path("operations");
+                    if (operations.isArray()) {
+                        for (JsonNode op : operations) {
+                            addServiceSignature(signatures, bean, op);
+                        }
+                    }
+                } else {
+                    String bean = text(config, "serviceBean");
+                    addServiceSignature(signatures, bean, config);
+                }
+            } catch (Exception ignored) {
+                // 非法配置不影响主流程，跳过该端点
+            }
+        }
+        return signatures;
+    }
+
+    private void addServiceSignature(Set<String> signatures, String bean, JsonNode op) {
+        String serviceBean = bean == null ? "" : bean.trim();
+        String methodSignature = text(op, "methodSignature");
+        if (methodSignature.isBlank()) {
+            methodSignature = buildMethodSignature(op);
+        }
+        if (!serviceBean.isBlank() && !methodSignature.isBlank()) {
+            signatures.add(serviceBean + "|" + methodSignature);
+        }
+    }
+
+    private String buildMethodSignature(JsonNode op) {
+        String methodName = text(op, "method");
+        if (methodName.isBlank()) {
+            methodName = text(op, "name");
+        }
+        if (methodName.isBlank()) {
+            return "";
+        }
+        List<String> paramTypes = new ArrayList<>();
+        JsonNode params = op.path("params");
+        if (params.isArray()) {
+            for (JsonNode param : params) {
+                String type = text(param, "type");
+                if (type.isBlank()) {
+                    type = "java.lang.Object";
+                }
+                paramTypes.add(type);
+            }
+        }
+        return methodName + "(" + String.join(",", paramTypes) + ")";
+    }
+
+    private void collectInvalidServiceRefs(JsonNode node, String path, Set<String> validSignatures, List<String> errors) {
+        if (node == null || node.isNull()) {
+            return;
+        }
+        if (errors.size() >= 20) {
+            return;
+        }
+        if (node.isObject()) {
+            JsonNode serviceRef = node.get("serviceRef");
+            if (serviceRef != null && serviceRef.isObject()) {
+                String serviceBean = text(serviceRef, "serviceBean");
+                String methodSignature = text(serviceRef, "methodSignature");
+                if (serviceBean.isBlank() || methodSignature.isBlank()) {
+                    errors.add(path + " -> serviceRef 缺少 serviceBean 或 methodSignature");
+                } else if (!validSignatures.contains(serviceBean + "|" + methodSignature)) {
+                    errors.add(path + " -> " + serviceBean + "." + methodSignature);
+                }
+            }
+            node.fields().forEachRemaining(entry ->
+                    collectInvalidServiceRefs(entry.getValue(), path + "." + entry.getKey(), validSignatures, errors));
+            return;
+        }
+        if (node.isArray()) {
+            for (int i = 0; i < node.size(); i += 1) {
+                collectInvalidServiceRefs(node.get(i), path + "[" + i + "]", validSignatures, errors);
+                if (errors.size() >= 20) {
+                    return;
+                }
+            }
+        }
+    }
+
+    private String text(JsonNode node, String field) {
+        if (node == null) {
+            return "";
+        }
+        JsonNode child = node.get(field);
+        if (child == null || child.isNull()) {
+            return "";
+        }
+        String value = child.asText();
+        return value == null ? "" : value.trim();
     }
 }

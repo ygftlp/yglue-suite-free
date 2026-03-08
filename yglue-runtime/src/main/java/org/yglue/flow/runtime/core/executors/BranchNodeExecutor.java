@@ -1,149 +1,96 @@
-package org.yglue.flow.runtime.core.executors;
+﻿package org.yglue.flow.runtime.core.executors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.yglue.flow.runtime.core.NodeExecutionContext;
+import org.yglue.flow.runtime.core.engine.FlowContext;
 import org.yglue.flow.runtime.core.FlowExecutor;
+import org.yglue.flow.runtime.core.NodeExecutionContext;
 import org.yglue.flow.runtime.core.definition.FlowDefinition;
 import org.yglue.flow.runtime.core.definition.NodeDefinition;
-import org.yglue.flow.runtime.core.util.ExpressionEvaluator;
+import org.yglue.flow.runtime.core.engine.evaluator.BranchConditionEvaluator;
+import org.yglue.flow.runtime.core.engine.interceptors.JsonPathUtil;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * 分支节点执行器
- * 用于处理条件分支节点（branch node）
- * 
- * 分支节点的执行逻辑：
- * 1. 获取从该节点出发的所有 edges
- * 2. 评估每个 edge 上的条件表达式（如果有）
- * 3. 选择第一个满足条件的 edge，执行对应的目标节点
- * 4. 如果没有 edge 满足条件，执行 fallback 分支（如果有）
- * 
- * 节点配置格式：
- * {
- *   "type": "branch",
- *   "expression": "条件表达式（可选，用于默认条件）",
- *   "fallbackNote": "回退说明（可选）"
- * }
- * 
- * Edge 配置格式（在 FlowDefinition 的 edges 中）：
- * {
- *   "source": "分支节点ID",
- *   "target": "目标节点ID",
- *   "data": {
- *     "expression": "条件表达式（SpEL 表达式）",
- *     "label": "分支标签"
- *   }
- * }
+ * Branch executor for new GraphExecutor:
+ * Evaluates branch conditions using the zero-compile JSON AST
+ * BranchConditionEvaluator.
+ * Returns the matched targetNodeId string to instruct the GraphExecutor which
+ * path to activate.
  */
 public class BranchNodeExecutor implements FlowExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(BranchNodeExecutor.class);
 
     @Override
+    @SuppressWarnings("unchecked")
     public Object execute(NodeExecutionContext context) {
         String nodeId = context.getNode().getId();
-        log.info("[BranchNodeExecutor] 开始执行分支节点: nodeId={}", nodeId);
-        
         Map<String, Object> config = context.getNode().getConfig();
-        String defaultExpression = config != null ? (String) config.get("expression") : null;
-        log.debug("[BranchNodeExecutor] 分支节点配置: nodeId={}, defaultExpression={}", nodeId, defaultExpression);
-        
-        // 获取流程定义中的 edges
+        Object defaultConditionObj = config != null ? config.get("condition") : null;
+
+        // V2 新版统一从 NodeExecutionContext 取出映射过的 FlowContext
+        FlowContext flowContext = new FlowContext(context.getRuleId(), context.getContext());
+        Map<String, Object> tempVars = prepareTempVars(config, flowContext);
+
         FlowDefinition flow = context.getFlow();
-        List<Map<String, Object>> edges = flow.getEdges();
+        List<Map<String, Object>> edges = flow != null ? flow.getEdges() : null;
         if (edges == null || edges.isEmpty()) {
-            log.warn("[BranchNodeExecutor] 流程中没有 edges，无法执行分支: nodeId={}", nodeId);
-            return false;
+            log.warn("[BranchNodeExecutor] no edges found, nodeId={}", nodeId);
+            return null;
         }
-        
-        // 查找从当前分支节点出发的所有 edges
+
         List<Map<String, Object>> outgoingEdges = new ArrayList<>();
         for (Map<String, Object> edge : edges) {
-            String source = (String) edge.get("source");
+            String source = asString(edge.get("source"));
             if (nodeId.equals(source)) {
                 outgoingEdges.add(edge);
             }
         }
-        
-        log.debug("[BranchNodeExecutor] 找到 {} 个出口分支: nodeId={}", outgoingEdges.size(), nodeId);
-        
+
         if (outgoingEdges.isEmpty()) {
-            log.warn("[BranchNodeExecutor] 分支节点没有出口 edges: nodeId={}", nodeId);
-            return false;
+            log.warn("[BranchNodeExecutor] no outgoing edges, nodeId={}", nodeId);
+            return null;
         }
-        
-        // 评估每个 edge 的条件表达式，选择第一个满足条件的
+
+        outgoingEdges.sort(Comparator.comparingInt(this::edgePriority));
+
         for (Map<String, Object> edge : outgoingEdges) {
-            String targetNodeId = (String) edge.get("target");
-            log.debug("[BranchNodeExecutor] 评估分支: nodeId={}, targetNodeId={}", nodeId, targetNodeId);
-            
-            // 获取 edge 上的条件表达式
-            Object edgeData = edge.get("data");
-            String expression = null;
-            if (edgeData instanceof Map) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> edgeDataMap = (Map<String, Object>) edgeData;
-                expression = (String) edgeDataMap.get("expression");
-            }
-            
-            // 如果没有 edge 上的表达式，使用默认表达式
-            if (expression == null || expression.isBlank()) {
-                expression = defaultExpression;
-            }
-            
-            // 如果没有表达式，默认走这个分支（无条件分支）
-            boolean conditionMet = true;
-            if (expression != null && !expression.isBlank()) {
-                try {
-                    conditionMet = ExpressionEvaluator.evaluateBoolean(expression, context.getContext());
-                    log.debug("[BranchNodeExecutor] 条件评估结果: nodeId={}, expression={}, result={}", 
-                        nodeId, expression, conditionMet);
-                } catch (Exception e) {
-                    log.warn("[BranchNodeExecutor] 条件表达式评估失败: nodeId={}, expression={}, error={}", 
-                        nodeId, expression, e.getMessage());
-                    // 评估失败，跳过这个分支
-                    continue;
+            String targetNodeId = asString(edge.get("target"));
+            Map<String, Object> conditionAst = edgeConditionAst(edge);
+
+            // 如果连线上没有独立配置条件 AST，退回节点上的公共条件（或仅单走配置）
+            if (conditionAst == null || conditionAst.isEmpty()) {
+                if (defaultConditionObj instanceof Map) {
+                    conditionAst = (Map<String, Object>) defaultConditionObj;
                 }
             }
-            
-            // 如果条件满足，执行目标节点
-            if (conditionMet) {
-                log.info("[BranchNodeExecutor] 选择分支: nodeId={}, targetNodeId={}, expression={}", 
-                    nodeId, targetNodeId, expression);
-                
-                // 查找目标节点并执行
-                NodeDefinition targetNode = findNodeById(flow, targetNodeId);
-                if (targetNode != null) {
-                    context.executeChildren(List.of(targetNode));
-                    return true;
-                } else {
-                    log.warn("[BranchNodeExecutor] 目标节点不存在: nodeId={}, targetNodeId={}", 
-                        nodeId, targetNodeId);
-                }
+
+            // 使用全新实现的无脚本 AST 执行器运算条件
+            boolean conditionMet = BranchConditionEvaluator.evaluate(conditionAst, flowContext, tempVars);
+
+            if (!conditionMet) {
+                continue;
             }
+
+            log.info("[BranchNodeExecutor] branch selected, nodeId={}, targetNodeId={}, priority={}",
+                    nodeId, targetNodeId, edgePriority(edge));
+
+            // 返给 GraphExecutor 用于分发路由
+            return targetNodeId;
         }
-        
-        // 如果没有分支满足条件，检查是否有 fallback
-        String fallbackNote = config != null ? (String) config.get("fallbackNote") : null;
-        if (fallbackNote != null && !fallbackNote.isBlank()) {
-            log.info("[BranchNodeExecutor] 所有分支条件都不满足，使用 fallback: nodeId={}, fallbackNote={}", 
-                nodeId, fallbackNote);
-        } else {
-            log.warn("[BranchNodeExecutor] 所有分支条件都不满足，且没有 fallback: nodeId={}", nodeId);
-        }
-        
-        return false;
+
+        log.warn("[BranchNodeExecutor] no branch matched, nodeId={}", nodeId);
+        return null; // 没有匹配到分支时，流程阻断
     }
-    
-    /**
-     * 根据节点ID查找节点定义
-     */
+
     private NodeDefinition findNodeById(FlowDefinition flow, String nodeId) {
-        if (flow == null || flow.getNodes() == null) {
+        if (flow == null || flow.getNodes() == null || nodeId == null) {
             return null;
         }
         for (NodeDefinition node : flow.getNodes()) {
@@ -153,8 +100,82 @@ public class BranchNodeExecutor implements FlowExecutor {
         }
         return null;
     }
+
+    private int edgePriority(Map<String, Object> edge) {
+        Map<String, Object> data = edgeData(edge);
+        Object raw = data.get("priority");
+        if (raw instanceof Number) {
+            return ((Number) raw).intValue();
+        }
+        if (raw instanceof String) {
+            try {
+                return Integer.parseInt(((String) raw).trim());
+            } catch (Exception ignored) {
+            }
+        }
+        return 100;
+    }
+
+    private Map<String, Object> edgeConditionAst(Map<String, Object> edge) {
+        Map<String, Object> data = edgeData(edge);
+        Object rawAst = data.get("condition");
+        if (rawAst instanceof Map) {
+            return (Map<String, Object>) rawAst;
+        }
+        return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> edgeData(Map<String, Object> edge) {
+        if (edge == null) {
+            return Map.of();
+        }
+        Object raw = edge.get("data");
+        if (raw instanceof Map) {
+            return (Map<String, Object>) raw;
+        }
+        return Map.of();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> prepareTempVars(Map<String, Object> config, FlowContext context) {
+        if (config == null || context == null) {
+            return new HashMap<>();
+        }
+        Object raw = config.get("tempVars");
+        if (!(raw instanceof List<?> plans) || plans.isEmpty()) {
+            return new HashMap<>();
+        }
+
+        Map<String, Object> resolved = new HashMap<>();
+        for (Object item : plans) {
+            if (!(item instanceof Map<?, ?> planRaw)) {
+                continue;
+            }
+            Map<String, Object> plan = (Map<String, Object>) planRaw;
+            String key = asString(plan.get("key"));
+            if (key == null || key.isBlank()) {
+                continue;
+            }
+            String kind = asString(plan.get("kind"));
+            Object value;
+            if ("const".equals(kind)) {
+                value = plan.get("constValue");
+            } else if ("expression".equals(kind)) {
+                // 不再支持表达式的复杂运算，退回 const，以保证零编译
+                value = plan.get("constValue");
+            } else {
+                value = JsonPathUtil.extract(context.getVariables(), asString(plan.get("path")));
+            }
+            resolved.put(key, value);
+        }
+
+        return resolved;
+    }
+
+    private String asString(Object value) {
+        if (value == null)
+            return null;
+        return String.valueOf(value);
+    }
 }
-
-
-
-

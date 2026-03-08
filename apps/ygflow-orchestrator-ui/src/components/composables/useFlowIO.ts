@@ -1,6 +1,6 @@
 import { computed, nextTick, ref, watch } from "vue"
 import type { Ref } from "vue"
-import { api, type FlowVersion } from "../../api/client"
+import { api, type FlowServiceSignatureIssue, type FlowVersion } from "../../api/client"
 import { createDefaultFlowSettings, type FlowEntrypoint, type FlowSettings } from "../../data/flowSettings"
 import { generateLiteFlowRule } from "../../utils/ruleExporter"
 import type { CanvasEditorProps } from "./canvasTypes"
@@ -261,6 +261,48 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
   })
   const canSave = computed(() => !saving.value && !publishing.value)
 
+  function normalizeInputDefs(inputs: any[] = []) {
+    return inputs.map((input: any) => ({
+      name: input?.name || "",
+      description: input?.description || "",
+      valueType: String(input?.valueType || "STRING").toUpperCase(),
+      typeName: input?.typeName || "",
+      schema: input?.schema || null,
+    }))
+  }
+
+  function normalizeNodeDataForSave(rawData: any) {
+    const data = rawData ? { ...rawData } : {}
+    if (Array.isArray(data.inputs)) {
+      // V2 only: inputs 仅保留签名定义，旧 resolver/converter/script 字段不再持久化
+      data.inputs = normalizeInputDefs(data.inputs)
+    }
+    if (data.output) {
+      data.output = {
+        ...data.output,
+        contextKey: data.output.contextKey || generateContextKey(),
+      }
+    }
+    return data
+  }
+
+  function normalizeNodesForSave() {
+    return flowState.nodes.value.map((node: any) => {
+      const { position, ...nodeWithoutPosition } = node
+      return {
+        ...nodeWithoutPosition,
+        data: normalizeNodeDataForSave(node.data),
+      }
+    })
+  }
+
+  function normalizeEdgesForSave() {
+    return flowState.edges.value.map((edge: any) => {
+      const { sourcePosition, targetPosition, ...edgeWithoutUI } = edge
+      return edgeWithoutUI
+    })
+  }
+
   // 静默保存草稿（不显示提示），用于发布前的自动保存
   async function saveDraftSilently() {
     if (!props.projectKey) {
@@ -289,46 +331,8 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
     if (txnCounts.begin !== txnCounts.end) {
       throw new Error("事务节点需要成对存在")
     }
-    // 清理节点数据：移除 UI 相关字段（position 等）
-    const normalizedNodes = flowState.nodes.value.map((node: any) => {
-      const { position, ...nodeWithoutPosition } = node
-      const data = node.data ? { ...node.data } : {}
-      if (data.inputs) {
-        data.inputs = data.inputs.map((input: any) => ({
-          ...input,
-          resolver:
-            input.resolver || {
-              type: input.sourceType || "request",
-              path: input.source || "",
-              cast: input.cast || "STRING",
-              default: input.default || "",
-            },
-          converter:
-            input.converter || {
-              kind: "GENERAL",
-              targetType: (input.valueType || "STRING").toUpperCase(),
-              targetTypeName: input.typeName || "",
-              script: input.transformer || "",
-              arrayElementType: input.converter?.arrayElementType || "STRING",
-              arrayElementTypeName: input.converter?.arrayElementTypeName || "",
-            },
-          transformer: input.transformer ?? input.converter?.script ?? "",
-        }))
-      }
-      if (data.output) {
-        data.output = {
-          ...data.output,
-          contextKey: data.output.contextKey || generateContextKey(),
-        }
-      }
-      return { ...nodeWithoutPosition, data }
-    })
-    
-    // 清理边数据：移除 UI 相关字段
-    const normalizedEdges = flowState.edges.value.map((edge: any) => {
-      const { sourcePosition, targetPosition, ...edgeWithoutUI } = edge
-      return edgeWithoutUI
-    })
+    const normalizedNodes = normalizeNodesForSave()
+    const normalizedEdges = normalizeEdgesForSave()
     
     flowSettings.value.code = code
     flowSettings.value.name = name
@@ -397,46 +401,8 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
       window.alert("事务节点需要成对存在，请检查是否缺少开始或结束节点")
       return
     }
-    // 清理节点数据：移除 UI 相关字段（position 等）
-    const normalizedNodes = flowState.nodes.value.map((node: any) => {
-      const { position, ...nodeWithoutPosition } = node
-      const data = node.data ? { ...node.data } : {}
-      if (data.inputs) {
-        data.inputs = data.inputs.map((input: any) => ({
-          ...input,
-          resolver:
-            input.resolver || {
-              type: input.sourceType || "request",
-              path: input.source || "",
-              cast: input.cast || "STRING",
-              default: input.default || "",
-            },
-          converter:
-            input.converter || {
-              kind: "GENERAL",
-              targetType: (input.valueType || "STRING").toUpperCase(),
-              targetTypeName: input.typeName || "",
-              script: input.transformer || "",
-              arrayElementType: input.converter?.arrayElementType || "STRING",
-              arrayElementTypeName: input.converter?.arrayElementTypeName || "",
-            },
-          transformer: input.transformer ?? input.converter?.script ?? "",
-        }))
-      }
-      if (data.output) {
-        data.output = {
-          ...data.output,
-          contextKey: data.output.contextKey || generateContextKey(),
-        }
-      }
-      return { ...nodeWithoutPosition, data }
-    })
-    
-    // 清理边数据：移除 UI 相关字段
-    const normalizedEdges = flowState.edges.value.map((edge: any) => {
-      const { sourcePosition, targetPosition, ...edgeWithoutUI } = edge
-      return edgeWithoutUI
-    })
+    const normalizedNodes = normalizeNodesForSave()
+    const normalizedEdges = normalizeEdgesForSave()
     
     flowSettings.value.code = code
     flowSettings.value.name = name
@@ -528,6 +494,14 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
     console.log("[publishFlow] 开始执行发布，版本号:", versionNo)
     const normalizedEntrypoint = normalizeEntrypoint(flowSettings.value.entrypoint)
     flowSettings.value.entrypoint = normalizedEntrypoint ?? null
+
+    const precheck = await precheckServiceSignatureIssues(code, versionNo!)
+    if (!precheck.ok) {
+      publishError.value = precheck.message
+      window.alert(`❌ 发布前校验失败：${precheck.message}`)
+      return
+    }
+
     publishing.value = true
     publishError.value = null
     
@@ -553,6 +527,42 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
       publishing.value = false
       console.log("[publishFlow] 发布流程结束")
     }
+  }
+
+  async function precheckServiceSignatureIssues(code: string, versionNo: number): Promise<{ ok: boolean; message: string }> {
+    if (!props.projectKey || !code || !versionNo) {
+      return { ok: true, message: "" }
+    }
+    try {
+      const issues = await api.listFlowServiceSignatureIssues(props.projectKey)
+      const matched = pickCurrentFlowIssue(issues, code, versionNo)
+      if (!matched) {
+        return { ok: true, message: "" }
+      }
+      const samples = Array.isArray(matched.issueSamples) ? matched.issueSamples.slice(0, 3) : []
+      const sampleText = samples.length ? `；示例：${samples.join(" | ")}` : ""
+      return {
+        ok: false,
+        message: `检测到服务签名失效（${matched.issueCount} 处）${sampleText}。请先重选服务方法后再发布。`,
+      }
+    } catch (err) {
+      // 预检失败时不阻断发布，最终由后端 publish 强校验兜底
+      console.warn("[publishFlow] 签名预检失败，跳过前置阻断", err)
+      return { ok: true, message: "" }
+    }
+  }
+
+  function pickCurrentFlowIssue(
+    items: FlowServiceSignatureIssue[] | null | undefined,
+    flowCode: string,
+    versionNo: number
+  ): FlowServiceSignatureIssue | null {
+    if (!Array.isArray(items) || !flowCode) return null
+    const exact = items.find((item) => item.flowCode === flowCode && item.versionNo === versionNo)
+    if (exact) return exact
+    const sameFlow = items.find((item) => item.flowCode === flowCode && (item.versionNo == null))
+    if (sameFlow) return sameFlow
+    return null
   }
 
   function openFlowSettings() {
@@ -763,4 +773,3 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
     loadVersionAndSave,
   }
 }
-

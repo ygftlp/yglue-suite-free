@@ -112,6 +112,15 @@ export interface FlowVersion {
   delFlag?: number
 }
 
+export interface FlowServiceSignatureIssue {
+  flowCode: string
+  flowName?: string
+  versionId?: number
+  versionNo?: number
+  issueCount: number
+  issueSamples: string[]
+}
+
 export interface FlowSavePayload {
   code: string
   name: string
@@ -126,6 +135,12 @@ export interface FlowEntrypointPayload {
   enabled?: boolean
   flowCode?: string | null
   dataResponseFormat?: string | Record<string, any> | null
+  inboundInterceptors?: Array<{
+    code: string
+    enabled?: boolean
+    order?: number
+    config?: Record<string, any>
+  }> | null
 }
 
 export interface FlowPublishPayload {
@@ -329,7 +344,15 @@ export interface ProjectCodeSnapshot {
 
 export interface ScriptHelpersResponse {
   snapshotId: number | null
-  selectedJars: Array<{ jarId: number | null; name: string; coordinate?: string | null }>
+  selectedJars: Array<{
+    jarId?: number | null
+    name?: string
+    coordinate?: string | null
+    jarKey?: string
+    groupId?: string
+    artifactId?: string
+    version?: string
+  }>
   classes: Array<{ qualifiedName: string; simpleName: string; packageName: string; kind: string }>
 }
 
@@ -425,6 +448,12 @@ export const api = {
   getFlowVersion(projectKey: string, flowCode: string, versionNo: number): Promise<FlowVersion> {
     return request<FlowVersion>(
       `/projects/${encodeURIComponent(projectKey)}/flows/${encodeURIComponent(flowCode)}/versions/${versionNo}`
+    )
+  },
+
+  listFlowServiceSignatureIssues(projectKey: string): Promise<FlowServiceSignatureIssue[]> {
+    return request<FlowServiceSignatureIssue[]>(
+      `/projects/${encodeURIComponent(projectKey)}/flows/issues/service-signatures`
     )
   },
 

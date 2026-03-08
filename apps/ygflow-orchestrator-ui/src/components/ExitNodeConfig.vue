@@ -92,7 +92,7 @@ function removeFieldMapping(index: number) {
     </div>
 
     <div class="hint">
-      💡 出口节点执行后，结果将写入 <code>ctx['ret']</code> 供托管层统一处理
+      💡 仅出口节点会固定写入 <code>ctx['ret']</code>；普通服务节点应使用自定义输出变量名（ctx key）
     </div>
   </div>
 </template>

@@ -3,7 +3,7 @@ import { useFlowIO } from "./composables/useFlowIO"
 import { useLayoutState } from "./composables/useLayoutState"
 import type { CanvasEditorProps } from "./composables/canvasTypes"
 
-export type { CanvasEditorProps, EndpointSchemaHint, ContextMenuState } from "./composables/canvasTypes"
+export type { CanvasEditorProps, EndpointSchemaHint, ContextMenuState, IssueFocusRequest } from "./composables/canvasTypes"
 
 export function useCanvasEditor(props: CanvasEditorProps) {
   const flowState = useFlowState()
@@ -44,6 +44,7 @@ export function useCanvasEditor(props: CanvasEditorProps) {
     onEdgeContextMenu: flowState.onEdgeContextMenu,
     deleteSelection: flowState.deleteSelection,
     clearSelection: flowState.clearSelection,
+    focusNodeById: flowState.focusNodeById,
     hideContextMenu: flowState.hideContextMenu,
     removeContextMenuNode: flowState.removeContextMenuNode,
     addNodeFromPalette: flowState.addNodeFromPalette,
@@ -85,4 +86,3 @@ export function useCanvasEditor(props: CanvasEditorProps) {
     toggleInspector: layout.toggleInspector,
   }
 }
-

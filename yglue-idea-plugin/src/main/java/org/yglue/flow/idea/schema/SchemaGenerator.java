@@ -5,6 +5,7 @@ import com.intellij.psi.*;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.util.PsiUtil;
 import com.intellij.psi.JavaPsiFacade;
+import com.intellij.psi.javadoc.PsiDocComment;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -31,32 +32,31 @@ public class SchemaGenerator {
             "jakarta.validation.constraints.NotBlank",
             "javax.validation.constraints.NotNull",
             "javax.validation.constraints.NotEmpty",
-            "javax.validation.constraints.NotBlank"
-    );
+            "javax.validation.constraints.NotBlank");
 
     private static final Set<String> SIZE_ANNOTATIONS = Set.of(
             "jakarta.validation.constraints.Size",
-            "javax.validation.constraints.Size"
-    );
+            "javax.validation.constraints.Size");
 
     private static final Set<String> PATTERN_ANNOTATIONS = Set.of(
             "jakarta.validation.constraints.Pattern",
-            "javax.validation.constraints.Pattern"
-    );
+            "javax.validation.constraints.Pattern");
 
     private static final Set<String> MIN_ANNOTATIONS = Set.of(
             "jakarta.validation.constraints.Min",
             "javax.validation.constraints.Min",
             "jakarta.validation.constraints.DecimalMin",
-            "javax.validation.constraints.DecimalMin"
-    );
+            "javax.validation.constraints.DecimalMin");
 
     private static final Set<String> MAX_ANNOTATIONS = Set.of(
             "jakarta.validation.constraints.Max",
             "javax.validation.constraints.Max",
             "jakarta.validation.constraints.DecimalMax",
-            "javax.validation.constraints.DecimalMax"
-    );
+            "javax.validation.constraints.DecimalMax");
+
+    private static final Set<String> OPEN_API_SCHEMA_ANNOTATIONS = Set.of(
+            "io.swagger.v3.oas.annotations.media.Schema",
+            "io.swagger.annotations.ApiModelProperty");
 
     /**
      * 私有构造函数，防止实例化
@@ -86,8 +86,13 @@ public class SchemaGenerator {
 
         List<String> required = new ArrayList<>();
 
+        Map<String, String> paramDocMap = extractMethodParamDocMap(method);
         for (PsiParameter parameter : method.getParameterList().getParameters()) {
-            ParameterSchema parameterSchema = buildParameterSchema(parameter, new HashSet<>());
+            ParameterSchema parameterSchema = buildParameterSchema(
+                    parameter,
+                    new HashSet<>(),
+                    paramDocMap.getOrDefault(parameter.getName(), "")
+            );
             properties.put(parameter.getName(), parameterSchema.schema());
             if (parameterSchema.required()) {
                 required.add(parameter.getName());
@@ -114,13 +119,40 @@ public class SchemaGenerator {
         JSONObject schema = buildPojoSchema(psiClass, psiClass.getProject(), new HashSet<>());
         schema.put("$schema", JSON_SCHEMA_DRAFT_7);
         schema.put("title", psiClass.getName());
+        String description = extractDescription(psiClass);
+        if (description != null && !description.isBlank()) {
+            schema.put("description", description);
+        }
         return schema;
     }
 
-    private static ParameterSchema buildParameterSchema(PsiParameter parameter, Set<String> visited) {
+    /**
+     * 为任意 Java 类型生成 JSON Schema
+     * <p>
+     * 这是给 {@code @FlowApi} 方法入参使用的公开入口，可以递归地解析 POJO、集合、枚举等类型。
+     * </p>
+     *
+     * @param type    PSI 类型
+     * @param project IntelliJ 项目对象
+     * @return 该类型的 JSON Schema
+     */
+    public static JSONObject generateParamSchema(PsiType type, Project project) {
+        if (type == null) {
+            return new JSONObject().put("type", "object");
+        }
+        return buildSchemaForType(type, project, new HashSet<>());
+    }
+
+    private static ParameterSchema buildParameterSchema(PsiParameter parameter, Set<String> visited, String docDescription) {
         JSONObject schema = buildSchemaForType(parameter.getType(), parameter.getProject(), visited);
         schema.put("title", parameter.getName());
         schema.put("x-javaType", safeCanonicalText(parameter.getType()));
+        String annotationDescription = extractDescription(parameter);
+        String description = firstNonBlank(docDescription, annotationDescription);
+        if (description != null && !description.isBlank()) {
+            schema.put("description", description);
+            schema.put("x-description", description);
+        }
 
         ParameterSourceInfo sourceInfo = detectParameterSource(parameter);
         if (sourceInfo != null) {
@@ -138,7 +170,8 @@ public class SchemaGenerator {
             }
         }
 
-        String defaultValue = extractAttr(parameter, "org.springframework.web.bind.annotation.RequestParam", "defaultValue");
+        String defaultValue = extractAttr(parameter, "org.springframework.web.bind.annotation.RequestParam",
+                "defaultValue");
         if (defaultValue != null && !defaultValue.isBlank()) {
             schema.put("default", defaultValue);
         }
@@ -160,7 +193,7 @@ public class SchemaGenerator {
      * 支持的类型包括：基本类型、包装类型、数组、集合、Map、POJO、枚举等。
      * </p>
      *
-     * @param type 类型对象
+     * @param type    类型对象
      * @param project 项目对象
      * @param visited 已访问的类型集合（用于防止循环引用）
      * @return Schema JSON 对象
@@ -236,8 +269,8 @@ public class SchemaGenerator {
      * </p>
      *
      * @param psiClass 类对象
-     * @param project 项目对象
-     * @param visited 已访问的类型集合（用于防止循环引用）
+     * @param project  项目对象
+     * @param visited  已访问的类型集合（用于防止循环引用）
      * @return Schema JSON 对象
      */
     private static JSONObject buildPojoSchema(PsiClass psiClass, Project project, Set<String> visited) {
@@ -270,6 +303,11 @@ public class SchemaGenerator {
             }
             JSONObject fieldSchema = buildSchemaForType(field.getType(), project, visited);
             fieldSchema.put("x-javaType", safeCanonicalText(field.getType()));
+            String description = extractDescription(field);
+            if (description != null && !description.isBlank()) {
+                fieldSchema.put("description", description);
+                fieldSchema.put("x-description", description);
+            }
 
             Constraints constraints = extractConstraints(field);
             applyConstraints(fieldSchema, constraints);
@@ -340,7 +378,8 @@ public class SchemaGenerator {
      * @return 如果是基本类型或包装类型则返回 true
      */
     private static boolean isPrimitiveOrWrapper(String canonical) {
-        if (canonical == null) return false;
+        if (canonical == null)
+            return false;
         return canonical.equals("byte") || canonical.equals("java.lang.Byte")
                 || canonical.equals("short") || canonical.equals("java.lang.Short")
                 || canonical.equals("int") || canonical.equals("java.lang.Integer")
@@ -443,7 +482,8 @@ public class SchemaGenerator {
 
         for (PsiAnnotation annotation : modifierList.getAnnotations()) {
             String fqn = annotation.getQualifiedName();
-            if (fqn == null) continue;
+            if (fqn == null)
+                continue;
 
             if (NOT_NULL_ANNOTATIONS.contains(fqn)) {
                 required = true;
@@ -485,16 +525,62 @@ public class SchemaGenerator {
                 if (value != null) {
                     maximum = mergeMaxDecimal(maximum, value);
                 }
+            } else if (OPEN_API_SCHEMA_ANNOTATIONS.contains(fqn)) {
+                required = required || isSchemaRequired(annotation);
+                Integer minLen = parseIntegerAttribute(annotation, "minLength");
+                Integer maxLen = parseIntegerAttribute(annotation, "maxLength");
+                if (minLen != null) {
+                    minLength = mergeMin(minLength, minLen);
+                }
+                if (maxLen != null) {
+                    maxLength = mergeMax(maxLength, maxLen);
+                }
+
+                Integer minItem = parseIntegerAttribute(annotation, "minItems");
+                Integer maxItem = parseIntegerAttribute(annotation, "maxItems");
+                if (minItem != null) {
+                    minItems = mergeMin(minItems, minItem);
+                }
+                if (maxItem != null) {
+                    maxItems = mergeMax(maxItems, maxItem);
+                }
+
+                BigDecimal minValue = parseDecimalAttribute(annotation, "minimum");
+                BigDecimal maxValue = parseDecimalAttribute(annotation, "maximum");
+                if (minValue != null) {
+                    minimum = mergeMinDecimal(minimum, minValue);
+                }
+                if (maxValue != null) {
+                    maximum = mergeMaxDecimal(maximum, maxValue);
+                }
+
+                String schemaPattern = extractAttribute(annotation, "pattern");
+                if (schemaPattern != null && !schemaPattern.isBlank()) {
+                    pattern = schemaPattern;
+                }
             }
         }
 
         return new Constraints(required, minLength, maxLength, minItems, maxItems, minimum, maximum, pattern);
     }
 
+    private static boolean isSchemaRequired(PsiAnnotation annotation) {
+        String requiredAttr = extractAttribute(annotation, "required");
+        if ("true".equalsIgnoreCase(requiredAttr)) {
+            return true;
+        }
+        String requiredMode = extractAttribute(annotation, "requiredMode");
+        if (requiredMode == null || requiredMode.isBlank()) {
+            return false;
+        }
+        String normalized = requiredMode.trim().toUpperCase(Locale.ROOT);
+        return "REQUIRED".equals(normalized) || normalized.endsWith(".REQUIRED");
+    }
+
     /**
      * 应用约束到 Schema
      *
-     * @param schema Schema JSON 对象
+     * @param schema      Schema JSON 对象
      * @param constraints 约束信息
      */
     private static void applyConstraints(JSONObject schema, Constraints constraints) {
@@ -527,12 +613,13 @@ public class SchemaGenerator {
      * 根据参数来源、注解和约束信息判断参数是否必填。
      * </p>
      *
-     * @param parameter 参数对象
-     * @param sourceInfo 参数来源信息
+     * @param parameter   参数对象
+     * @param sourceInfo  参数来源信息
      * @param constraints 约束信息
      * @return 如果必填则返回 true
      */
-    private static boolean determineRequired(PsiParameter parameter, ParameterSourceInfo sourceInfo, Constraints constraints) {
+    private static boolean determineRequired(PsiParameter parameter, ParameterSourceInfo sourceInfo,
+            Constraints constraints) {
         if (constraints.required()) {
             return true;
         }
@@ -544,26 +631,31 @@ public class SchemaGenerator {
             return true;
         }
         if ("body".equals(source)) {
-            String requiredAttr = extractAttr(parameter, "org.springframework.web.bind.annotation.RequestBody", "required");
+            String requiredAttr = extractAttr(parameter, "org.springframework.web.bind.annotation.RequestBody",
+                    "required");
             if (requiredAttr == null) {
                 return true;
             }
             return Boolean.parseBoolean(requiredAttr);
         }
         if ("query".equals(source)) {
-            String requiredAttr = extractAttr(parameter, "org.springframework.web.bind.annotation.RequestParam", "required");
+            String requiredAttr = extractAttr(parameter, "org.springframework.web.bind.annotation.RequestParam",
+                    "required");
             if (requiredAttr != null) {
                 return Boolean.parseBoolean(requiredAttr);
             }
-            String defaultValue = extractAttr(parameter, "org.springframework.web.bind.annotation.RequestParam", "defaultValue");
+            String defaultValue = extractAttr(parameter, "org.springframework.web.bind.annotation.RequestParam",
+                    "defaultValue");
             return defaultValue == null || defaultValue.isBlank();
         }
         if ("header".equals(source)) {
-            String requiredAttr = extractAttr(parameter, "org.springframework.web.bind.annotation.RequestHeader", "required");
+            String requiredAttr = extractAttr(parameter, "org.springframework.web.bind.annotation.RequestHeader",
+                    "required");
             if (requiredAttr != null) {
                 return Boolean.parseBoolean(requiredAttr);
             }
-            String defaultValue = extractAttr(parameter, "org.springframework.web.bind.annotation.RequestHeader", "defaultValue");
+            String defaultValue = extractAttr(parameter, "org.springframework.web.bind.annotation.RequestHeader",
+                    "defaultValue");
             return defaultValue == null || defaultValue.isBlank();
         }
         if ("form".equals(source)) {
@@ -673,7 +765,7 @@ public class SchemaGenerator {
     /**
      * 检查是否有指定注解
      *
-     * @param owner 修饰符列表所有者
+     * @param owner         修饰符列表所有者
      * @param annotationFqn 注解全限定名
      * @return 如果有注解则返回 true
      */
@@ -684,9 +776,9 @@ public class SchemaGenerator {
     /**
      * 从注解中提取属性值
      *
-     * @param owner 修饰符列表所有者
+     * @param owner         修饰符列表所有者
      * @param annotationFqn 注解全限定名
-     * @param attr 属性名
+     * @param attr          属性名
      * @return 属性值字符串，如果不存在则返回 null
      */
     private static String extractAttr(PsiModifierListOwner owner, String annotationFqn, String attr) {
@@ -694,7 +786,8 @@ public class SchemaGenerator {
         if (annotation == null) {
             return null;
         }
-        PsiAnnotationMemberValue value = attr != null ? annotation.findAttributeValue(attr) : annotation.findAttributeValue(null);
+        PsiAnnotationMemberValue value = attr != null ? annotation.findAttributeValue(attr)
+                : annotation.findAttributeValue(null);
         if (value == null) {
             return null;
         }
@@ -726,7 +819,7 @@ public class SchemaGenerator {
      * 解析整数属性值
      *
      * @param annotation 注解对象
-     * @param attr 属性名
+     * @param attr       属性名
      * @return 整数值，如果解析失败则返回 null
      */
     private static Integer parseIntegerAttribute(PsiAnnotation annotation, String attr) {
@@ -745,7 +838,7 @@ public class SchemaGenerator {
      * 解析小数属性值
      *
      * @param annotation 注解对象
-     * @param attr 属性名
+     * @param attr       属性名
      * @return 小数值，如果解析失败则返回 null
      */
     private static BigDecimal parseDecimalAttribute(PsiAnnotation annotation, String attr) {
@@ -764,7 +857,7 @@ public class SchemaGenerator {
      * 从注解中提取属性值
      *
      * @param annotation 注解对象
-     * @param attribute 属性名
+     * @param attribute  属性名
      * @return 属性值字符串，如果不存在则返回 null
      */
     private static String extractAttribute(PsiAnnotation annotation, String attribute) {
@@ -802,52 +895,60 @@ public class SchemaGenerator {
     /**
      * 合并最小值（取较大值）
      *
-     * @param current 当前值
+     * @param current   当前值
      * @param candidate 候选值
      * @return 合并后的值
      */
     private static Integer mergeMin(Integer current, Integer candidate) {
-        if (candidate == null) return current;
-        if (current == null) return candidate;
+        if (candidate == null)
+            return current;
+        if (current == null)
+            return candidate;
         return Math.max(current, candidate);
     }
 
     /**
      * 合并最大值（取较小值）
      *
-     * @param current 当前值
+     * @param current   当前值
      * @param candidate 候选值
      * @return 合并后的值
      */
     private static Integer mergeMax(Integer current, Integer candidate) {
-        if (candidate == null) return current;
-        if (current == null) return candidate;
+        if (candidate == null)
+            return current;
+        if (current == null)
+            return candidate;
         return Math.min(current, candidate);
     }
 
     /**
      * 合并最小小数值（取较大值）
      *
-     * @param current 当前值
+     * @param current   当前值
      * @param candidate 候选值
      * @return 合并后的值
      */
     private static BigDecimal mergeMinDecimal(BigDecimal current, BigDecimal candidate) {
-        if (candidate == null) return current;
-        if (current == null) return candidate;
+        if (candidate == null)
+            return current;
+        if (current == null)
+            return candidate;
         return current.max(candidate);
     }
 
     /**
      * 合并最大小数值（取较小值）
      *
-     * @param current 当前值
+     * @param current   当前值
      * @param candidate 候选值
      * @return 合并后的值
      */
     private static BigDecimal mergeMaxDecimal(BigDecimal current, BigDecimal candidate) {
-        if (candidate == null) return current;
-        if (current == null) return candidate;
+        if (candidate == null)
+            return current;
+        if (current == null)
+            return candidate;
         return current.min(candidate);
     }
 
@@ -858,7 +959,8 @@ public class SchemaGenerator {
      * @return 规范文本，如果获取失败则返回可展示文本
      */
     private static String safeCanonicalText(PsiType type) {
-        if (type == null) return "";
+        if (type == null)
+            return "";
         String text = type.getCanonicalText();
         return text != null ? text : type.getPresentableText();
     }
@@ -885,7 +987,7 @@ public class SchemaGenerator {
      * 判断是否为集合类
      *
      * @param psiClass 类对象
-     * @param project 项目对象
+     * @param project  项目对象
      * @return 如果是集合类则返回 true
      */
     private static boolean isCollectionClass(PsiClass psiClass, Project project) {
@@ -901,7 +1003,7 @@ public class SchemaGenerator {
      * 判断是否为 Map 类
      *
      * @param psiClass 类对象
-     * @param project 项目对象
+     * @param project  项目对象
      * @return 如果是 Map 类则返回 true
      */
     private static boolean isMapClass(PsiClass psiClass, Project project) {
@@ -913,41 +1015,126 @@ public class SchemaGenerator {
         return mapClass != null && psiClass.isInheritor(mapClass, true);
     }
 
+    private static String firstNonBlank(String... values) {
+        if (values == null) {
+            return "";
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return "";
+    }
+
+    private static String extractDescription(PsiModifierListOwner owner) {
+        if (owner == null) {
+            return "";
+        }
+        for (String annotationFqn : OPEN_API_SCHEMA_ANNOTATIONS) {
+            String description = extractAttr(owner, annotationFqn, "description");
+            if (description != null && !description.isBlank()) {
+                return description.trim();
+            }
+            String value = extractAttr(owner, annotationFqn, "value");
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+            String notes = extractAttr(owner, annotationFqn, "notes");
+            if (notes != null && !notes.isBlank()) {
+                return notes.trim();
+            }
+        }
+        if (owner instanceof PsiDocCommentOwner docOwner) {
+            return extractDocDescription(docOwner.getDocComment());
+        }
+        return "";
+    }
+
+    private static String extractDocDescription(PsiDocComment docComment) {
+        if (docComment == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (PsiElement element : docComment.getDescriptionElements()) {
+            String text = element == null ? "" : element.getText();
+            if (text != null) {
+                sb.append(text);
+            }
+        }
+        return sb.toString().replaceAll("\\s+", " ").trim();
+    }
+
+    private static Map<String, String> extractMethodParamDocMap(PsiMethod method) {
+        Map<String, String> map = new HashMap<>();
+        PsiDocComment doc = method.getDocComment();
+        if (doc == null) {
+            return map;
+        }
+        String[] lines = doc.getText().split("\\r?\\n");
+        for (String raw : lines) {
+            String line = raw == null ? "" : raw.trim();
+            if (line.startsWith("*")) {
+                line = line.substring(1).trim();
+            }
+            if (!line.startsWith("@param")) {
+                continue;
+            }
+            String content = line.substring("@param".length()).trim();
+            if (content.isEmpty()) {
+                continue;
+            }
+            int split = content.indexOf(' ');
+            if (split <= 0) {
+                map.put(content, "");
+                continue;
+            }
+            String name = content.substring(0, split).trim();
+            String desc = content.substring(split + 1).trim();
+            if (!name.isEmpty()) {
+                map.put(name, desc);
+            }
+        }
+        return map;
+    }
+
     /**
      * 参数 Schema 记录
      *
-     * @param schema Schema JSON 对象
+     * @param schema   Schema JSON 对象
      * @param required 是否必填
      */
-    private record ParameterSchema(JSONObject schema, boolean required) {}
+    private record ParameterSchema(JSONObject schema, boolean required) {
+    }
 
     /**
      * 参数来源信息记录
      *
      * @param source 来源类型（path/query/header/body/form）
-     * @param name 参数名称
+     * @param name   参数名称
      */
-    private record ParameterSourceInfo(String source, String name) {}
+    private record ParameterSourceInfo(String source, String name) {
+    }
 
     /**
      * 约束信息记录
      *
-     * @param required 是否必填
+     * @param required  是否必填
      * @param minLength 最小长度
      * @param maxLength 最大长度
-     * @param minItems 最小项数
-     * @param maxItems 最大项数
-     * @param minimum 最小值
-     * @param maximum 最大值
-     * @param pattern 正则表达式模式
+     * @param minItems  最小项数
+     * @param maxItems  最大项数
+     * @param minimum   最小值
+     * @param maximum   最大值
+     * @param pattern   正则表达式模式
      */
     private record Constraints(boolean required,
-                               Integer minLength,
-                               Integer maxLength,
-                               Integer minItems,
-                               Integer maxItems,
-                               BigDecimal minimum,
-                               BigDecimal maximum,
-                               String pattern) {}
+            Integer minLength,
+            Integer maxLength,
+            Integer minItems,
+            Integer maxItems,
+            BigDecimal minimum,
+            BigDecimal maximum,
+            String pattern) {
+    }
 }
-

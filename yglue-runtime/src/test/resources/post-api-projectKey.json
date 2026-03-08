@@ -1,0 +1,17 @@
+{
+  "id": "post-api-projectKey",
+  "nodes": [
+    {
+      "id": "node1",
+      "type": "service",
+      "data": {
+        "comp": {
+          "bean": "testService",
+          "method": "execute"
+        },
+        "inputs": []
+      }
+    }
+  ],
+  "edges": []
+}
