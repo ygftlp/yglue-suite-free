@@ -24,6 +24,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.yglue.flow.runtime.events.EventBus;
 
+import java.util.List;
+
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnClass(HandlerInterceptor.class)
 @EnableConfigurationProperties(FlowRuntimeProperties.class)
@@ -85,7 +87,7 @@ public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
         return new NodeInterceptor() {
             @Override
             public Object intercept(org.yglue.flow.runtime.core.engine.FlowContext context,
-                    org.yglue.flow.runtime.core.definition.FlowNode node,
+                    org.yglue.flow.runtime.core.definition.NodeDefinition node,
                     org.yglue.flow.runtime.core.engine.NodeInterceptorChain chain) throws Exception {
                 return chain.proceed();
             }

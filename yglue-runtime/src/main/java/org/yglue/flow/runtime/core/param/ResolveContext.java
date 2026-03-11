@@ -8,7 +8,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * 参数解析运行时上下文�?
+ * Runtime context for the typed parameter resolver pipeline.
  */
 public final class ResolveContext {
 
@@ -127,9 +127,9 @@ public final class ResolveContext {
             return this;
         }
 
-        public Builder formData(Map<String, ?> form) {
-            if (form != null) {
-                form.forEach(this::formField);
+        public Builder formData(Map<String, ?> formData) {
+            if (formData != null) {
+                formData.forEach(this::formField);
             }
             return this;
         }
@@ -144,9 +144,9 @@ public final class ResolveContext {
             return this;
         }
 
-        public Builder environment(Map<String, ?> env) {
-            if (env != null) {
-                env.forEach(this::environment);
+        public Builder environment(Map<String, ?> environment) {
+            if (environment != null) {
+                environment.forEach(this::environment);
             }
             return this;
         }
@@ -156,9 +156,9 @@ public final class ResolveContext {
             return this;
         }
 
-        public Builder variables(Map<String, ?> vars) {
-            if (vars != null) {
-                vars.forEach(this::variable);
+        public Builder variables(Map<String, ?> variables) {
+            if (variables != null) {
+                variables.forEach(this::variable);
             }
             return this;
         }
@@ -168,7 +168,3 @@ public final class ResolveContext {
         }
     }
 }
-
-
-
-

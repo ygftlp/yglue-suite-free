@@ -1,6 +1,7 @@
 package org.yglue.flow.runtime.core.definition;
 
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -16,7 +17,7 @@ public class NodeDefinition {
                           List<NodeDefinition> children) {
         this.id = id;
         this.type = type;
-        this.config = config == null ? Map.of() : Collections.unmodifiableMap(config);
+        this.config = config == null ? new LinkedHashMap<>() : new LinkedHashMap<>(config);
         this.children = children == null ? List.of() : Collections.unmodifiableList(children);
     }
 

@@ -280,17 +280,17 @@ export function useFlowState() {
   function addNodeFromPalette(item: any, position: { x: number; y: number }, parentId?: string) {
     if (!item) return
     const id = String(Date.now())
-    // 鏍规嵁 endpointType 鍐冲畾鑺傜偣绫诲瀷锛欶LOW_OPERATION -> service锛堟湰鍦版湇鍔¤皟鐢級
+    // 根据 endpointType 决定节点类型：FLOW_OPERATION -> service（本地服务调用）
     let nodeType = item.nodeType
     if (!nodeType && item.endpointType) {
       const endpointType = String(item.endpointType).toUpperCase()
       if (endpointType === "FLOW_OPERATION") {
-        nodeType = "service"  // 鏈湴鏈嶅姟璋冪敤浣跨敤 service 鑺傜偣
+        nodeType = "service"  // 本地服务调用使用 service 节点
       } else if (endpointType === "REST" || endpointType === "HTTP") {
-        nodeType = "rest"  // REST 璋冪敤浣跨敤 rest 鑺傜偣
+        nodeType = "rest"  // REST 调用使用 rest 节点
       }
     }
-    nodeType = nodeType ?? "service"  // 榛樿浣跨敤 service 鑺傜偣
+    nodeType = nodeType ?? "service"  // 默认使用 service 节点
     if (nodeType === "transformer") {
       window.alert("脚本节点已下线，请使用服务节点或 HTTP 节点。")
       return
@@ -298,7 +298,7 @@ export function useFlowState() {
     const label =
       nodeType === "branch"
         ? item.title || item.displayName || "Branch"
-        : item.displayName || item.title || item.bean || item.fqcn || item.name || "鑺傜偣"
+        : item.displayName || item.title || item.bean || item.fqcn || item.name || "节点"
 
     const mapInputs = (list: any[] = []) =>
       list.map((input: any) => ({
@@ -306,7 +306,7 @@ export function useFlowState() {
         description: input.description || "",
         valueType: (input.valueType || "STRING").toUpperCase(),
         typeName: input.typeName || "",
-        // 淇濈暀 IDE 涓婃姤鐨勫畬鏁?JSON Schema锛屼緵 ParamPlanBuilder 娓叉煋宓屽瀛楁鏄犲皠
+        // 保留 IDE 上报的完整 JSON Schema，供 ParamPlanBuilder 处理嵌套字段映射
         schema: input.schema || null,
       }))
 

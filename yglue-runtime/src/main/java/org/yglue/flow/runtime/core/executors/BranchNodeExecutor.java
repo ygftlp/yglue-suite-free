@@ -1,12 +1,12 @@
-﻿package org.yglue.flow.runtime.core.executors;
+package org.yglue.flow.runtime.core.executors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.yglue.flow.runtime.core.engine.FlowContext;
 import org.yglue.flow.runtime.core.FlowExecutor;
 import org.yglue.flow.runtime.core.NodeExecutionContext;
 import org.yglue.flow.runtime.core.definition.FlowDefinition;
 import org.yglue.flow.runtime.core.definition.NodeDefinition;
+import org.yglue.flow.runtime.core.engine.FlowContext;
 import org.yglue.flow.runtime.core.engine.evaluator.BranchConditionEvaluator;
 import org.yglue.flow.runtime.core.engine.interceptors.JsonPathUtil;
 
@@ -17,11 +17,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Branch executor for new GraphExecutor:
- * Evaluates branch conditions using the zero-compile JSON AST
- * BranchConditionEvaluator.
- * Returns the matched targetNodeId string to instruct the GraphExecutor which
- * path to activate.
+ * Evaluates branch node conditions and returns the selected target node id.
  */
 public class BranchNodeExecutor implements FlowExecutor {
 
@@ -34,8 +30,9 @@ public class BranchNodeExecutor implements FlowExecutor {
         Map<String, Object> config = context.getNode().getConfig();
         Object defaultConditionObj = config != null ? config.get("condition") : null;
 
-        // V2 新版统一从 NodeExecutionContext 取出映射过的 FlowContext
-        FlowContext flowContext = new FlowContext(context.getRuleId(), context.getContext());
+        FlowContext flowContext = new FlowContext(
+                context.getContext() == null ? null : context.getContext().getRuleId(),
+                context.getContext());
         Map<String, Object> tempVars = prepareTempVars(config, flowContext);
 
         FlowDefinition flow = context.getFlow();
@@ -64,29 +61,22 @@ public class BranchNodeExecutor implements FlowExecutor {
             String targetNodeId = asString(edge.get("target"));
             Map<String, Object> conditionAst = edgeConditionAst(edge);
 
-            // 如果连线上没有独立配置条件 AST，退回节点上的公共条件（或仅单走配置）
-            if (conditionAst == null || conditionAst.isEmpty()) {
-                if (defaultConditionObj instanceof Map) {
-                    conditionAst = (Map<String, Object>) defaultConditionObj;
-                }
+            if ((conditionAst == null || conditionAst.isEmpty()) && defaultConditionObj instanceof Map) {
+                conditionAst = (Map<String, Object>) defaultConditionObj;
             }
 
-            // 使用全新实现的无脚本 AST 执行器运算条件
             boolean conditionMet = BranchConditionEvaluator.evaluate(conditionAst, flowContext, tempVars);
-
             if (!conditionMet) {
                 continue;
             }
 
             log.info("[BranchNodeExecutor] branch selected, nodeId={}, targetNodeId={}, priority={}",
                     nodeId, targetNodeId, edgePriority(edge));
-
-            // 返给 GraphExecutor 用于分发路由
             return targetNodeId;
         }
 
         log.warn("[BranchNodeExecutor] no branch matched, nodeId={}", nodeId);
-        return null; // 没有匹配到分支时，流程阻断
+        return null;
     }
 
     private NodeDefinition findNodeById(FlowDefinition flow, String nodeId) {
@@ -162,7 +152,6 @@ public class BranchNodeExecutor implements FlowExecutor {
             if ("const".equals(kind)) {
                 value = plan.get("constValue");
             } else if ("expression".equals(kind)) {
-                // 不再支持表达式的复杂运算，退回 const，以保证零编译
                 value = plan.get("constValue");
             } else {
                 value = JsonPathUtil.extract(context.getVariables(), asString(plan.get("path")));
@@ -174,8 +163,9 @@ public class BranchNodeExecutor implements FlowExecutor {
     }
 
     private String asString(Object value) {
-        if (value == null)
+        if (value == null) {
             return null;
+        }
         return String.valueOf(value);
     }
 }

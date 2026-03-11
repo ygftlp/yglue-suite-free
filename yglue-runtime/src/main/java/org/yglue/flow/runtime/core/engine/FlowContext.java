@@ -4,32 +4,31 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 结构化 DAG 执行引擎的全局执行上下文
- * 替代之前的 LiteFlow Slot 机制
+ * Shared execution context for the graph runtime.
  */
 public class FlowContext {
 
     private final String ruleId;
-
-    /**
-     * 全局变量存储池，用于保存前端 JSONPath 引用的 "ctx" 中的数据
-     */
     private final Map<String, Object> variables = new ConcurrentHashMap<>();
-
-    /**
-     * 整个流程的最终返回值
-     */
     private Object returnValue;
-
-    /**
-     * 记录执行过程中抛出的异常
-     */
     private Throwable exception;
+
+    public FlowContext() {
+        this(null, (Map<String, Object>) null);
+    }
 
     public FlowContext(String ruleId, Map<String, Object> initialInput) {
         this.ruleId = ruleId;
         if (initialInput != null) {
             this.variables.putAll(initialInput);
+        }
+    }
+
+    public FlowContext(String ruleId, FlowContext source) {
+        this(ruleId, source == null ? null : source.getVariables());
+        if (source != null) {
+            this.returnValue = source.getReturnValue();
+            this.exception = source.getException();
         }
     }
 
@@ -41,12 +40,20 @@ public class FlowContext {
         return variables;
     }
 
+    public Map<String, Object> data() {
+        return variables;
+    }
+
     public void put(String key, Object value) {
         if (value != null) {
             variables.put(key, value);
         } else {
             variables.remove(key);
         }
+    }
+
+    public void set(String key, Object value) {
+        put(key, value);
     }
 
     public Object get(String key) {

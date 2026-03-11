@@ -15,7 +15,8 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
- * 运行 Transformer DSL 所需上下文�? */
+ * Runtime context used by the transformer DSL.
+ */
 public final class TransformerExecutionContext {
 
     private final FlowContext flowContext;
@@ -64,7 +65,7 @@ public final class TransformerExecutionContext {
             return Map.of();
         }
         return paramResults.results().entrySet().stream()
-                .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().value()));
+                .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().value()));
     }
 
     public ExpressionEvaluationContext toEvaluationContext(Map<String, Object> extraVariables) {
@@ -154,4 +155,3 @@ public final class TransformerExecutionContext {
         }
     }
 }
-

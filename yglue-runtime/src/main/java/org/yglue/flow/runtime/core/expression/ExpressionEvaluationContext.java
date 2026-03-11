@@ -8,7 +8,8 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * 表达式执行上下文，封装可用变量与附加数据�? */
+ * Immutable context passed to expression engines.
+ */
 public final class ExpressionEvaluationContext {
 
     private final Map<String, Object> variables;
@@ -28,15 +29,15 @@ public final class ExpressionEvaluationContext {
     }
 
     /**
-     * 基于 {@link FlowContext} 构建上下文，默认会把 FlowContext �?data 映射为变量�?     */
+     * Builds an evaluation context from the runtime flow context.
+     */
     public static ExpressionEvaluationContext fromFlowContext(FlowContext flowContext) {
         Objects.requireNonNull(flowContext, "flowContext must not be null");
         Builder builder = new Builder();
         Map<String, Object> data = flowContext.data();
-        // 创建一个新�?HashMap 副本，确�?SpEL 可以正确访问 Map 的键
         Map<String, Object> ctxMap = new HashMap<>(data);
         builder.variable("ctx", ctxMap);
-        // 同时�?data 中的所有键值对都设置为顶级变量，方便直接访�?        data.forEach(builder::variable);
+        data.forEach(builder::variable);
         builder.attribute("flowContext", flowContext);
         return builder.build();
     }
@@ -83,7 +84,3 @@ public final class ExpressionEvaluationContext {
         }
     }
 }
-
-
-
-

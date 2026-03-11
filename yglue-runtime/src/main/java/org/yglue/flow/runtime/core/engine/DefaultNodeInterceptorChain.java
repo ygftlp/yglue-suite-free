@@ -1,9 +1,8 @@
 package org.yglue.flow.runtime.core.engine;
 
-import org.yglue.flow.runtime.core.engine.FlowContext;
 import org.yglue.flow.runtime.core.FlowExecutor;
 import org.yglue.flow.runtime.core.NodeExecutionContext;
-import org.yglue.flow.runtime.core.definition.FlowNode;
+import org.yglue.flow.runtime.core.definition.FlowDefinition;
 import org.yglue.flow.runtime.core.definition.NodeDefinition;
 
 import java.util.List;
@@ -12,6 +11,7 @@ import java.util.function.Consumer;
 public class DefaultNodeInterceptorChain implements NodeInterceptorChain {
 
     private final List<NodeInterceptor> interceptors;
+    private final FlowDefinition flow;
     private final FlowContext context;
     private final NodeDefinition node;
     private final FlowExecutor targetExecutor;
@@ -19,11 +19,13 @@ public class DefaultNodeInterceptorChain implements NodeInterceptorChain {
     private int currentIndex = 0;
 
     public DefaultNodeInterceptorChain(List<NodeInterceptor> interceptors,
+            FlowDefinition flow,
             FlowContext context,
             NodeDefinition node,
             FlowExecutor targetExecutor,
             Consumer<NodeDefinition> childRunner) {
         this.interceptors = interceptors;
+        this.flow = flow;
         this.context = context;
         this.node = node;
         this.targetExecutor = targetExecutor;
@@ -36,13 +38,7 @@ public class DefaultNodeInterceptorChain implements NodeInterceptorChain {
     }
 
     @Override
-    public FlowNode getNode() {
-        // NodeDefinition 需要适配到 FlowNode 或类似的对象，
-        // 这里只是为了满足签名，目前系统中的 NodeExecutor 用的是 NodeDefinition 或其转化。
-        throw new UnsupportedOperationException("Use NodeDefinition directly or adapt it.");
-    }
-
-    public NodeDefinition getNodeDefinition() {
+    public NodeDefinition getNode() {
         return node;
     }
 
@@ -50,15 +46,14 @@ public class DefaultNodeInterceptorChain implements NodeInterceptorChain {
     public Object proceed() throws Exception {
         if (currentIndex < interceptors.size()) {
             NodeInterceptor interceptor = interceptors.get(currentIndex++);
-            return interceptor.intercept(context, null, this);
-        } else {
-            // 所有拦截器执行完毕，执行目标逻辑
-            NodeExecutionContext executionContext = new NodeExecutionContext(
-                    null, // old flow definition is obsolete here
-                    node,
-                    context,
-                    childRunner);
-            return targetExecutor.execute(executionContext);
+            return interceptor.intercept(context, node, this);
         }
+
+        NodeExecutionContext executionContext = new NodeExecutionContext(
+                flow,
+                node,
+                context,
+                childRunner);
+        return targetExecutor.execute(executionContext);
     }
 }

@@ -158,7 +158,8 @@ public class HttpRestInvocationStrategy implements RestInvocationStrategy {
                 if (!(item instanceof Map<?, ?> map)) {
                     continue;
                 }
-                String key = String.valueOf(map.getOrDefault("key", map.get("name")));
+                Object keyValue = map.containsKey("key") ? map.get("key") : map.get("name");
+                String key = String.valueOf(keyValue);
                 Object rawValue = map.containsKey("value") ? map.get("value") : map.get("val");
                 if (isBlank(key)) {
                     continue;
@@ -186,7 +187,8 @@ public class HttpRestInvocationStrategy implements RestInvocationStrategy {
                 if (!(item instanceof Map<?, ?> map)) {
                     continue;
                 }
-                String key = String.valueOf(map.getOrDefault("key", map.get("name")));
+                Object keyValue = map.containsKey("key") ? map.get("key") : map.get("name");
+                String key = String.valueOf(keyValue);
                 Object rawValue = map.containsKey("value") ? map.get("value") : map.get("val");
                 Object value = evaluate(rawValue, context);
                 appendQueryPair(pairs, key, value);

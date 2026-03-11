@@ -5,8 +5,6 @@ const JSON_HEADERS: HeadersInit = {
   "Content-Type": "application/json",
 }
 
-type Primitive = string | number | boolean | null | undefined
-
 function resolveUrl(path: string): string {
   if (/^https?:\/\//i.test(path)) return path
   if (!path.startsWith("/")) return `${API_PREFIX}/${path}`
@@ -129,6 +127,7 @@ export interface FlowSavePayload {
 }
 
 export interface FlowEntrypointPayload {
+  id?: number
   path: string
   method?: string | null
   requestSchemaJson?: string | null
@@ -196,6 +195,7 @@ export interface ProjectEndpoint {
   id: number
   projectId: number
   endpointType: string
+  entrypointId?: number | null
   method?: string | null
   path?: string | null
   name: string
@@ -395,13 +395,13 @@ export const api = {
     })
   },
 
-  updateEndpoint(
+  toggleEntrypoint(
     projectKey: string,
-    endpointId: number,
-    payload: ProjectEndpointUpdatePayload
-  ): Promise<ProjectEndpoint> {
-    return jsonRequest<ProjectEndpoint>(
-      `/projects/${encodeURIComponent(projectKey)}/endpoints/${encodeURIComponent(String(endpointId))}`,
+    entrypointId: number,
+    payload: { enabled: boolean; updatedBy?: string }
+  ): Promise<FlowEntrypointPayload> {
+    return jsonRequest<FlowEntrypointPayload>(
+      `/projects/${encodeURIComponent(projectKey)}/entrypoints/${encodeURIComponent(String(entrypointId))}`,
       payload,
       { method: "PATCH" }
     )

@@ -703,7 +703,7 @@ public class ServiceNodeExecutor implements FlowExecutor {
      * @throws RuntimeException 如果脚本执行失败
      */
     private Object resolveInputValue(Map<String, Object> input,
-            org.yglue.flow.runtime.FlowContext flowContext,
+            org.yglue.flow.runtime.core.engine.FlowContext flowContext,
             int index,
             String nodeId) {
         // 获取 script 字段

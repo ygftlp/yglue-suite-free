@@ -1,7 +1,7 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
-import { api, type Project, type ProjectEndpoint, type EndpointEntrypointConfig, type ProjectEndpointUpdatePayload } from "../api/client"
+import { api, type Project, type ProjectEndpoint, type EndpointEntrypointConfig, type FlowEntrypointPayload } from "../api/client"
 import { formatTimestamp, safeParseJson } from "../utils/formatters"
 
 const route = useRoute()
@@ -222,6 +222,23 @@ function updateEndpointInList(updated: ProjectEndpoint) {
   restEndpoints.value = restEndpoints.value.map((item) => (item.id === updated.id ? updated : item))
 }
 
+function applyEntrypointUpdate(endpoint: ProjectEndpoint, entrypoint: FlowEntrypointPayload): ProjectEndpoint {
+  const currentEntry = endpoint.entrypoint ?? {}
+  return {
+    ...endpoint,
+    entrypointId: entrypoint.id ?? endpoint.entrypointId ?? null,
+    flowCode: entrypoint.flowCode ?? endpoint.flowCode ?? null,
+    enabled: entrypoint.enabled ?? endpoint.enabled ?? false,
+    entrypoint: {
+      ...currentEntry,
+      path: entrypoint.path ?? currentEntry.path ?? endpoint.path ?? null,
+      method: entrypoint.method ?? currentEntry.method ?? endpoint.method ?? null,
+      enabled: entrypoint.enabled ?? currentEntry.enabled ?? endpoint.enabled ?? false,
+      flowCode: entrypoint.flowCode ?? currentEntry.flowCode ?? endpoint.flowCode ?? null,
+    },
+  }
+}
+
 async function onToggleEntrypoint(card: RestCard, event: Event) {
   event.stopPropagation()
   const enabled = (event.target as HTMLInputElement).checked
@@ -230,16 +247,17 @@ async function onToggleEntrypoint(card: RestCard, event: Event) {
 
 async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
   if (!projectKey.value || !card.meta.hasFlow) return
+  if (!card.endpoint.entrypointId) {
+    window.alert("当前接口缺少 entrypointId，无法切换托管状态")
+    return
+  }
 
   toggleBusy.value[card.endpoint.id] = true
   try {
-    const payload: ProjectEndpointUpdatePayload = {
-      entrypoint: {
-        ...card.meta.raw,
-        enabled,
-      },
-    }
-    const updated = await api.updateEndpoint(projectKey.value, card.endpoint.id, payload)
+    const updatedEntrypoint = await api.toggleEntrypoint(projectKey.value, card.endpoint.entrypointId, {
+      enabled,
+    })
+    const updated = applyEntrypointUpdate(card.endpoint, updatedEntrypoint)
     updateEndpointInList(updated)
   } catch (err) {
     window.alert(`切换托管状态失败：${err instanceof Error ? err.message : err}`)
@@ -250,7 +268,7 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
 
 </script>
 
-﻿<template>
+<template>
   <div class="layout">
     <header class="bar layout-header">
       <div class="header-info">
@@ -807,4 +825,3 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
 }
 
 </style>
-
