@@ -2,200 +2,74 @@
 
 ## 1. 项目定位
 
-YGFlow Suite 是一套面向企业服务场景的低代码流程编排方案，用来把接口元数据管理、可视化流程设计、流程发布、规则同步和运行时接管串成一条完整链路。
+YGFlow Suite 面向企业业务流程编排场景，提供从流程设计、规则发布、插件同步到运行时执行的一体化能力。它适合以下几类需求：
 
-它适合以下场景：
+- 用统一方式管理 flow 与 REST 入口
+- 把流程规则以本地文件形式随业务服务发布
+- 尽量少改业务代码，就能把部分入口接入流程引擎
+- 为不同业务线提供可插拔的干预能力
 
-- 统一管理 REST 入口点和流程规则
-- 通过 IDEA 插件把已发布规则同步到本地服务项目
-- 让业务服务在运行时执行本地 `.ygflow` 规则
-- 在不大改业务代码的前提下，用 flow 接管指定 REST 接口
-
-## 2. 官方闭环模型
-
-当前项目的正式闭环是：
-
-1. 在编排器中设计并发布 flow 版本。
-2. 在编排器中配置并启用 entrypoint。
-3. 通过 IDEA 插件把规则同步到目标本地项目。
-4. 构建并发布带有 `.ygflow` 文件的业务服务。
-5. 由 `yglue-runtime` 和 `yglue-runtime-spring-boot2/3` 在运行时读取本地规则并执行。
-
-这里有一条明确边界：
-
-- `yglue-runtime` 只负责执行。
-- `yglue-runtime` 不负责远程同步。
-- 官方同步职责属于 IDEA 插件。
-
-## 3. 仓库结构
-
-### 3.1 后端模块
+## 2. 核心模块
 
 - `yglue-annotations`
-  提供注解定义和元数据标记能力，供插件扫描和运行时接入使用。
-
+  提供注解和元数据定义。
 - `yglue-runtime`
-  核心执行引擎，负责加载本地 `.ygflow`、解析入参、执行节点和返回结果。
-
+  运行时核心，负责流程加载、图执行、节点执行、参数解析和上下文管理。
 - `yglue-runtime-spring-boot2`
-  Spring Boot 2 集成层，负责运行时装配和 REST 接管。
-
+  Spring Boot 2 适配层。
 - `yglue-runtime-spring-boot3`
-  Spring Boot 3 集成层，负责运行时装配、请求提取和 REST 接管。
-
+  Spring Boot 3 适配层。
 - `yglue-orchestrator`
-  编排器后端，负责项目、流程、版本、入口点、元数据和插件同步接口。
-
-- `samples/yglue-sample-service`
-  样例服务，用于验证 flow 执行和真实 REST 接管链路。
-
-### 3.2 前端与工具模块
-
+  编排器后端，负责项目、流程、版本和 entrypoint 管理。
 - `apps/ygflow-orchestrator-ui`
-  基于 Vue 3 的可视化编排前端。
-
+  编排器前端。
 - `yglue-idea-plugin`
-  IntelliJ IDEA 插件，负责元数据上传和规则同步。
+  IDEA 插件，负责规则与元数据同步。
+- `samples/yglue-sample-service`
+  示例服务，用于联调与验收。
 
-- `runtime-ops-notes`
-  上线检查单、运行说明和当前上线准备度评估。
+## 3. 官方链路
 
-## 4. 核心功能
+当前推荐链路如下：
 
-### 4.1 编排器
+1. 在编排器中创建并发布 flow。
+2. 在编排器中配置并启用 entrypoint。
+3. 使用 IDEA 插件把规则同步到业务项目本地 `.ygflow`。
+4. 业务服务打包并发布，运行时读取本地规则执行。
 
-- 项目管理
-- flow 定义管理
-- flow 版本管理与发布
-- REST entrypoint 管理
-- endpoint 元数据管理
-- 插件同步接口
+链路边界如下：
 
-### 4.2 IDEA 插件
+- `yglue-runtime` 负责执行，不负责远程同步。
+- 规则同步责任在编排器与 IDEA 插件。
+- 生产运行结果依赖本地 `.ygflow` 与发布内容保持一致。
 
-- 本地代码元数据扫描
-- 元数据上传到编排器
-- 从编排器同步规则到本地 `.ygflow`
-- 插件心跳与同步确认
+## 4. 可扩展性建议
 
-### 4.3 运行时引擎
+对于框架类项目，增加扩展点是合理的，否则后续很容易把业务定制逻辑不断塞回核心 runtime。
 
-- 加载本地规则文件
-- 执行 flow 图
-- 从请求、上下文、表达式、常量中解析入参
-- 支持 branch 分支选择
-- 支持 service、transformer、set、log、call 等节点类型
-- 返回 flow 执行结果给业务服务
+当前建议重点保留两类扩展点：
 
-### 4.4 Spring Boot 集成层
+- 运行时节点拦截：通过 `NodeInterceptor` 对节点执行前后做统一治理。
+- 入口请求拦截：通过 `InboundRequestInterceptor` 在 flow 执行前做参数补充、租户透传、鉴权增强和场景拦截。
 
-- 拦截匹配到的 REST 请求
-- 匹配本地 entrypoint
-- 提取请求参数和请求体
-- 调用 runtime 执行 flow
-- 把 flow 结果回写到 HTTP 响应
+比较适合放到扩展点里的业务能力包括：
 
-### 4.5 可视化前端
+- 多租户信息注入
+- 自定义身份校验
+- 特殊灰度开关
+- 审计打点
+- 风控预检查
+- 上下文补偿或默认值填充
 
-- flow 图编辑
-- 节点配置
-- endpoint 和 entrypoint 管理
-- 版本发布操作
-- 编排资产可视化管理
+## 5. 构建方式
 
-## 5. 技术栈
-
-### 5.1 后端
-
-- Java 17
-- Spring Boot 3.3.4
-- MyBatis Spring Boot Starter 3.0.3
-- MySQL 8
-- Flyway
-- Lombok
-- Jackson
-- Groovy
-- LiteFlow
-- AspectJ
-
-### 5.2 前端
-
-- Vue 3
-- TypeScript 5
-- Vite 5
-- Vue Router 4
-- Vue Flow
-- Monaco Editor
-- CodeMirror
-- Lucide Vue
-
-### 5.3 构建与工具
-
-- Maven
-- Gradle
-- IntelliJ Platform SDK
-- npm
-
-## 6. 运行时数据模型
-
-运行时不是直接远程拉取规则，而是读取本地文件：
-
-- `.ygflow/rules/<flowCode>.json`
-- `.ygflow/entrypoints.json`
-
-这意味着生产行为取决于本地同步结果是否正确，以及这些文件是否已经跟随服务一起发布。
-
-## 7. 当前闭环验证状态
-
-截至 2026-03-12，仓库内已经验证通过的关键链路包括：
-
-- 根项目 Maven 测试通过
-- 前端生产构建通过
-- branch 分支只沿命中边执行
-- 入参解析链路端到端通过
-- 样例 flow 执行通过
-- Spring Boot 3 真实 REST 接管通过
-- 前端 entrypoint 开关已与后端接口对齐
-
-因此，当前仓库已经具备以下核心闭环：
-
-`编排器发布 -> IDEA 插件同步 -> 本地 .ygflow 执行`
-
-## 8. 当前上线判断
-
-如果你们接受当前官方模式：
-
-- 编排器是控制面
-- IDEA 插件同步是强制发布门禁
-- runtime 只执行本地规则
-
-那么当前项目已经具备上线基础。
-
-如果你们要求“平台一发布，服务端自动拉取并立即热更新”，当前仓库并没有实现这一模式。
-
-## 9. 推荐发布门禁
-
-每次发布前至少做以下动作：
-
-1. 确认目标 flow 版本已发布。
-2. 确认目标 entrypoint 已启用。
-3. 对目标项目执行 IDEA 插件同步。
-4. 确认本地 `.ygflow` 文件已更新。
-5. 运行 `verify-yglue-sync.ps1` 做一致性校验。
-6. 执行业务服务构建和测试。
-7. 对接管接口和非接管接口做 smoke test。
-
-详细流程见 [plugin-sync-release-checklist.md](/d:/JavaWorkspace/ygflow-suite/runtime-ops-notes/plugin-sync-release-checklist.md) 和 [release-readiness-2026-03-12.md](/d:/JavaWorkspace/ygflow-suite/runtime-ops-notes/release-readiness-2026-03-12.md)。
-
-## 10. 快速开始
-
-### 10.1 后端
+### 后端
 
 ```bash
 mvn test
 ```
 
-### 10.2 前端
+### 前端
 
 ```bash
 cd apps/ygflow-orchestrator-ui
@@ -203,18 +77,26 @@ npm install
 npm run build
 ```
 
-### 10.3 启动编排器
+### 编排器
 
 ```bash
 cd yglue-orchestrator
 mvn spring-boot:run
 ```
 
-### 10.4 构建 IDEA 插件
+### IDEA 插件
 
 ```bash
 cd yglue-idea-plugin
 ./gradlew buildPlugin
 ```
 
-在 IntelliJ IDEA 中安装插件包后，配置编排器地址和项目标识，再执行插件同步动作即可刷新本地 `.ygflow`。
+## 6. 发布前检查
+
+建议发布前至少确认以下事项：
+
+1. 目标 flow 版本已发布。
+2. 目标 entrypoint 已启用。
+3. 本地 `.ygflow` 已完成同步。
+4. 后端与前端构建通过。
+5. 运行日志、IDE 文件、临时目录和本地依赖未被提交。

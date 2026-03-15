@@ -6,7 +6,11 @@ import org.yglue.flow.runtime.core.definition.RestEntryPoint;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-class InboundRequestContext {
+/**
+ * Mutable request view exposed to {@link InboundRequestInterceptor}
+ * implementations.
+ */
+public class InboundRequestContext {
 
     private final HttpServletRequest request;
     private final RestEntryPoint entryPoint;
@@ -20,20 +24,20 @@ class InboundRequestContext {
         this.payload = payload;
     }
 
-    HttpServletRequest request() {
+    public HttpServletRequest request() {
         return request;
     }
 
-    RestEntryPoint entryPoint() {
+    public RestEntryPoint entryPoint() {
         return entryPoint;
     }
 
-    Map<String, Object> payload() {
+    public Map<String, Object> payload() {
         return payload;
     }
 
     @SuppressWarnings("unchecked")
-    void put(String path, Object value) {
+    public void put(String path, Object value) {
         if (path == null || path.isBlank()) {
             return;
         }
@@ -63,4 +67,3 @@ class InboundRequestContext {
         cursor.put(tail, value);
     }
 }
-

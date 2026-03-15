@@ -3,7 +3,11 @@ package org.yglue.flow.runtime.spring;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-class InboundInterceptorException extends RuntimeException {
+/**
+ * Exception type business interceptors can throw to stop request dispatch with
+ * a controlled HTTP response.
+ */
+public class InboundInterceptorException extends RuntimeException {
 
     private final int status;
     private final Map<String, Object> body;
@@ -14,26 +18,25 @@ class InboundInterceptorException extends RuntimeException {
         this.body = body == null ? Map.of("message", "Inbound interceptor error") : Map.copyOf(body);
     }
 
-    int getStatus() {
+    public int getStatus() {
         return status;
     }
 
-    Map<String, Object> getBody() {
+    public Map<String, Object> getBody() {
         return body;
     }
 
-    static InboundInterceptorException badRequest(String message) {
+    public static InboundInterceptorException badRequest(String message) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("code", "FLOW_BAD_REQUEST");
         body.put("message", message);
         return new InboundInterceptorException(400, body);
     }
 
-    static InboundInterceptorException unauthorized(String message) {
+    public static InboundInterceptorException unauthorized(String message) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("code", "FLOW_UNAUTHORIZED");
         body.put("message", message);
         return new InboundInterceptorException(401, body);
     }
 }
-

@@ -1,49 +1,56 @@
 # YGFlow Suite
 
-YGFlow Suite（易构流程套件）是一套面向企业应用的流程编排方案，覆盖以下链路：
+YGFlow Suite 是一套面向企业业务场景的流程编排方案，覆盖编排器、运行时引擎、Spring Boot 集成层、IDEA 插件和可视化前端。项目的目标是把接口入口治理、流程编排、运行时执行和规则同步串成一条可落地的研发链路。
 
-- 编排器 `yglue-orchestrator`
-- 可视化设计台 `ygflow-orchestrator-ui`
-- IDEA 插件 `yglue-idea-plugin`
-- 运行时引擎 `yglue-runtime`
-- Spring Boot 集成层 `yglue-runtime-spring-boot2` / `yglue-runtime-spring-boot3`
+## 仓库结构
 
-它的目标是把接口入参治理、流程编排、数据转换和运行时接管串成一条完整链路。
+- `yglue-annotations`
+  注解与元数据定义。
+- `yglue-runtime`
+  核心执行引擎，负责加载本地 `.ygflow` 规则、节点执行、参数解析和上下文传递。
+- `yglue-runtime-spring-boot2`
+  Spring Boot 2 集成层。
+- `yglue-runtime-spring-boot3`
+  Spring Boot 3 集成层，负责入口拦截、请求组装和 HTTP 接管。
+- `yglue-orchestrator`
+  编排器后端服务。
+- `apps/ygflow-orchestrator-ui`
+  编排器前端。
+- `yglue-idea-plugin`
+  IntelliJ IDEA 插件。
+- `samples/yglue-sample-service`
+  示例业务服务。
 
-## 官方发布链路
+## 运行模式
 
-当前项目的正式链路是：
+当前仓库采用“编排器发布 + IDEA 插件同步 + 业务服务本地执行”的模式：
 
-1. 在编排器中设计并发布 flow、entrypoint。
-2. 通过 IDEA 插件把规则和入口点同步到本地项目的 `.ygflow` 目录。
-3. 业务服务通过 `yglue-runtime` / `yglue-runtime-spring-boot3` 读取本地 `.ygflow` 并执行。
+1. 在编排器中设计并发布 flow 与 entrypoint。
+2. 通过 IDEA 插件把规则同步到业务项目本地 `.ygflow` 目录。
+3. 业务服务通过 `yglue-runtime` 或 `yglue-runtime-spring-boot2/3` 加载并执行本地规则。
 
-这里有一个明确边界：
+这意味着 `yglue-runtime` 只负责执行，不负责远程拉取规则；规则分发与同步属于编排器和插件链路。
 
-- `yglue-runtime` 只负责加载本地规则并执行，不承担远程同步职责。
-- 同步职责属于 IDEA 插件；插件同步是正式发布门禁的一部分。
+## 扩展点
 
-## 项目文档
+为了让框架用于真实业务时更灵活，当前推荐保留并使用两类扩展点：
 
-- [项目总览](docs/PROJECT_OVERVIEW.md)
+- `NodeInterceptor`
+  位于 `yglue-runtime`，适合做节点执行前后干预，例如审计、灰度标记、上下文补偿、统一监控、特殊异常转换。
+- `InboundRequestInterceptor`
+  位于 `yglue-runtime-spring-boot3`，适合在 HTTP 请求进入 flow 之前做参数注入、鉴权补充、租户信息透传、特殊场景熔断或拦截。
+
+这类扩展点是合理的。对框架项目来说，业务差异往往出现在“进入执行前”和“节点执行中”两个阶段，如果完全写死在 runtime 里，后续会越来越难适配特殊场景。
 
 ## 快速开始
 
-### 环境要求
-
-- Java 17+
-- Maven 3.8+
-- Node.js 18+
-- MySQL 8.0+
-- IntelliJ IDEA 2024.2+
-
-### 构建后端
+### 后端
 
 ```bash
 mvn test
 ```
 
-### 构建前端
+### 前端
 
 ```bash
 cd apps/ygflow-orchestrator-ui
@@ -65,32 +72,13 @@ cd yglue-idea-plugin
 ./gradlew buildPlugin
 ```
 
-然后在 IntelliJ IDEA 中通过 `File -> Settings -> Plugins -> Install Plugin from Disk...` 安装插件包。
+## 开源整理说明
 
-## 发布与验收
+为了便于发布到 GitHub，这个仓库应避免提交以下内容：
 
-如果采用项目当前的正式模式上线，建议把下面两个文档作为发布门禁：
+- IDE 工程文件与本地工作区文件
+- 前端 `node_modules`、构建产物和临时调试文件
+- 崩溃日志、运行日志、临时片段
+- 本地工具生成的辅助目录
 
-- [插件同步发布检查单](runtime-ops-notes/plugin-sync-release-checklist.md)
-- [上线准备度评估](runtime-ops-notes/release-readiness-2026-03-12.md)
-
-可选的辅助脚本：
-
-- `verify-yglue-sync.ps1`：校验本地 `.ygflow` 与编排器已发布内容是否一致。
-
-## 当前验证结论
-
-截至 2026-03-12，当前仓库已完成的关键验证包括：
-
-- 根项目 `mvn test` 通过
-- 前端 `npm run build` 通过
-- 分支执行与入参解析专项测试通过
-- Spring Boot 真实 REST 接管测试通过
-
-在“编排器发布 + IDEA 插件同步 + 本地 `.ygflow` 执行”这一既定模式下，项目已经具备上线基础；但仍建议先走灰度或预发演练。
-
-## 文档入口
-
-- [项目总览](docs/PROJECT_OVERVIEW.md)
-- [插件同步发布检查单](runtime-ops-notes/plugin-sync-release-checklist.md)
-- [上线准备度评估](runtime-ops-notes/release-readiness-2026-03-12.md)
+仓库根目录已经通过 `.editorconfig` 统一为 UTF-8，无 BOM。
