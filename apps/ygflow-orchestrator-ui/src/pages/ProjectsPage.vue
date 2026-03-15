@@ -49,7 +49,7 @@ onMounted(loadProjects)
     <header class="page-header">
       <div class="brand">
         <Boxes :size="22" stroke-width="2.4" />
-        <span>LitFlow Studio</span>
+        <span>YGFlow Studio</span>
       </div>
       <RouterLink class="link muted" to="/">项目列表</RouterLink>
     </header>

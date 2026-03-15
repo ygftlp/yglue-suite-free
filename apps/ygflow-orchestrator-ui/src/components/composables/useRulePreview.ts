@@ -10,7 +10,7 @@ export function useRulePreview(flowSettings: Ref<FlowSettings>, props: CanvasEdi
     modal.innerHTML = `
     <div class="rule-preview-content">
       <div class="rule-preview-header">
-        <div style="font-weight:600">LiteFlow 规则预览</div>
+        <div style="font-weight:600">YGFlow 规则预览</div>
         <button class="rule-preview-close" type="button">×</button>
       </div>
       <div class="rule-preview-body">
@@ -31,7 +31,7 @@ export function useRulePreview(flowSettings: Ref<FlowSettings>, props: CanvasEdi
     modal.querySelector(".btn.close")?.addEventListener("click", close)
     modal.querySelector(".btn.download")?.addEventListener("click", () => {
       const filename = flowSettings.value.code || props.flowCode || "flow"
-      downloadRuleFile(text, `liteflow-rule-${filename}.txt`)
+      downloadRuleFile(text, `ygflow-rule-${filename}.txt`)
     })
   }
 

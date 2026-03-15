@@ -2,7 +2,7 @@ import { computed, nextTick, ref, watch } from "vue"
 import type { Ref } from "vue"
 import { api, type FlowServiceSignatureIssue, type FlowVersion } from "../../api/client"
 import { createDefaultFlowSettings, type FlowEntrypoint, type FlowSettings } from "../../data/flowSettings"
-import { generateLiteFlowRule } from "../../utils/ruleExporter"
+import { generateRulePreview } from "../../utils/ruleExporter"
 import type { CanvasEditorProps } from "./canvasTypes"
 import { generateUUID, generateContextKey, normalizeEntrypoint, serializeEntrypointPayload, safeParseContent } from "./flowUtils"
 import { useRulePreview } from "./useRulePreview"
@@ -439,7 +439,7 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
       saving.value = false
     }
     if (!savedVersion) return
-    const preview = generateLiteFlowRule(normalizedNodes, flowState.edges.value, flowSettings.value)
+    const preview = generateRulePreview(normalizedNodes, flowState.edges.value, flowSettings.value)
     rulePreview.openRulePreview(preview.text)
   }
 

@@ -57,11 +57,24 @@ public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
 
     @Bean
     @ConditionalOnMissingBean
+    public InboundRequestInterceptor schemaNormalizeInboundInterceptor(RequestSchemaValidator requestSchemaValidator) {
+        return new SchemaNormalizeInboundInterceptor(requestSchemaValidator);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public InboundInterceptorChain inboundInterceptorChain(ObjectMapper objectMapper,
+            List<InboundRequestInterceptor> inboundInterceptors) {
+        return new InboundInterceptorChain(objectMapper, inboundInterceptors);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public FlowDispatchInterceptor flowDispatchInterceptor(RuleEngine ruleEngine,
             ObjectMapper objectMapper,
             RestEntryPointRegistry entryPointRegistry,
-            RequestSchemaValidator requestSchemaValidator) {
-        return new FlowDispatchInterceptor(ruleEngine, objectMapper, entryPointRegistry, requestSchemaValidator);
+            InboundInterceptorChain inboundInterceptorChain) {
+        return new FlowDispatchInterceptor(ruleEngine, objectMapper, entryPointRegistry, inboundInterceptorChain);
     }
 
     @Bean

@@ -8,10 +8,10 @@ import java.util.Optional;
  * 流程执行上下文
  * 用于在流程执行过程中存储和传递数据
  * 
- * <p>与 LiteFlow 集成时：
+ * <p>当前上下文语义：
  * <ul>
- *   <li>globals: 全局数据存储，与 LiteFlow Context 同步</li>
- *   <li>attributes: 内部属性存储，不同步到 LiteFlow</li>
+ *   <li>globals: 全局数据存储，供流程节点共享</li>
+ *   <li>attributes: 内部属性存储，不进入流程数据快照</li>
  *   <li>returnValue: 流程执行结果，通过 "ret" key 存储</li>
  * </ul>
  */
@@ -68,7 +68,7 @@ public class FlowContext {
     }
 
     /**
-     * 设置内部属性（不同步到 LiteFlow Context）
+     * 设置内部属性（不会进入流程数据快照）
      * @param key 属性 key
      * @param value 属性值
      */

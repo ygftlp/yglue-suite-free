@@ -9,7 +9,6 @@ import org.springframework.web.servlet.HandlerInterceptor;
 import org.yglue.flow.runtime.RuleEngine;
 import org.yglue.flow.runtime.core.FlowExecutionResult;
 import org.yglue.flow.runtime.core.definition.RestEntryPoint;
-import org.yglue.flow.runtime.core.definition.RestEntryPoint;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -24,16 +23,16 @@ class FlowDispatchInterceptor implements HandlerInterceptor {
     private final FlowRequestPayloadExtractor payloadExtractor;
     private final ObjectMapper objectMapper;
     private final RestEntryPointRegistry registry;
-    private final RequestSchemaValidator requestSchemaValidator;
+    private final InboundInterceptorChain inboundInterceptorChain;
 
     FlowDispatchInterceptor(RuleEngine ruleEngine,
                             ObjectMapper objectMapper,
                             RestEntryPointRegistry registry,
-                            RequestSchemaValidator requestSchemaValidator) {
+                            InboundInterceptorChain inboundInterceptorChain) {
         this.ruleEngine = ruleEngine;
         this.objectMapper = objectMapper;
         this.registry = registry;
-        this.requestSchemaValidator = requestSchemaValidator;
+        this.inboundInterceptorChain = inboundInterceptorChain;
         this.payloadExtractor = new FlowRequestPayloadExtractor(objectMapper);
     }
 
@@ -47,16 +46,11 @@ class FlowDispatchInterceptor implements HandlerInterceptor {
         }
         Map<String, Object> payload = payloadExtractor.extract(request, true);
         RestEntryPoint entryPoint = matchContext.entryPoint();
-        if (entryPoint != null && requestSchemaValidator != null) {
-            RequestSchemaValidator.ValidationResult validationResult =
-                    requestSchemaValidator.validate(entryPoint, request, payload);
-            if (!validationResult.isValid()) {
-                writeValidationError(response, validationResult);
-                return false;
-            }
-            if (validationResult.getNormalized() != null) {
-                payload.put("params", validationResult.getNormalized());
-            }
+        try {
+            inboundInterceptorChain.apply(entryPoint, request, payload);
+        } catch (InboundInterceptorException ex) {
+            writeInboundError(response, ex);
+            return false;
         }
         Map<String, Object> flowInput = new java.util.LinkedHashMap<>();
         flowInput.put("request", payload);
@@ -120,13 +114,12 @@ class FlowDispatchInterceptor implements HandlerInterceptor {
         objectMapper.writeValue(response.getWriter(), returnValue);
     }
 
-    private void writeValidationError(HttpServletResponse response,
-                                      RequestSchemaValidator.ValidationResult validationResult) throws IOException {
-        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+    private void writeInboundError(HttpServletResponse response,
+                                   InboundInterceptorException exception) throws IOException {
+        response.setStatus(exception.getStatus());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        objectMapper.writeValue(response.getWriter(), validationResult.toErrorBody());
+        objectMapper.writeValue(response.getWriter(), exception.getBody());
     }
 
     private record MatchContext(String ruleId, RestEntryPoint entryPoint) {}
 }
-
