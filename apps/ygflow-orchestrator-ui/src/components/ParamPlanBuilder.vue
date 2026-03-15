@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue"
 import ServiceCallEditor from "./ServiceCallEditor.vue"
+import SourcePathInput from "./SourcePathInput.vue"
 
 type SourceKind = "ctx" | "const" | "serviceCall" | "httpCall" | "listPipeline"
 type StepOp = "filter" | "map" | "enrich" | "groupBy" | "reduce"
@@ -126,6 +127,7 @@ const props = defineProps<{
   modelValue?: any
   inputDefs?: InputMeta[]
   projectKey?: string
+  sourcePathOptions?: string[] | null
 }>()
 
 const emit = defineEmits<{
@@ -1255,11 +1257,12 @@ function refreshQuickCheck() {
             </select>
             <div class="muted tiny hint-line">{{ getSourceHint(editingTempPlan.source.kind) }}</div>
 
-            <input
+            <SourcePathInput
               v-if="editingTempPlan.source.kind === 'ctx'"
-              class="input"
-              v-model="editingTempPlan.source.path"
+              :model-value="editingTempPlan.source.path"
+              :options="props.sourcePathOptions ?? []"
               placeholder="ctx.user / request.body.items"
+              @update:model-value="editingTempPlan.source.path = $event"
             />
             <input
               v-if="editingTempPlan.source.kind === 'const'"
@@ -1273,6 +1276,7 @@ function refreshQuickCheck() {
                 v-model="editingTempPlan.source.serviceCall"
                 :project-key="props.projectKey"
                 :temp-keys="tempKeyOptions"
+                :source-path-options="props.sourcePathOptions"
               />
               <input
                 class="input"
@@ -1367,11 +1371,12 @@ function refreshQuickCheck() {
                   <option value="serviceCall">服务返回 List</option>
                   <option value="const">常量 List</option>
                 </select>
-                <input
+                <SourcePathInput
                   v-if="editingTempPlan.listInput.kind === 'ctx'"
-                  class="input"
-                  v-model="editingTempPlan.listInput.path"
+                  :model-value="editingTempPlan.listInput.path"
+                  :options="props.sourcePathOptions ?? []"
                   placeholder="ctx.items / request.body.lines"
+                  @update:model-value="editingTempPlan.listInput.path = $event"
                 />
                 <input
                   v-if="editingTempPlan.listInput.kind === 'const'"
@@ -1384,6 +1389,7 @@ function refreshQuickCheck() {
                     v-model="editingTempPlan.listInput.serviceCall"
                     :project-key="props.projectKey"
                     :temp-keys="tempKeyOptions"
+                    :source-path-options="props.sourcePathOptions"
                   />
                   <input
                     class="input"
@@ -1418,11 +1424,12 @@ function refreshQuickCheck() {
                       <option value="tempVar">来源：临时变量</option>
                       <option value="serviceCall">来源：服务调用</option>
                     </select>
-                    <input
+                    <SourcePathInput
                       v-if="field.source.kind === 'ctx'"
-                      class="input"
-                      v-model="field.source.path"
+                      :model-value="field.source.path"
+                      :options="props.sourcePathOptions ?? []"
                       placeholder="读取路径，例如 $.skuId / request.body.user.id"
+                      @update:model-value="field.source.path = $event"
                     />
                     <input
                       v-if="field.source.kind === 'const'"
@@ -1445,6 +1452,7 @@ function refreshQuickCheck() {
                         v-model="field.source.serviceCall"
                         :project-key="props.projectKey"
                         :temp-keys="tempKeyOptions"
+                        :source-path-options="props.sourcePathOptions"
                       />
                       <input
                         class="input"
@@ -1610,11 +1618,12 @@ function refreshQuickCheck() {
             </select>
             <div class="muted tiny hint-line">{{ getSourceHint(editingArgPlan.source.kind) }}</div>
 
-            <input
+            <SourcePathInput
               v-if="editingArgPlan.source.kind === 'ctx'"
-              class="input"
-              v-model="editingArgPlan.source.path"
+              :model-value="editingArgPlan.source.path"
+              :options="props.sourcePathOptions ?? []"
               placeholder="ctx.user / request.body.items"
+              @update:model-value="editingArgPlan.source.path = $event"
             />
             <input
               v-if="editingArgPlan.source.kind === 'const'"
@@ -1628,6 +1637,7 @@ function refreshQuickCheck() {
                 v-model="editingArgPlan.source.serviceCall"
                 :project-key="props.projectKey"
                 :temp-keys="tempKeyOptions"
+                :source-path-options="props.sourcePathOptions"
               />
               <input
                 class="input"
@@ -1721,11 +1731,12 @@ function refreshQuickCheck() {
                   <option value="serviceCall">服务返回 List</option>
                   <option value="const">常量 List</option>
                 </select>
-                <input
+                <SourcePathInput
                   v-if="editingArgPlan.listInput.kind === 'ctx'"
-                  class="input"
-                  v-model="editingArgPlan.listInput.path"
+                  :model-value="editingArgPlan.listInput.path"
+                  :options="props.sourcePathOptions ?? []"
                   placeholder="ctx.items / request.body.lines"
+                  @update:model-value="editingArgPlan.listInput.path = $event"
                 />
                 <input
                   v-if="editingArgPlan.listInput.kind === 'const'"
@@ -1738,6 +1749,7 @@ function refreshQuickCheck() {
                     v-model="editingArgPlan.listInput.serviceCall"
                     :project-key="props.projectKey"
                     :temp-keys="tempKeyOptions"
+                    :source-path-options="props.sourcePathOptions"
                   />
                   <input
                     class="input"
@@ -1772,11 +1784,12 @@ function refreshQuickCheck() {
                       <option value="tempVar">来源：临时变量</option>
                       <option value="serviceCall">来源：服务调用</option>
                     </select>
-                    <input
+                    <SourcePathInput
                       v-if="field.source.kind === 'ctx'"
-                      class="input"
-                      v-model="field.source.path"
+                      :model-value="field.source.path"
+                      :options="props.sourcePathOptions ?? []"
                       placeholder="读取路径，例如 $.skuId / request.body.user.id"
+                      @update:model-value="field.source.path = $event"
                     />
                     <input
                       v-if="field.source.kind === 'const'"
@@ -1799,6 +1812,7 @@ function refreshQuickCheck() {
                         v-model="field.source.serviceCall"
                         :project-key="props.projectKey"
                         :temp-keys="tempKeyOptions"
+                        :source-path-options="props.sourcePathOptions"
                       />
                       <input
                         class="input"

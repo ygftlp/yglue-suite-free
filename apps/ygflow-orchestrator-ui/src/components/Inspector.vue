@@ -5,6 +5,7 @@ import ServiceNodeConfig from "./ServiceNodeConfig.vue"
 import RestNodeConfig from "./RestNodeConfig.vue"
 import ServiceGroupConfig from "./ServiceGroupConfig.vue"
 import BranchConditionBuilder from "./BranchConditionBuilder.vue"
+import SourcePathInput from "./SourcePathInput.vue"
 import type { FlowModel, FlowResolver } from "../api/client"
 
 type BranchTempVarKind = "ctx" | "const" | "expression"
@@ -74,6 +75,20 @@ const edgeBranchTempVarKeys = computed(() => {
   const list = node?.data?.tempVars
   if (!Array.isArray(list)) return []
   return list.map((item: any) => String(item?.key ?? "").trim()).filter(Boolean)
+})
+
+const requestPathOptions = computed(() => {
+  const fields = Array.isArray(props.endpointSchema?.requestSchema) ? props.endpointSchema?.requestSchema : []
+  const values = fields.map((field) => {
+    const source = String(field?.source || "").trim().toLowerCase()
+    const name = String(field?.pathVariable || field?.paramName || field?.formField || field?.name || "").trim()
+    if (!name) return ""
+    if (source === "path") return `request.path.${name}`
+    if (source === "query") return `request.query.${name}`
+    if (source === "header") return `request.headers.${name}`
+    return `request.body.${name}`
+  }).filter(Boolean)
+  return Array.from(new Set(values))
 })
 
 function cloneNode() {
@@ -185,6 +200,7 @@ function removeBranchTempVar(index: number) {
             :model-value="selectedEdge.data?.conditionV2"
             :project-key="props.projectKey"
             :temp-var-keys="edgeBranchTempVarKeys"
+            :source-path-options="requestPathOptions"
             @update:model-value="updateEdgeField({ conditionV2: $event })"
           />
 
@@ -264,7 +280,12 @@ function removeBranchTempVar(index: number) {
 
             <label v-if="plan.kind === 'ctx'" class="field">
               <span>上下文路径</span>
-              <input class="input" :value="plan.path || ''" placeholder="例如 request.body.userId" @input="updateBranchTempVar(idx, { path: ($event.target as HTMLInputElement).value })" />
+              <SourcePathInput
+                :model-value="plan.path || ''"
+                :options="requestPathOptions"
+                placeholder="例如 request.body.userId"
+                @update:model-value="updateBranchTempVar(idx, { path: $event })"
+              />
             </label>
 
             <label v-if="plan.kind === 'const'" class="field">
@@ -298,8 +319,12 @@ function removeBranchTempVar(index: number) {
           :param-plans="selectedNode.data.paramPlans"
           :project-key="projectKey"
           :endpoint-id="endpointId"
+          :node-id="selectedNode.id"
+          :nodes="nodes"
+          :edges="edges"
           @update:label="mutateNode((n) => (n.data.label = $event))"
           @update:comp="mutateNode((n) => (n.data.comp = $event))"
+          @update:inputs="mutateNode((n) => (n.data.inputs = $event))"
           @update:output="mutateNode((n) => (n.data.output = $event))"
           @update:paramPlans="mutateNode((n) => (n.data.paramPlans = $event))"
         />

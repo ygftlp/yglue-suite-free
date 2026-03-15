@@ -17,6 +17,7 @@ import org.yglue.flow.runtime.core.executors.GroupNodeExecutor;
 import org.yglue.flow.runtime.core.executors.IfNodeExecutor;
 import org.yglue.flow.runtime.core.executors.LogNodeExecutor;
 import org.yglue.flow.runtime.core.executors.RestNodeExecutor;
+import org.yglue.flow.runtime.core.executors.RequestScopedServiceNodeExecutor;
 import org.yglue.flow.runtime.core.executors.ServiceNodeExecutor;
 import org.yglue.flow.runtime.core.executors.SetNodeExecutor;
 import org.yglue.flow.runtime.core.executors.TransformerNodeExecutor;
@@ -114,6 +115,8 @@ public class RuleEngine {
                 .register(new BeanRestInvocationStrategy())
                 .register(new HttpRestInvocationStrategy());
 
+        ServiceNodeExecutor serviceNodeExecutor = new ServiceNodeExecutor(applicationContext);
+
         NodeExecutorRegistry registry = new NodeExecutorRegistry()
                 .register("log", new LogNodeExecutor())
                 .register("delay", new DelayNodeExecutor())
@@ -121,7 +124,7 @@ public class RuleEngine {
                 .register("if", new IfNodeExecutor())
                 .register("branch", new BranchNodeExecutor())
                 .register("call", new CallNodeExecutor(applicationContext))
-                .register("service", new ServiceNodeExecutor(applicationContext))
+                .register("service", new RequestScopedServiceNodeExecutor(serviceNodeExecutor))
                 .register("group", new GroupNodeExecutor())
                 .register("rest", new RestNodeExecutor(restInvocationRegistry, applicationContext))
                 .register("transformer", new TransformerNodeExecutor());

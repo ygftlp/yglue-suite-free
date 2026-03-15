@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from "vue"
 import ServiceCallEditor from "./ServiceCallEditor.vue"
+import SourcePathInput from "./SourcePathInput.vue"
 
 type SourceKind = "ctx" | "const" | "serviceCall" | "tempVar"
 type ConditionOp = "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" | "in"
@@ -40,6 +41,7 @@ const props = defineProps<{
   modelValue?: any
   projectKey?: string
   tempVarKeys?: string[] | null
+  sourcePathOptions?: string[] | null
 }>()
 
 const emit = defineEmits<{
@@ -221,11 +223,12 @@ const operatorOptions = [
               </option>
             </select>
 
-            <input
+            <SourcePathInput
               v-if="rule.left.kind === 'ctx'"
-              class="input"
-              v-model="rule.left.path"
-              placeholder="request.body.userId / $.qty"
+              :model-value="rule.left.path"
+              :options="props.sourcePathOptions ?? []"
+              placeholder="request.body.userId / request.query.qty"
+              @update:model-value="rule.left.path = $event"
             />
             <input
               v-if="rule.left.kind === 'tempVar'"
@@ -247,6 +250,8 @@ const operatorOptions = [
               <ServiceCallEditor
                 v-model="rule.left.serviceCall"
                 :project-key="props.projectKey"
+                :temp-keys="props.tempVarKeys ?? []"
+                :source-path-options="props.sourcePathOptions"
               />
             </template>
           </div>
@@ -272,11 +277,12 @@ const operatorOptions = [
               </option>
             </select>
 
-            <input
+            <SourcePathInput
               v-if="rule.right.kind === 'ctx'"
-              class="input"
-              v-model="rule.right.path"
-              placeholder="request.body.status / $.price"
+              :model-value="rule.right.path"
+              :options="props.sourcePathOptions ?? []"
+              placeholder="request.body.status / request.query.price"
+              @update:model-value="rule.right.path = $event"
             />
             <input
               v-if="rule.right.kind === 'tempVar'"
@@ -298,6 +304,8 @@ const operatorOptions = [
               <ServiceCallEditor
                 v-model="rule.right.serviceCall"
                 :project-key="props.projectKey"
+                :temp-keys="props.tempVarKeys ?? []"
+                :source-path-options="props.sourcePathOptions"
               />
             </template>
           </div>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue"
 import { api, type EndpointComponentGroup } from "../api/client"
+import SourcePathInput from "./SourcePathInput.vue"
 
 type ArgSourceKind = "ctx" | "const" | "tempVar"
 type ArgSourceMode = "direct" | "objectBuilder"
@@ -85,6 +86,7 @@ interface CatalogMethodOption {
   displayName: string
   description: string
   returnType: string
+  returnSchema?: Record<string, any> | null
   params: CatalogParam[]
 }
 
@@ -92,10 +94,12 @@ const props = defineProps<{
   modelValue?: any
   projectKey?: string
   tempKeys?: string[]
+  sourcePathOptions?: string[]
 }>()
 
 const emit = defineEmits<{
   (e: "update:modelValue", value: any): void
+  (e: "select-method", value: any | null): void
 }>()
 
 function toText(value: unknown): string {
@@ -436,6 +440,7 @@ function buildCatalog(groups: EndpointComponentGroup[]): CatalogMethodOption[] {
           displayName: toText(op?.name) || methodName,
           description: toText(op?.description),
           returnType: toText(op?.returnType) || "java.lang.Object",
+          returnSchema: buildSchemaFromParamRaw(op?.returnSchema || op?.responseSchema, toText(op?.returnType) || "java.lang.Object"),
           params,
         })
       }
@@ -550,6 +555,11 @@ const objectTemplateError = ref("")
 
 const tempKeys = computed(() =>
   (Array.isArray(props.tempKeys) ? props.tempKeys : []).map((item) => String(item || "").trim()).filter((item) => Boolean(item))
+)
+const sourcePathOptions = computed(() =>
+  (Array.isArray(props.sourcePathOptions) ? props.sourcePathOptions : [])
+    .map((item) => String(item || "").trim())
+    .filter((item) => Boolean(item))
 )
 
 const filteredOptions = computed(() => {
@@ -878,6 +888,7 @@ function closePicker() {
 function applySelectedMethod() {
   const option = selectedOption.value
   if (!option) return
+  emit("select-method", clone(option))
   const existing = new Map(local.value.argBindings.map((item) => [item.paramName, item]))
   local.value.argBindings = option.params.map((param) => {
     const prev = existing.get(param.name)
@@ -901,6 +912,7 @@ function applySelectedMethod() {
 
 watch(() => props.modelValue, (next) => { local.value = normalizeModel(next) }, { deep: true, immediate: true })
 watch(local, (next) => emit("update:modelValue", buildEmitPayload(next)), { deep: true })
+watch(currentMethodOption, (next) => emit("select-method", next ? clone(next) : null), { immediate: true })
 watch(() => props.projectKey, () => { loadCatalog() }, { immediate: true })
 
 onMounted(() => { loadCatalog() })
@@ -1000,7 +1012,14 @@ onMounted(() => { loadCatalog() })
               <option value="const">来源：常量</option>
               <option value="tempVar">来源：临时变量</option>
             </select>
-            <input v-if="editingBinding.source.kind === 'ctx'" class="input" v-model="editingBinding.source.path" placeholder="request.body.userId / ctx.__tmp.<nodeId>.userId" />
+            <template v-if="editingBinding.source.kind === 'ctx'">
+              <SourcePathInput
+                :model-value="editingBinding.source.path"
+                :options="sourcePathOptions"
+                placeholder="request.body.userId / request.query.pageNo"
+                @update:model-value="editingBinding.source.path = $event"
+              />
+            </template>
             <textarea v-if="editingBinding.source.kind === 'const'" class="input textarea mini-textarea" v-model="editingBinding.source.constValue" placeholder='常量值，例如 "abc" / 100 / {"id":"u1"} / [{"id":"1"}]'></textarea>
             <template v-if="editingBinding.source.kind === 'tempVar'">
               <input class="input" v-model="editingBinding.source.tempKey" :list="tempDataListId" placeholder="变量 Key，例如 userId" />
@@ -1036,7 +1055,14 @@ onMounted(() => { loadCatalog() })
                   <option value="const">来源：常量</option>
                   <option value="tempVar">来源：临时变量</option>
                 </select>
-                <input v-if="field.source.kind === 'ctx'" class="input" v-model="field.source.path" placeholder="request.body.xxx / ctx.__tmp.<nodeId>.xxx" />
+                <template v-if="field.source.kind === 'ctx'">
+                  <SourcePathInput
+                    :model-value="field.source.path"
+                    :options="sourcePathOptions"
+                    placeholder="request.body.xxx / request.query.xxx"
+                    @update:model-value="field.source.path = $event"
+                  />
+                </template>
                 <textarea v-if="field.source.kind === 'const'" class="input textarea mini-textarea" v-model="field.source.constValue" placeholder='常量值，例如 "abc" / 123 / {"k":"v"} / [1,2]'></textarea>
                 <input v-if="field.source.kind === 'tempVar'" class="input" v-model="field.source.tempKey" :list="tempDataListId" placeholder="变量 Key，例如 userId" />
               </div>

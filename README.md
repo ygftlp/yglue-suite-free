@@ -1,254 +1,96 @@
 # YGFlow Suite
 
-## 项目简介
+YGFlow Suite（易构流程套件）是一套面向企业应用的流程编排方案，覆盖以下链路：
 
-YGFlow Suite（易构流程套件）是一个面向企业级业务流程的低代码编排平台，覆盖"开发者 IDE → 可视化设计台 → 运行时引擎"的全链路，实现入参治理、数据转换和流程调度的统一管理。产品专注于降低研发联调成本、提升上线效率，并提供可扩展的生态能力。
+- 编排器 `yglue-orchestrator`
+- 可视化设计台 `ygflow-orchestrator-ui`
+- IDEA 插件 `yglue-idea-plugin`
+- 运行时引擎 `yglue-runtime`
+- Spring Boot 集成层 `yglue-runtime-spring-boot2` / `yglue-runtime-spring-boot3`
 
-## 核心特性
+它的目标是把接口入参治理、流程编排、数据转换和运行时接管串成一条完整链路。
 
-- **可视化流程设计**：基于拖拽画布的流程编排，支持多种节点类型和复杂流程控制
-- **参数解析与验证**：支持多种参数来源和验证规则，确保数据合法性
-- **数据转换引擎**：支持 DSL 驱动的数据转换和 Groovy 脚本执行
-- **版本管理**：完整的流程版本控制和发布管理
-- **IDE 集成**：IntelliJ IDEA 插件支持，实现元数据自动扫描和规则同步
-- **运行时引擎**：基于 LiteFlow 的高性能流程执行引擎
+## 官方发布链路
 
-## 项目结构
+当前项目的正式链路是：
 
-YGFlow Suite 采用多模块架构，各模块职责清晰：
+1. 在编排器中设计并发布 flow、entrypoint。
+2. 通过 IDEA 插件把规则和入口点同步到本地项目的 `.ygflow` 目录。
+3. 业务服务通过 `yglue-runtime` / `yglue-runtime-spring-boot3` 读取本地 `.ygflow` 并执行。
 
-### 核心模块
+这里有一个明确边界：
 
-- **[yglue-annotations](docs/MODULE_yglue-annotations.md)** - 注解定义模块
-  - 提供用于标记和描述业务流程相关组件的 Java 注解
-  - 定义元数据标注规范
+- `yglue-runtime` 只负责加载本地规则并执行，不承担远程同步职责。
+- 同步职责属于 IDEA 插件；插件同步是正式发布门禁的一部分。
 
-- **[yglue-runtime](docs/MODULE_yglue-runtime.md)** - 运行时核心引擎
-  - 流程执行引擎（基于 LiteFlow）
-  - 节点执行器（服务节点、分支节点、转换节点等）
-  - 参数解析引擎
-  - 数据转换引擎
-  - 表达式引擎（SpEL）
-  - 验证器引擎
+## 项目文档
 
-- **[yglue-runtime-spring-boot2](docs/MODULE_yglue-runtime-spring-boot2.md)** - Spring Boot 2.x 集成
-  - Spring Boot 2.x 自动配置
-  - REST 接口 AOP 拦截
-  - 流程规则匹配和执行
-
-- **[yglue-runtime-spring-boot3](docs/MODULE_yglue-runtime-spring-boot3.md)** - Spring Boot 3.x 集成
-  - Spring Boot 3.x 自动配置
-  - REST 接口 AOP 拦截
-  - Jakarta EE 9+ 适配
-
-### 服务模块
-
-- **[yglue-orchestrator](docs/MODULE_yglue-orchestrator.md)** - 编排器服务
-  - 流程定义管理
-  - 入口点管理
-  - 元数据管理
-  - 规则同步服务
-  - REST API 服务
-
-### 工具模块
-
-- **[yglue-idea-plugin](docs/MODULE_yglue-idea-plugin.md)** - IntelliJ IDEA 插件
-  - 元数据扫描和上传
-  - 规则文件同步
-  - 自动同步机制
-
-- **[ygflow-orchestrator-ui](docs/MODULE_ygflow-orchestrator-ui.md)** - 可视化设计台
-  - 流程设计画布
-  - 节点配置面板
-  - 版本管理界面
-  - 规则预览功能
+- [项目总览](docs/PROJECT_OVERVIEW.md)
 
 ## 快速开始
 
 ### 环境要求
 
-- **Java**: 17+
-- **Maven**: 3.8+
-- **Node.js**: 18+ (仅前端需要)
-- **MySQL**: 8.0+ (仅编排器服务需要)
-- **IntelliJ IDEA**: 2024.2+ (仅插件开发需要)
+- Java 17+
+- Maven 3.8+
+- Node.js 18+
+- MySQL 8.0+
+- IntelliJ IDEA 2024.2+
 
-### 构建项目
+### 构建后端
 
 ```bash
-# 克隆项目
-git clone <repository-url>
-cd ygflow-suite
+mvn test
+```
 
-# 构建所有模块
-mvn clean install
+### 构建前端
 
-# 构建前端
+```bash
 cd apps/ygflow-orchestrator-ui
 npm install
 npm run build
 ```
 
-### 运行编排器服务
+### 启动编排器
 
 ```bash
 cd yglue-orchestrator
 mvn spring-boot:run
 ```
 
-### 运行前端
-
-```bash
-cd apps/ygflow-orchestrator-ui
-npm run dev
-```
-
-### 安装 IDEA 插件
+### 构建 IDEA 插件
 
 ```bash
 cd yglue-idea-plugin
 ./gradlew buildPlugin
 ```
 
-然后在 IntelliJ IDEA 中通过 `File → Settings → Plugins → Install Plugin from Disk...` 安装生成的插件包。
+然后在 IntelliJ IDEA 中通过 `File -> Settings -> Plugins -> Install Plugin from Disk...` 安装插件包。
 
-## 文档目录
+## 发布与验收
 
-### 模块文档
+如果采用项目当前的正式模式上线，建议把下面两个文档作为发布门禁：
 
-- [yglue-annotations 模块文档](docs/MODULE_yglue-annotations.md)
-- [yglue-runtime 模块文档](docs/MODULE_yglue-runtime.md)
-- [yglue-runtime-spring-boot2 模块文档](docs/MODULE_yglue-runtime-spring-boot2.md)
-- [yglue-runtime-spring-boot3 模块文档](docs/MODULE_yglue-runtime-spring-boot3.md)
-- [yglue-orchestrator 模块文档](docs/MODULE_yglue-orchestrator.md)
-- [yglue-idea-plugin 模块文档](docs/MODULE_yglue-idea-plugin.md)
-- [ygflow-orchestrator-ui 模块文档](docs/MODULE_ygflow-orchestrator-ui.md)
+- [插件同步发布检查单](runtime-ops-notes/plugin-sync-release-checklist.md)
+- [上线准备度评估](runtime-ops-notes/release-readiness-2026-03-12.md)
 
-### 设计文档
+可选的辅助脚本：
 
-- [产品介绍](docs/DESIGN_product-introduction.md)
-- [数据流设计](docs/DESIGN_data-flow.md)
-- [运行时执行流程](docs/DESIGN_runtime-execution-flow.md)
-- [IDEA 元数据结构](docs/DESIGN_idea-metadata-structure.md)
-- [节点验证设计](docs/DESIGN_node-validation.md)
-- [验证数据结构](docs/DESIGN_validation-data-structure.md)
-- [验证器包设计](docs/DESIGN_validator-package.md)
-- [错误响应格式](docs/DESIGN_error-response-format.md)
-- [Transformer DSL](docs/DESIGN_transformer-dsl.md)
+- `verify-yglue-sync.ps1`：校验本地 `.ygflow` 与编排器已发布内容是否一致。
 
-### 其他文档
+## 当前验证结论
 
-- [代码规范](docs/CODE_STYLE.md)
-- [用户手册](docs/USER_MANUAL.md)
+截至 2026-03-12，当前仓库已完成的关键验证包括：
 
-## 技术栈
+- 根项目 `mvn test` 通过
+- 前端 `npm run build` 通过
+- 分支执行与入参解析专项测试通过
+- Spring Boot 真实 REST 接管测试通过
 
-### 后端技术
+在“编排器发布 + IDEA 插件同步 + 本地 `.ygflow` 执行”这一既定模式下，项目已经具备上线基础；但仍建议先走灰度或预发演练。
 
-- **Spring Boot**: 3.3.4
-- **MyBatis**: 3.0.3
-- **LiteFlow**: 2.12.1
-- **Groovy**: 3.0.20
-- **MySQL**: 8.0+
+## 文档入口
 
-### 前端技术
-
-- **Vue**: 3.5.x
-- **TypeScript**: 5.6.x
-- **Vue Flow**: 1.47.0
-- **Monaco Editor**: 0.50.0
-- **Vite**: 5.4.x
-
-### 开发工具
-
-- **IntelliJ Platform SDK**: 2024.2+
-- **Gradle**: 8.x
-- **Maven**: 3.8+
-
-## 架构设计
-
-YGFlow Suite 采用分层架构设计：
-
-```
-┌─────────────────────────────────────────────────────────┐
-│              可视化设计台 (ygflow-orchestrator-ui)        │
-│              Vue 3 + TypeScript + Vue Flow              │
-└─────────────────────────────────────────────────────────┘
-                          ↕ HTTP REST API
-┌─────────────────────────────────────────────────────────┐
-│              编排器服务 (yglue-orchestrator)             │
-│              Spring Boot + MyBatis + MySQL             │
-└─────────────────────────────────────────────────────────┘
-                          ↕ 规则同步
-┌─────────────────────────────────────────────────────────┐
-│              IDEA 插件 (yglue-idea-plugin)              │
-│              IntelliJ Platform SDK                     │
-└─────────────────────────────────────────────────────────┘
-                          ↕ 流程执行
-┌─────────────────────────────────────────────────────────┐
-│              运行时引擎 (yglue-runtime)                  │
-│              LiteFlow + Spring + Groovy                │
-└─────────────────────────────────────────────────────────┘
-```
-
-## 核心概念
-
-### 流程（Flow）
-
-流程是由多个节点组成的业务编排逻辑，支持顺序执行、条件分支、并行执行等复杂场景。
-
-### 节点（Node）
-
-流程中的基本执行单元，包括：
-- **入口节点**：流程的起始点
-- **服务节点**：调用业务服务方法
-- **转换节点**：执行数据转换
-- **分支节点**：根据条件选择执行路径
-- **事务节点**：事务控制
-- **出口节点**：流程的结束点
-
-### 参数解析器（Param Resolver）
-
-用于从不同来源解析参数值，支持：
-- HTTP 请求参数（路径变量、查询参数、请求体）
-- 流程上下文变量
-- SpEL 表达式计算结果
-- 常量值
-
-### 数据转换器（Transformer）
-
-用于执行数据转换，支持：
-- 字段映射
-- 集合处理
-- 条件转换
-- Groovy 脚本执行
-
-### 验证器（Validator）
-
-用于验证参数合法性，支持：
-- 必填验证
-- 类型验证
-- 长度验证
-- 范围验证
-- 正则表达式验证
-- 表达式验证
-
-## 贡献指南
-
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启 Pull Request
-
-## 许可证
-
-本项目采用内部许可证，仅供公司内部使用。
-
-## 联系方式
-
-如有问题或建议，请联系项目维护团队。
-
----
-
-**注意**：本文档会持续更新，请关注最新版本。
+- [项目总览](docs/PROJECT_OVERVIEW.md)
+- [插件同步发布检查单](runtime-ops-notes/plugin-sync-release-checklist.md)
+- [上线准备度评估](runtime-ops-notes/release-readiness-2026-03-12.md)

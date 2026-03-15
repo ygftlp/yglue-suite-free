@@ -13,4 +13,7 @@ public class MathController {
 
     @GetMapping("/api/math/add")
     public int add(@RequestParam int a, @RequestParam int b) { return math.add(a,b); }
+
+    @GetMapping("/api/math/flow-add")
+    public int flowAdd(@RequestParam int a, @RequestParam int b) { return math.add(a, b); }
 }

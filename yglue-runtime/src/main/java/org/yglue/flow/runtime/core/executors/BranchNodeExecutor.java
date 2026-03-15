@@ -9,10 +9,13 @@ import org.yglue.flow.runtime.core.definition.NodeDefinition;
 import org.yglue.flow.runtime.core.engine.FlowContext;
 import org.yglue.flow.runtime.core.engine.evaluator.BranchConditionEvaluator;
 import org.yglue.flow.runtime.core.engine.interceptors.JsonPathUtil;
+import org.yglue.flow.runtime.core.expression.ExpressionEngines;
+import org.yglue.flow.runtime.core.expression.ExpressionEvaluationContext;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -72,7 +75,7 @@ public class BranchNodeExecutor implements FlowExecutor {
 
             log.info("[BranchNodeExecutor] branch selected, nodeId={}, targetNodeId={}, priority={}",
                     nodeId, targetNodeId, edgePriority(edge));
-            return targetNodeId;
+            return new BranchSelection(targetNodeId);
         }
 
         log.warn("[BranchNodeExecutor] no branch matched, nodeId={}", nodeId);
@@ -152,7 +155,7 @@ public class BranchNodeExecutor implements FlowExecutor {
             if ("const".equals(kind)) {
                 value = plan.get("constValue");
             } else if ("expression".equals(kind)) {
-                value = plan.get("constValue");
+                value = evaluateExpression(plan, context, resolved);
             } else {
                 value = JsonPathUtil.extract(context.getVariables(), asString(plan.get("path")));
             }
@@ -160,6 +163,28 @@ public class BranchNodeExecutor implements FlowExecutor {
         }
 
         return resolved;
+    }
+
+    private Object evaluateExpression(Map<String, Object> plan,
+            FlowContext context,
+            Map<String, Object> resolvedTempVars) {
+        String expression = asString(plan.get("expression"));
+        if (expression == null || expression.isBlank()) {
+            expression = asString(plan.get("constValue"));
+        }
+        if (expression == null || expression.isBlank()) {
+            return null;
+        }
+
+        Map<String, Object> tempVarSnapshot = new LinkedHashMap<>(resolvedTempVars);
+        ExpressionEvaluationContext evaluationContext = ExpressionEvaluationContext.builder()
+                .variables(context.getVariables())
+                .variable("ctx", context.getVariables())
+                .variable("tempVars", tempVarSnapshot)
+                .variable("__tmp", tempVarSnapshot)
+                .attribute("flowContext", context)
+                .build();
+        return ExpressionEngines.getDefault().evaluate(expression, evaluationContext);
     }
 
     private String asString(Object value) {

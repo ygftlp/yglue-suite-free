@@ -2,14 +2,13 @@ package org.yglue.flow.runtime.core.engine.interceptors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.expression.ExpressionParser;
-import org.springframework.expression.spel.standard.SpelExpressionParser;
-import org.springframework.expression.spel.support.StandardEvaluationContext;
 import org.yglue.flow.runtime.core.definition.NodeDefinition;
 import org.yglue.flow.runtime.core.engine.FlowContext;
 import org.yglue.flow.runtime.core.engine.NodeInterceptor;
 import org.yglue.flow.runtime.core.engine.NodeInterceptorChain;
 import org.yglue.flow.runtime.core.engine.evaluator.ListPipelineEvaluator;
+import org.yglue.flow.runtime.core.expression.ExpressionEngines;
+import org.yglue.flow.runtime.core.expression.ExpressionEvaluationContext;
 import org.yglue.flow.runtime.rest.HttpRestInvocationStrategy;
 import org.yglue.flow.runtime.rest.RestInvocationContext;
 
@@ -21,8 +20,6 @@ import java.util.Map;
 public class ParamResolveInterceptor implements NodeInterceptor {
 
     private static final Logger log = LoggerFactory.getLogger(ParamResolveInterceptor.class);
-
-    private final ExpressionParser spelParser = new SpelExpressionParser();
 
     @Override
     @SuppressWarnings("unchecked")
@@ -74,7 +71,7 @@ public class ParamResolveInterceptor implements NodeInterceptor {
                 resolvedArgs.addAll(argsMap.values());
             }
 
-            config.put("_resolvedArgs", resolvedArgs);
+            context.setResolvedArgs(node.getId(), resolvedArgs);
         }
 
         return chain.proceed();
@@ -122,12 +119,17 @@ public class ParamResolveInterceptor implements NodeInterceptor {
             if (expr == null || expr.isBlank()) {
                 return null;
             }
-            StandardEvaluationContext spelCtx = new StandardEvaluationContext();
-            spelCtx.setVariables(context.getVariables());
             try {
-                return spelParser.parseExpression(expr).getValue(spelCtx);
+                ExpressionEvaluationContext evaluationContext = ExpressionEvaluationContext.builder()
+                        .variables(context.getVariables())
+                        .variable("ctx", context.getVariables())
+                        .variable("tempVars", tempVars)
+                        .variable("__tmp", tempVars)
+                        .attribute("flowContext", context)
+                        .build();
+                return ExpressionEngines.getDefault().evaluate(expr, evaluationContext);
             } catch (Exception e) {
-                log.warn("[ParamResolveInterceptor] SpEL evaluation failed: {}", expr, e);
+                log.warn("[ParamResolveInterceptor] expression evaluation failed: {}", expr, e);
                 return null;
             }
         }

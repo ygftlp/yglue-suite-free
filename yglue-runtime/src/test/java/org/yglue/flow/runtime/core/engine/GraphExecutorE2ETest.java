@@ -9,9 +9,18 @@ import org.yglue.flow.runtime.core.definition.NodeDefinition;
 import org.yglue.flow.runtime.core.engine.interceptors.ParamResolveInterceptor;
 import org.yglue.flow.runtime.core.executors.BranchNodeExecutor;
 import org.yglue.flow.runtime.core.executors.LogNodeExecutor;
+import org.yglue.flow.runtime.core.executors.RequestScopedServiceNodeExecutor;
 import org.yglue.flow.runtime.core.executors.ServiceNodeExecutor;
 import org.yglue.flow.runtime.core.executors.SetNodeExecutor;
+import org.yglue.flow.runtime.core.FlowExecutor;
+import org.yglue.flow.runtime.core.NodeExecutionContext;
 
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -20,6 +29,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 class GraphExecutorE2ETest {
 
@@ -53,17 +63,7 @@ class GraphExecutorE2ETest {
         assertNotNull(result);
         assertTrue(result.getContextSnapshot().containsKey("request"));
 
-        Object resolvedArgsObj = node.getConfig().get("_resolvedArgs");
-        assertNotNull(resolvedArgsObj);
-
-        @SuppressWarnings("unchecked")
-        List<Object> resolvedArgs = (List<Object>) resolvedArgsObj;
-        assertEquals(1, resolvedArgs.size());
-
-        @SuppressWarnings("unchecked")
-        Map<String, Object> arg0 = (Map<String, Object>) resolvedArgs.get(0);
-        assertEquals("tester_ast", arg0.get("name"));
-        assertEquals(18, arg0.get("age"));
+        assertNull(node.getConfig().get("_resolvedArgs"));
     }
 
     @Test
@@ -74,7 +74,7 @@ class GraphExecutorE2ETest {
 
         try {
             NodeExecutorRegistry registry = new NodeExecutorRegistry()
-                    .register("service", new ServiceNodeExecutor(springContext));
+                    .register("service", new RequestScopedServiceNodeExecutor(new ServiceNodeExecutor(springContext)));
             GraphExecutor executor = new GraphExecutor(registry, List.of(new ParamResolveInterceptor()));
 
             Map<String, Object> paramPlans = new LinkedHashMap<>();
@@ -149,6 +149,164 @@ class GraphExecutorE2ETest {
 
         assertEquals("approved", result.getContextSnapshot().get("route"));
         assertEquals("approved", result.getReturnValue());
+    }
+
+    @Test
+    void testDagJoinNodeExecutesOnlyOnce() {
+        AtomicInteger joinExecutionCount = new AtomicInteger();
+
+        FlowExecutor countingExecutor = new FlowExecutor() {
+            @Override
+            public Object execute(NodeExecutionContext context) {
+                String nodeId = context.getNode().getId();
+                if ("join_node".equals(nodeId)) {
+                    int count = joinExecutionCount.incrementAndGet();
+                    context.getContext().set("joinCount", count);
+                    return count;
+                }
+                context.getContext().set(nodeId, "done");
+                return nodeId;
+            }
+        };
+
+        NodeExecutorRegistry registry = new NodeExecutorRegistry()
+                .register("marker", countingExecutor);
+        GraphExecutor executor = new GraphExecutor(registry, List.of());
+
+        NodeDefinition entry = new NodeDefinition("entry_node", "entry", Map.of(), List.of());
+        NodeDefinition left = new NodeDefinition("left_node", "marker", Map.of(), List.of());
+        NodeDefinition right = new NodeDefinition("right_node", "marker", Map.of(), List.of());
+        NodeDefinition join = new NodeDefinition("join_node", "marker", Map.of(), List.of());
+
+        List<Map<String, Object>> edges = List.of(
+                Map.of("source", "entry_node", "target", "left_node"),
+                Map.of("source", "entry_node", "target", "right_node"),
+                Map.of("source", "left_node", "target", "join_node"),
+                Map.of("source", "right_node", "target", "join_node"));
+
+        FlowDefinition flow = new FlowDefinition("join_rule", Map.of(), List.of(entry, left, right, join), edges);
+
+        FlowExecutionResult result = executor.execute(flow, Map.of());
+
+        assertEquals(1, joinExecutionCount.get());
+        assertEquals(1, result.getContextSnapshot().get("joinCount"));
+    }
+
+    @Test
+    void testBranchTempVarExpressionIsEvaluated() {
+        NodeExecutorRegistry registry = new NodeExecutorRegistry()
+                .register("branch", new BranchNodeExecutor())
+                .register("set", new SetNodeExecutor());
+        GraphExecutor executor = new GraphExecutor(registry, List.of());
+
+        NodeDefinition branch = new NodeDefinition("branch_1", "branch", Map.of(
+                "tempVars", List.of(
+                        Map.of("key", "threshold", "kind", "expression", "expression", "#ctx.request.score + 5"))),
+                List.of());
+        NodeDefinition matched = new NodeDefinition("matched_node", "set",
+                Map.of("target", "route", "value", "matched"), List.of());
+
+        Map<String, Object> condition = Map.of(
+                "op", "and",
+                "rules", List.of(Map.of(
+                        "op", "eq",
+                        "left", Map.of("kind", "tempVar", "tempKey", "threshold"),
+                        "right", Map.of("kind", "const", "constValue", 15))));
+
+        FlowDefinition flow = new FlowDefinition("branch_temp_expr_rule", Map.of(),
+                List.of(branch, matched),
+                List.of(Map.of("source", "branch_1", "target", "matched_node", "data",
+                        Map.of("priority", 1, "condition", condition))));
+
+        FlowExecutionResult result = executor.execute(flow, Map.of("request", Map.of("score", 10)));
+
+        assertEquals("matched", result.getContextSnapshot().get("route"));
+    }
+
+    @Test
+    void testConcurrentExecutionsDoNotLeakResolvedArgsAcrossRequests() throws Exception {
+        GenericApplicationContext springContext = new GenericApplicationContext();
+        springContext.registerBean("testParamService", TestParamService.class, TestParamService::new);
+        springContext.refresh();
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            NodeExecutorRegistry registry = new NodeExecutorRegistry()
+                    .register("service", new RequestScopedServiceNodeExecutor(new ServiceNodeExecutor(springContext)));
+            GraphExecutor executor = new GraphExecutor(registry, List.of(new ParamResolveInterceptor()));
+
+            Map<String, Object> paramPlans = new LinkedHashMap<>();
+            paramPlans.put("argPlans", List.of(
+                    Map.of("target", "name", "source", Map.of("kind", "ctx", "path", "request.username")),
+                    Map.of("target", "age", "source", Map.of("kind", "expr", "value", "#ctx.request.age"))));
+
+            Map<String, Object> config = new LinkedHashMap<>();
+            config.put("paramPlans", paramPlans);
+            config.put("inputs", List.of(
+                    Map.of("name", "name"),
+                    Map.of("name", "age")));
+            config.put("comp", Map.of(
+                    "bean", "testParamService",
+                    "configJson", "{\"method\":\"join\"}"));
+
+            NodeDefinition node = new NodeDefinition("service_node", "service", config, List.of());
+            FlowDefinition flow = new FlowDefinition("service_rule", Map.of(), List.of(node));
+
+            Future<FlowExecutionResult> first = pool.submit(executeFlow(executor, flow, "alice", 21));
+            Future<FlowExecutionResult> second = pool.submit(executeFlow(executor, flow, "bob", 34));
+
+            assertEquals("alice-21", first.get().getReturnValue());
+            assertEquals("bob-34", second.get().getReturnValue());
+            assertNull(node.getConfig().get("_resolvedArgs"));
+        } finally {
+            pool.shutdownNow();
+            pool.awaitTermination(5, TimeUnit.SECONDS);
+            springContext.close();
+        }
+    }
+
+    @Test
+    void testResolvedArgsAllowNullValues() {
+        GenericApplicationContext springContext = new GenericApplicationContext();
+        springContext.registerBean("testParamService", TestParamService.class, TestParamService::new);
+        springContext.refresh();
+
+        try {
+            NodeExecutorRegistry registry = new NodeExecutorRegistry()
+                    .register("service", new RequestScopedServiceNodeExecutor(new ServiceNodeExecutor(springContext)));
+            GraphExecutor executor = new GraphExecutor(registry, List.of(new ParamResolveInterceptor()));
+
+            Map<String, Object> paramPlans = new LinkedHashMap<>();
+            paramPlans.put("argPlans", List.of(
+                    Map.of("target", "name", "source", Map.of("kind", "ctx", "path", "request.username")),
+                    Map.of("target", "age", "source", Map.of("kind", "ctx", "path", "request.optionalAge"))));
+
+            Map<String, Object> config = new LinkedHashMap<>();
+            config.put("paramPlans", paramPlans);
+            config.put("inputs", List.of(
+                    Map.of("name", "name"),
+                    Map.of("name", "age")));
+            config.put("comp", Map.of(
+                    "bean", "testParamService",
+                    "configJson", "{\"method\":\"join\"}"));
+
+            NodeDefinition node = new NodeDefinition("service_node", "service", config, List.of());
+            FlowDefinition flow = new FlowDefinition("service_rule", Map.of(), List.of(node));
+
+            FlowExecutionResult result = executor.execute(flow, Map.of("request", Map.of("username", "alice")));
+
+            assertEquals("alice-null", result.getReturnValue());
+            assertNull(node.getConfig().get("_resolvedArgs"));
+        } finally {
+            springContext.close();
+        }
+    }
+
+    private Callable<FlowExecutionResult> executeFlow(GraphExecutor executor,
+            FlowDefinition flow,
+            String username,
+            int age) {
+        return () -> executor.execute(flow, Map.of("request", Map.of("username", username, "age", age)));
     }
 
     public static class TestParamService {

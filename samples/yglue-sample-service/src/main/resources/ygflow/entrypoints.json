@@ -1,0 +1,12 @@
+{
+  "rests": [
+    {
+      "id": 1,
+      "path": "/api/math/flow-add",
+      "method": "GET",
+      "flowCode": "sample_math_flow",
+      "enabled": true,
+      "inboundInterceptors": []
+    }
+  ]
+}

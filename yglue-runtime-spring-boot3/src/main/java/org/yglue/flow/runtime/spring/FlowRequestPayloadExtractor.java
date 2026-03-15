@@ -81,7 +81,7 @@ class FlowRequestPayloadExtractor {
         }
         if (isJsonContent(request.getContentType())) {
             try {
-                return objectMapper.readValue(body, new TypeReference<Map<String, Object>>() {});
+                return objectMapper.readValue(body, new TypeReference<Object>() {});
             } catch (Exception ignored) {
             }
         }

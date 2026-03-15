@@ -399,6 +399,11 @@ public class ExportMetadataAction extends AnAction {
                 opObj.put("params", params);
                 PsiType returnType = m.getReturnType();
                 opObj.put("returnType", returnType != null ? renderType(returnType) : "void");
+                try {
+                    opObj.put("returnSchema", buildServiceReturnSchema(m));
+                } catch (Exception ignored) {
+                    // 返回值 Schema 生成失败时不影响主流程，returnSchema 字段留空即可
+                }
                 ops.put(opObj);
             }
             serviceObj.put("operations", ops);
@@ -966,6 +971,20 @@ public class ExportMetadataAction extends AnAction {
         PsiType returnType = method.getReturnType();
         schema.put("type", returnType == null ? "void" : renderType(returnType));
         return schema;
+    }
+
+    /**
+     * 构建服务方法返回值 Schema
+     *
+     * @param method 方法对象
+     * @return 返回值 Schema JSON 对象
+     */
+    private static JSONObject buildServiceReturnSchema(PsiMethod method) {
+        PsiType returnType = method.getReturnType();
+        if (returnType == null) {
+            return new JSONObject().put("type", "void");
+        }
+        return SchemaGenerator.generateParamSchema(returnType, method.getProject());
     }
 
     /**

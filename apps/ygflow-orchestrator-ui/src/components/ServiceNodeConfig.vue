@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed } from "vue"
+import { computed, ref, watch } from "vue"
+import { api } from "../api/client"
 import ParamPlanBuilder from "./ParamPlanBuilder.vue"
+import ServiceCallEditor from "./ServiceCallEditor.vue"
 
 const props = defineProps<{
   label?: string
@@ -10,24 +12,263 @@ const props = defineProps<{
   paramPlans?: any
   projectKey?: string
   endpointId?: number
+  nodeId?: string
+  nodes?: any[] | null
+  edges?: any[] | null
 }>()
 
 const emit = defineEmits<{
   (event: "update:label", value: string): void
   (event: "update:comp", value: any): void
+  (event: "update:inputs", value: any[]): void
   (event: "update:output", value: any): void
   (event: "update:paramPlans", value: any): void
 }>()
+
+type ServiceCallModel = {
+  fn?: string
+  serviceRef?: {
+    endpointId?: number | string
+    serviceKey?: string
+    serviceBean?: string
+    serviceName?: string
+    serviceClass?: string
+    methodName?: string
+    methodSignature?: string
+    methodSignatureHash?: string
+    returnType?: string
+  } | null
+  argBindings?: Array<{
+    id?: string
+    paramName?: string
+    paramType?: string
+    source?: {
+      kind?: "ctx" | "const" | "tempVar"
+      path?: string
+      constValue?: string
+      tempKey?: string
+      mode?: "direct" | "objectBuilder"
+      objectFields?: Array<{
+        id?: string
+        fieldPath?: string
+        source?: {
+          kind?: "ctx" | "const" | "tempVar"
+          path?: string
+          constValue?: string
+          tempKey?: string
+        }
+      }>
+    }
+  }>
+}
+
+type MethodMeta = {
+  endpointId?: number | string
+  serviceName?: string
+  serviceBean?: string
+  serviceClass?: string
+  methodName?: string
+  methodSignature?: string
+  methodSignatureHash?: string
+  description?: string
+  returnType?: string
+  returnSchema?: Record<string, any> | null
+  params?: Array<{
+    name?: string
+    type?: string
+    required?: boolean
+    description?: string
+    schema?: Record<string, any> | null
+    listItemType?: string
+  }>
+} | null
+
+const selectedMethodMeta = ref<MethodMeta>(null)
+const requestPathOptions = ref<string[]>([])
+
+function toText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : ""
+}
+
+function safeParseJson(raw: unknown): Record<string, any> | null {
+  if (typeof raw !== "string" || !raw.trim()) return null
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value))
+}
+
+function inferValueType(typeName: string): string {
+  const raw = toText(typeName).toLowerCase()
+  if (!raw) return "STRING"
+  if (raw.includes("boolean")) return "BOOLEAN"
+  if (
+    raw === "int"
+    || raw === "integer"
+    || raw === "long"
+    || raw === "double"
+    || raw === "float"
+    || raw === "short"
+    || raw === "byte"
+    || raw.includes("java.lang.integer")
+    || raw.includes("java.lang.long")
+    || raw.includes("java.lang.double")
+    || raw.includes("java.lang.float")
+    || raw.includes("java.lang.short")
+    || raw.includes("java.lang.byte")
+    || raw.includes("java.math.bigdecimal")
+    || raw.includes("java.math.biginteger")
+    || raw.includes("number")
+  ) {
+    return "NUMBER"
+  }
+  if (raw.endsWith("[]") || raw.startsWith("java.util.list") || raw.startsWith("list<") || raw === "array") {
+    return "ARRAY"
+  }
+  if (raw === "void") return "VOID"
+  if (raw.includes(".")) return "OBJECT"
+  return "STRING"
+}
+
+function uniquePaths(items: string[]): string[] {
+  return Array.from(new Set(items.filter((item) => Boolean(toText(item))))).sort((a, b) => a.localeCompare(b))
+}
+
+function flattenRequestSchemaNode(schema: any, basePath: string, output: string[]) {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+    if (basePath) output.push(basePath)
+    return
+  }
+  const properties = schema.properties
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) {
+    if (basePath) output.push(basePath)
+    return
+  }
+
+  const entries = Object.entries(properties)
+  if (entries.length === 0) {
+    if (basePath) output.push(basePath)
+    return
+  }
+
+  for (const [key, raw] of entries) {
+    const child = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, any> : {}
+    const childPath = basePath ? `${basePath}.${key}` : key
+    const childType = toText(child.type).toLowerCase()
+    if (childType === "object" && child.properties && typeof child.properties === "object" && !Array.isArray(child.properties)) {
+      flattenRequestSchemaNode(child, childPath, output)
+      continue
+    }
+    if (childType === "array") {
+      output.push(`${childPath}[]`)
+      const items = child.items
+      if (items && typeof items === "object" && !Array.isArray(items)) {
+        const itemType = toText((items as Record<string, any>).type).toLowerCase()
+        if (itemType === "object" && (items as Record<string, any>).properties) {
+          flattenRequestSchemaNode(items, `${childPath}[]`, output)
+          continue
+        }
+      }
+      continue
+    }
+    output.push(childPath)
+  }
+}
+
+function buildPathsFromRequestSchemaJson(raw: string): string[] {
+  if (!raw || !raw.trim()) return []
+  try {
+    const schema = JSON.parse(raw)
+    const properties = schema?.properties
+    if (!properties || typeof properties !== "object" || Array.isArray(properties)) return []
+    const output: string[] = []
+    for (const [name, value] of Object.entries(properties)) {
+      const field = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {}
+      const source = toText(field["x-source"]).toLowerCase()
+      if (source === "path") {
+        output.push(`request.path.${toText(field["x-pathVariable"]) || name}`)
+        continue
+      }
+      if (source === "query") {
+        output.push(`request.query.${toText(field["x-paramName"]) || name}`)
+        continue
+      }
+      if (source === "header") {
+        output.push(`request.headers.${toText(field["x-headerName"]) || name}`)
+        continue
+      }
+      if (source === "form") {
+        output.push(`request.body.${toText(field["x-formField"]) || name}`)
+        continue
+      }
+      if (source === "body") {
+        const childType = toText(field.type).toLowerCase()
+        if (childType === "object" && field.properties && typeof field.properties === "object" && !Array.isArray(field.properties)) {
+          flattenRequestSchemaNode(field, "request.body", output)
+        } else if (childType === "array") {
+          output.push("request.body[]")
+        } else {
+          output.push(`request.body.${name}`)
+        }
+        continue
+      }
+      output.push(`request.body.${name}`)
+    }
+    return uniquePaths(output)
+  } catch {
+    return []
+  }
+}
+
+function buildPathsFromRequestSchemaFields(fields: any[]): string[] {
+  const output: string[] = []
+  for (const field of fields || []) {
+    const source = toText(field?.source).toLowerCase()
+    const name = toText(field?.pathVariable) || toText(field?.paramName) || toText(field?.formField) || toText(field?.name)
+    if (!name) continue
+    if (source === "path") output.push(`request.path.${name}`)
+    else if (source === "query") output.push(`request.query.${name}`)
+    else if (source === "header") output.push(`request.headers.${name}`)
+    else output.push(`request.body.${name}`)
+  }
+  return uniquePaths(output)
+}
+
+async function loadRequestPathOptions() {
+  if (!props.projectKey || !props.endpointId) {
+    requestPathOptions.value = []
+    return
+  }
+  try {
+    const endpoint = await api.getEndpoint(props.projectKey, props.endpointId)
+    const byJson = buildPathsFromRequestSchemaJson(endpoint.requestSchemaJson || "")
+    if (byJson.length > 0) {
+      requestPathOptions.value = byJson
+      return
+    }
+    requestPathOptions.value = buildPathsFromRequestSchemaFields(Array.isArray(endpoint.requestSchema) ? endpoint.requestSchema : [])
+  } catch {
+    requestPathOptions.value = []
+  }
+}
+
+watch(() => [props.projectKey, props.endpointId], loadRequestPathOptions, { immediate: true })
+
+function getInputName(input: any, index: number): string {
+  const name = String(input?.name || "").trim()
+  return name || `arg${index + 1}`
+}
 
 function formatInputType(input: any) {
   const type = String(input?.valueType || "STRING").toUpperCase()
   if (type === "OBJECT" || type === "ARRAY") return input?.typeName || type
   return type
-}
-
-function getInputName(input: any, index: number): string {
-  const name = String(input?.name || "").trim()
-  return name || `arg${index + 1}`
 }
 
 function formatOutputType(output: any) {
@@ -44,37 +285,132 @@ function updateOutputField(partial: Record<string, any>) {
   emit("update:output", { ...(props.output || {}), ...partial })
 }
 
-function getServiceName(comp: any): string | null {
-  if (!comp) return null
-  const endpointType = String(comp.endpointType || "")
-
-  if (endpointType === "SERVICE") {
-    try {
-      const configJson = comp.configJson
-      if (typeof configJson === "string" && configJson) {
-        const config = JSON.parse(configJson)
-        if (config.bean && typeof config.bean === "string") return config.bean
-        if (config.name && typeof config.name === "string") return config.name
-      }
-    } catch {
-      return comp.bean || null
+function buildOutputFieldsFromSchema(schema: Record<string, any> | null | undefined): Array<{ name: string; type: string; description: string }> {
+  if (!schema || typeof schema !== "object") return []
+  const properties = schema.properties
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return []
+  return Object.entries(properties).map(([name, raw]) => {
+    const child = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, any> : {}
+    return {
+      name,
+      type: toText(child["x-javaType"]) || toText(child.typeName) || toText(child.type) || "object",
+      description: toText(child.description) || toText(child.title),
     }
-  }
-
-  if (endpointType === "FLOW_OPERATION") {
-    try {
-      const configJson = comp.configJson
-      if (typeof configJson === "string" && configJson) {
-        const config = JSON.parse(configJson)
-        if (config.serviceBean && typeof config.serviceBean === "string") return config.serviceBean
-      }
-    } catch {
-      return comp.bean || null
-    }
-  }
-
-  return comp.bean || null
+  })
 }
+
+function buildServiceName(comp: any): string {
+  const config = safeParseJson(comp?.configJson)
+  return toText(config?.serviceName) || toText(config?.name) || toText(comp?.bean) || "-"
+}
+
+function buildMethodName(comp: any): string {
+  const config = safeParseJson(comp?.configJson)
+  return toText(config?.method) || toText(comp?.method) || "-"
+}
+
+function buildEditorModel(): ServiceCallModel {
+  const config = safeParseJson(props.comp?.configJson)
+  const inputList = Array.isArray(props.inputs) ? props.inputs : []
+  const argPlans = Array.isArray(props.paramPlans?.argPlans) ? props.paramPlans.argPlans : []
+
+  const argBindings = inputList.map((input, index) => {
+    const name = getInputName(input, index)
+    const typeName = toText(input?.typeName) || formatInputType(input)
+    const exactPlan = argPlans.find((plan: any) => toText(plan?.target) === name)
+    const nestedPlans = argPlans.filter((plan: any) => {
+      const target = toText(plan?.target)
+      return target.startsWith(`${name}.`)
+    })
+
+    if (nestedPlans.length > 0) {
+      return {
+        id: `binding_${name}`,
+        paramName: name,
+        paramType: typeName,
+        source: {
+          kind: "ctx",
+          path: "",
+          constValue: "",
+          tempKey: "",
+          mode: "objectBuilder",
+          objectFields: nestedPlans.map((plan: any, idx: number) => ({
+            id: `field_${name}_${idx}`,
+            fieldPath: toText(plan?.target).slice(name.length + 1),
+            source: {
+              kind: toText(plan?.source?.kind) || "ctx",
+              path: toText(plan?.source?.path),
+              constValue: plan?.source?.constValue ?? "",
+              tempKey: toText(plan?.source?.tempKey),
+            },
+          })),
+        },
+      }
+    }
+
+    return {
+      id: `binding_${name}`,
+      paramName: name,
+      paramType: typeName,
+      source: {
+        kind: toText(exactPlan?.source?.kind) || "ctx",
+        path: toText(exactPlan?.source?.path) || `request.body.${name}`,
+        constValue: exactPlan?.source?.constValue ?? "",
+        tempKey: toText(exactPlan?.source?.tempKey),
+        mode: "direct",
+        objectFields: [],
+      },
+    }
+  })
+
+  return {
+    fn: props.comp?.bean && props.comp?.method ? `${props.comp.bean}.${props.comp.method}` : "",
+    serviceRef: props.comp ? {
+      endpointId: props.comp?.id,
+      serviceKey: `${toText(props.comp?.bean)}:${toText(config?.serviceClass) || toText(config?.class)}`,
+      serviceBean: toText(props.comp?.bean),
+      serviceName: toText(config?.serviceName) || toText(config?.name) || toText(props.label),
+      serviceClass: toText(config?.serviceClass) || toText(config?.class),
+      methodName: toText(props.comp?.method),
+      methodSignature: toText(config?.methodSignature),
+      methodSignatureHash: toText(config?.methodSignatureHash),
+      returnType: toText(config?.returnType) || toText(props.output?.typeName),
+    } : null,
+    argBindings,
+  }
+}
+
+const serviceCallModel = computed(() => buildEditorModel())
+const tempKeys = computed(() =>
+  (Array.isArray(props.paramPlans?.tempPlans) ? props.paramPlans.tempPlans : [])
+    .map((item: any) => toText(item?.key))
+    .filter((item: string) => Boolean(item))
+)
+const upstreamPathOptions = computed(() => {
+  if (!props.nodeId || !Array.isArray(props.edges) || !Array.isArray(props.nodes)) return []
+  const sourceIds = props.edges
+    .filter((edge: any) => String(edge?.target || "") === String(props.nodeId))
+    .map((edge: any) => String(edge?.source || "").trim())
+    .filter((item: string) => Boolean(item))
+  if (sourceIds.length === 0) return []
+
+  const options: string[] = []
+  for (const sourceId of sourceIds) {
+    const node = props.nodes.find((item: any) => String(item?.id || "") === sourceId)
+    const output = node?.data?.output
+    const contextKey = toText(output?.contextKey)
+    if (!contextKey) continue
+    options.push(contextKey)
+    if (Array.isArray(output?.fields)) {
+      output.fields.forEach((field: any) => {
+        const fieldName = toText(field?.name)
+        if (fieldName) options.push(`${contextKey}.${fieldName}`)
+      })
+    }
+  }
+  return uniquePaths(options)
+})
+const sourcePathOptions = computed(() => uniquePaths([...requestPathOptions.value, ...upstreamPathOptions.value]))
 
 const normalizedInputs = computed(() =>
   (Array.isArray(props.inputs) ? props.inputs : []).map((input, index) => ({
@@ -86,8 +422,156 @@ const normalizedInputs = computed(() =>
 const inputSummaryText = computed(() => {
   const size = normalizedInputs.value.length
   if (size === 0) return "未识别到入参"
-  return `已识别 ${size} 个入参（用于 V2 目标参数选择）`
+  return `已识别 ${size} 个入参`
 })
+
+function buildCompPayload(model: ServiceCallModel, meta: MethodMeta) {
+  const current = props.comp && typeof props.comp === "object" ? clone(props.comp) : {}
+  const currentConfig = safeParseJson(current.configJson) || {}
+  const nextConfig: Record<string, any> = {
+    ...currentConfig,
+    bean: toText(model.serviceRef?.serviceBean) || toText(current.bean),
+    serviceBean: toText(model.serviceRef?.serviceBean) || toText(current.bean),
+    serviceName: toText(meta?.serviceName) || toText(model.serviceRef?.serviceName) || toText(currentConfig.serviceName),
+    serviceClass: toText(meta?.serviceClass) || toText(model.serviceRef?.serviceClass) || toText(currentConfig.serviceClass),
+    method: toText(model.serviceRef?.methodName) || toText(current.method),
+    methodSignature: toText(meta?.methodSignature) || toText(model.serviceRef?.methodSignature),
+    methodSignatureHash: toText(meta?.methodSignatureHash) || toText(model.serviceRef?.methodSignatureHash),
+    returnType: toText(meta?.returnType) || toText(model.serviceRef?.returnType) || toText(currentConfig.returnType),
+  }
+  if (meta?.returnSchema && typeof meta.returnSchema === "object") {
+    nextConfig.returnSchema = clone(meta.returnSchema)
+  }
+  if (Array.isArray(meta?.params) && meta?.params.length > 0) {
+    nextConfig.params = meta.params.map((param) => ({
+      name: toText(param?.name),
+      type: toText(param?.type),
+      required: Boolean(param?.required),
+      description: toText(param?.description),
+      schema: param?.schema || null,
+    }))
+  }
+
+  return {
+    ...current,
+    bean: toText(model.serviceRef?.serviceBean) || current.bean || null,
+    method: toText(model.serviceRef?.methodName) || current.method || null,
+    configJson: JSON.stringify(nextConfig),
+    endpointType: current.endpointType || "FLOW_OPERATION",
+  }
+}
+
+function buildInputsPayload(model: ServiceCallModel, meta: MethodMeta) {
+  const existing = Array.isArray(props.inputs) ? props.inputs : []
+  const metaParams = Array.isArray(meta?.params) ? meta.params : []
+  return (model.argBindings || []).map((binding, index) => {
+    const methodParam = metaParams[index] || metaParams.find((item) => toText(item?.name) === toText(binding?.paramName))
+    const previous = existing.find((item) => getInputName(item, index) === toText(binding?.paramName)) || {}
+    const typeName = toText(methodParam?.type) || toText(binding?.paramType)
+    return {
+      ...previous,
+      name: toText(binding?.paramName),
+      valueType: inferValueType(typeName),
+      typeName,
+      description: toText(methodParam?.description) || toText(previous?.description),
+      schema: methodParam?.schema || previous?.schema || null,
+      required: Boolean(methodParam?.required ?? previous?.required),
+    }
+  })
+}
+
+function buildOutputPayload(meta: MethodMeta) {
+  const previous = props.output && typeof props.output === "object" ? clone(props.output) : {}
+  const returnType = toText(meta?.returnType) || toText(previous?.typeName)
+  const returnSchema = meta?.returnSchema && typeof meta.returnSchema === "object" ? clone(meta.returnSchema) : null
+  const output = {
+    ...previous,
+    description: toText(meta?.description) || toText(previous?.description),
+    valueType: inferValueType(returnType || "java.lang.Object"),
+    typeName: returnType,
+    fields: returnSchema
+      ? buildOutputFieldsFromSchema(returnSchema)
+      : Array.isArray(previous?.fields) ? previous.fields : [],
+    contextKey: toText(previous?.contextKey) || "",
+  }
+  if (output.valueType !== "OBJECT") {
+    output.fields = []
+  }
+  return output
+}
+
+function toPlanSource(source: any) {
+  const kind = toText(source?.kind) || "ctx"
+  return {
+    kind,
+    path: toText(source?.path),
+    constValue: source?.constValue ?? "",
+    tempKey: toText(source?.tempKey),
+  }
+}
+
+function buildParamPlansPayload(model: ServiceCallModel) {
+  const tempPlans = Array.isArray(props.paramPlans?.tempPlans) ? clone(props.paramPlans.tempPlans) : []
+  const argPlans: any[] = []
+
+  for (const binding of model.argBindings || []) {
+    const name = toText(binding?.paramName)
+    if (!name) continue
+    const source = binding?.source || {}
+    const mode = toText(source.mode) || "direct"
+
+    if (mode === "objectBuilder" && Array.isArray(source.objectFields)) {
+      for (const field of source.objectFields) {
+        const fieldPath = toText(field?.fieldPath)
+        if (!fieldPath) continue
+        argPlans.push({
+          target: `${name}.${fieldPath}`,
+          typeHint: toText(binding?.paramType),
+          source: toPlanSource(field?.source),
+        })
+      }
+      continue
+    }
+
+    argPlans.push({
+      target: name,
+      typeHint: toText(binding?.paramType),
+      source: toPlanSource(source),
+    })
+  }
+
+  return { tempPlans, argPlans }
+}
+
+function handleMethodMeta(next: MethodMeta) {
+  selectedMethodMeta.value = next ? clone(next) : null
+}
+
+function handleServiceCallUpdate(model: ServiceCallModel) {
+  const meta = selectedMethodMeta.value
+  if (!model?.serviceRef?.serviceBean || !model?.serviceRef?.methodName) {
+    emit("update:comp", null)
+    emit("update:inputs", [])
+    emit("update:output", null)
+    emit("update:paramPlans", { tempPlans: [], argPlans: [] })
+    return
+  }
+
+  const nextComp = buildCompPayload(model, meta)
+  const nextInputs = buildInputsPayload(model, meta)
+  const nextOutput = buildOutputPayload(meta)
+  const nextParamPlans = buildParamPlansPayload(model)
+
+  emit("update:comp", nextComp)
+  emit("update:inputs", nextInputs)
+  emit("update:output", nextOutput)
+  emit("update:paramPlans", nextParamPlans)
+
+  if (!toText(props.label)) {
+    const fallbackLabel = toText(meta?.serviceName) || toText(model.serviceRef?.serviceName) || toText(model.serviceRef?.methodName)
+    if (fallbackLabel) emit("update:label", fallbackLabel)
+  }
+}
 </script>
 
 <template>
@@ -104,16 +588,33 @@ const inputSummaryText = computed(() => {
       />
     </section>
 
+    <section class="section">
+      <div class="row section-head">
+        <div class="muted section-title">服务方法</div>
+        <div class="muted tiny">主配置入口：先选服务，再自动回填签名</div>
+      </div>
+      <div class="card primary-card">
+        <ServiceCallEditor
+          :model-value="serviceCallModel"
+          :project-key="projectKey"
+          :temp-keys="tempKeys"
+          :source-path-options="sourcePathOptions"
+          @update:model-value="handleServiceCallUpdate"
+          @select-method="handleMethodMeta"
+        />
+      </div>
+    </section>
+
     <section v-if="comp" class="section">
-      <div class="muted section-title">组件绑定</div>
+      <div class="muted section-title">当前绑定</div>
       <div class="card binding-card">
         <div>
-          <div class="muted tiny">Bean 名称</div>
-          <div class="binding-value">{{ getServiceName(comp) || comp.bean || "-" }}</div>
+          <div class="muted tiny">服务/Bean</div>
+          <div class="binding-value">{{ buildServiceName(comp) }}</div>
         </div>
         <div>
-          <div class="muted tiny">Method 名称</div>
-          <div class="binding-value">{{ comp.method || "-" }}</div>
+          <div class="muted tiny">Method</div>
+          <div class="binding-value">{{ buildMethodName(comp) }}</div>
         </div>
         <div v-if="comp.version">
           <div class="muted tiny">版本</div>
@@ -132,7 +633,7 @@ const inputSummaryText = computed(() => {
           <span class="signature-name" :title="item.name">{{ item.name }}</span>
           <span class="signature-type" :title="item.type">{{ item.type }}</span>
         </div>
-        <div class="muted tiny signature-hint">详细参数值请在下方“参数构造管线（V2）”中配置。</div>
+        <div class="muted tiny signature-hint">上方服务选择器会自动回填签名；这里只保留摘要预览。</div>
       </div>
       <div v-else class="muted empty-tip">当前节点无入参定义。</div>
     </section>
@@ -155,7 +656,7 @@ const inputSummaryText = computed(() => {
             <span>{{ field.type }}</span>
             <span>{{ field.description || "-" }}</span>
           </div>
-          <div v-if="(output.fields || []).length === 0" class="muted empty-tip">暂无字段。</div>
+          <div v-if="(output.fields || []).length === 0" class="muted empty-tip">当前返回对象暂无字段摘要。</div>
         </div>
         <div v-else class="muted tiny">基础类型：{{ formatOutputType(output) }}</div>
 
@@ -171,14 +672,19 @@ const inputSummaryText = computed(() => {
       </div>
     </section>
 
-    <section class="section split-top">
-      <ParamPlanBuilder
-        :model-value="paramPlans"
-        :input-defs="inputs"
-        :project-key="projectKey"
-        @update:model-value="emit('update:paramPlans', $event)"
-      />
-    </section>
+    <details class="section advanced-panel">
+      <summary class="advanced-summary">高级参数管线（可选）</summary>
+      <div class="muted tiny advanced-hint">用于保留复杂场景的原始参数计划编辑。常规服务节点优先使用上方“服务方法”入口。</div>
+      <div class="split-top">
+        <ParamPlanBuilder
+          :model-value="paramPlans"
+          :input-defs="inputs"
+          :project-key="projectKey"
+          :source-path-options="sourcePathOptions"
+          @update:model-value="emit('update:paramPlans', $event)"
+        />
+      </div>
+    </details>
   </div>
 </template>
 
@@ -203,8 +709,8 @@ const inputSummaryText = computed(() => {
 }
 
 .split-top {
-  margin-top: 16px;
-  padding-top: 16px;
+  margin-top: 12px;
+  padding-top: 12px;
   border-top: 1px solid #e5e7eb;
 }
 
@@ -217,6 +723,15 @@ const inputSummaryText = computed(() => {
   border: 1px solid #e2e8f0;
   border-radius: 10px;
   background: #fff;
+}
+
+.primary-card,
+.binding-card,
+.output-card {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .muted {
@@ -248,14 +763,6 @@ const inputSummaryText = computed(() => {
   background: #f3f4f6;
   color: #6b7280;
   cursor: not-allowed;
-}
-
-.binding-card,
-.output-card {
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 
 .binding-value {
@@ -348,5 +855,23 @@ const inputSummaryText = computed(() => {
 .field-row:not(.header) {
   background: #fefefe;
   border: 1px solid #e5e7eb;
+}
+
+.advanced-panel {
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  padding: 10px;
+  background: #fcfdff;
+}
+
+.advanced-summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.advanced-hint {
+  margin-top: 8px;
 }
 </style>

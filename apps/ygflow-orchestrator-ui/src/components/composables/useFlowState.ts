@@ -310,6 +310,20 @@ export function useFlowState() {
         schema: input.schema || null,
       }))
 
+    const buildOutputFieldsFromSchema = (schema: any) => {
+      if (!schema || typeof schema !== "object" || Array.isArray(schema)) return []
+      const properties = schema.properties
+      if (!properties || typeof properties !== "object" || Array.isArray(properties)) return []
+      return Object.entries(properties).map(([name, raw]) => {
+        const child = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, any> : {}
+        return {
+          name,
+          type: child["x-javaType"] || child.typeName || child.type || "object",
+          description: child.description || child.title || "",
+        }
+      })
+    }
+
     const mapOutput = (output: any) => ({
       description: output?.description || "",
       valueType: output?.valueType || "OBJECT",
@@ -336,7 +350,7 @@ export function useFlowState() {
       }
       if (nodeType === "transformer") {
         return {
-          label: item.title || "鑴氭湰鑺傜偣",
+          label: item.title || "脚本节点",
           mappingConfig: {
             fieldMappings: [],
           },
@@ -401,12 +415,12 @@ export function useFlowState() {
                       valueType: inferValueType(param.type || ""),
                       typeName: param.type || "",
                       description: param.description || "",
-                      schema: param.schema || null,  // 浼犻€掓潵鑷?IDE 鎻掍欢涓婃姤鐨勫畬鏁村叆鍙?JSON Schema
+                      schema: param.schema || null,  // 透传 IDE 插件上报的完整入参 JSON Schema
                     }))
                   )
                 }
               } catch {
-                // 蹇界暐瑙ｆ瀽閿欒
+                // 忽略解析错误
               }
             }
             return mapInputs(item.inputs)
@@ -420,10 +434,11 @@ export function useFlowState() {
                     valueType: inferValueType(config.returnType),
                     typeName: config.returnType,
                     description: config.description || "",
+                    fields: buildOutputFieldsFromSchema(config.returnSchema),
                   })
                 }
               } catch {
-                // 蹇界暐瑙ｆ瀽閿欒
+                // 忽略解析错误
               }
             }
             return mapOutput(item.output)

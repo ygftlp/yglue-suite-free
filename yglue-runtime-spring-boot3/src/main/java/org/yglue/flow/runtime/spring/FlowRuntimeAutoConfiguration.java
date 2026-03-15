@@ -29,6 +29,7 @@ import org.yglue.flow.runtime.core.executors.DelayNodeExecutor;
 import org.yglue.flow.runtime.core.executors.IfNodeExecutor;
 import org.yglue.flow.runtime.core.executors.LogNodeExecutor;
 import org.yglue.flow.runtime.core.executors.RestNodeExecutor;
+import org.yglue.flow.runtime.core.executors.RequestScopedServiceNodeExecutor;
 import org.yglue.flow.runtime.core.executors.ServiceNodeExecutor;
 import org.yglue.flow.runtime.core.executors.SetNodeExecutor;
 import org.yglue.flow.runtime.core.executors.TransformerNodeExecutor;
@@ -172,7 +173,7 @@ public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
                 .register("branch", new BranchNodeExecutor())
                 .register("call", new CallNodeExecutor(applicationContext))
                 .register("transformer", new TransformerNodeExecutor())
-                .register("service", serviceExecutor)
+                .register("service", new RequestScopedServiceNodeExecutor(serviceExecutor))
                 .register("serviceGroup", new GroupNodeExecutor());
 
         RestInvocationRegistry restRegistry = new RestInvocationRegistry()

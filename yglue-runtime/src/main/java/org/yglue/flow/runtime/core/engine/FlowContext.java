@@ -2,6 +2,9 @@ package org.yglue.flow.runtime.core.engine;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * Shared execution context for the graph runtime.
@@ -10,6 +13,7 @@ public class FlowContext {
 
     private final String ruleId;
     private final Map<String, Object> variables = new ConcurrentHashMap<>();
+    private final Map<String, List<Object>> resolvedArgsByNodeId = new ConcurrentHashMap<>();
     private Object returnValue;
     private Throwable exception;
 
@@ -78,5 +82,23 @@ public class FlowContext {
 
     public void setException(Throwable exception) {
         this.exception = exception;
+    }
+
+    public void setResolvedArgs(String nodeId, List<Object> resolvedArgs) {
+        if (nodeId == null || nodeId.isBlank()) {
+            return;
+        }
+        if (resolvedArgs == null) {
+            resolvedArgsByNodeId.remove(nodeId);
+            return;
+        }
+        resolvedArgsByNodeId.put(nodeId, Collections.unmodifiableList(new ArrayList<>(resolvedArgs)));
+    }
+
+    public List<Object> getResolvedArgs(String nodeId) {
+        if (nodeId == null || nodeId.isBlank()) {
+            return null;
+        }
+        return resolvedArgsByNodeId.get(nodeId);
     }
 }

@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<flow>
-    <chain name="sample_math_flow">
-        <then value="serviceNode.tag('log_1'),serviceNode.tag('call_2'),serviceNode.tag('log_3')"/>
-    </chain>
-</flow>

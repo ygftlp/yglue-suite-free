@@ -7,16 +7,16 @@ import org.yglue.flow.runtime.core.FlowExecutor;
 import org.yglue.flow.runtime.core.NodeExecutorRegistry;
 import org.yglue.flow.runtime.core.definition.FlowDefinition;
 import org.yglue.flow.runtime.core.definition.NodeDefinition;
+import org.yglue.flow.runtime.core.executors.BranchSelection;
 
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 public class GraphExecutor {
 
@@ -24,12 +24,10 @@ public class GraphExecutor {
 
     private final NodeExecutorRegistry executorRegistry;
     private final List<NodeInterceptor> interceptors;
-    private final ExecutorService threadPool;
 
     public GraphExecutor(NodeExecutorRegistry executorRegistry, List<NodeInterceptor> interceptors) {
         this.executorRegistry = executorRegistry;
         this.interceptors = interceptors != null ? interceptors : new ArrayList<>();
-        this.threadPool = Executors.newCachedThreadPool();
     }
 
     public FlowExecutionResult execute(FlowDefinition definition, Map<String, Object> input) {
@@ -70,7 +68,8 @@ public class GraphExecutor {
         }
     }
 
-    private void executeDag(FlowDefinition definition, FlowContext context) {
+    private void executeDag(FlowDefinition definition, FlowContext context) throws Exception {
+        DagExecutionState dagState = new DagExecutionState();
         Map<String, NodeDefinition> nodeMap = new LinkedHashMap<>();
         for (NodeDefinition node : definition.getNodes()) {
             if (node != null && node.getId() != null) {
@@ -107,74 +106,139 @@ public class GraphExecutor {
             entryNodes.add(nodeMap.keySet().iterator().next());
         }
 
-        Set<String> visited = new HashSet<>();
-        List<CompletableFuture<Void>> futures = new ArrayList<>();
         for (String entryId : entryNodes) {
-            futures.add(executePathAsync(definition, entryId, nodeMap, adjacency, visited, context));
+            activateNode(entryId, nodeMap, adjacency, indegree, dagState);
         }
 
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-    }
-
-    private CompletableFuture<Void> executePathAsync(FlowDefinition definition,
-            String nodeId,
-            Map<String, NodeDefinition> nodeMap,
-            Map<String, List<String>> adjacency,
-            Set<String> currentPathVisited,
-            FlowContext context) {
-        if (nodeId == null || currentPathVisited.contains(nodeId)) {
-            return CompletableFuture.completedFuture(null);
-        }
-
-        NodeDefinition node = nodeMap.get(nodeId);
-        if (node == null || "exit".equalsIgnoreCase(node.getType())) {
-            return CompletableFuture.completedFuture(null);
-        }
-
-        currentPathVisited.add(nodeId);
-
-        if ("entry".equalsIgnoreCase(node.getType())) {
-            List<String> nextNodes = adjacency.get(nodeId);
-            if (nextNodes == null || nextNodes.isEmpty()) {
-                return CompletableFuture.completedFuture(null);
+        while (!dagState.readyQueue.isEmpty()) {
+            String nodeId = dagState.readyQueue.removeFirst();
+            dagState.queuedNodes.remove(nodeId);
+            if (dagState.completedNodes.contains(nodeId)) {
+                continue;
             }
-            return executePathAsync(definition, nextNodes.get(0), nodeMap, adjacency, currentPathVisited, context);
-        }
 
-        return CompletableFuture.runAsync(() -> {
-            try {
-                executeNode(definition, node, context);
-            } catch (Exception e) {
-                throw new RuntimeException("Node execution failed: " + node.getId(), e);
+            NodeDefinition node = nodeMap.get(nodeId);
+            if (node == null) {
+                continue;
             }
-        }, threadPool).thenComposeAsync(v -> {
-            List<String> nextNodes = adjacency.get(nodeId);
-            if (nextNodes == null || nextNodes.isEmpty()) {
-                return CompletableFuture.completedFuture(null);
+
+            if ("exit".equalsIgnoreCase(node.getType())) {
+                dagState.completedNodes.add(nodeId);
+                continue;
             }
+
+            Object nodeResult = null;
+            if (!"entry".equalsIgnoreCase(node.getType())) {
+                nodeResult = executeNode(definition, node, context);
+            }
+
+            dagState.completedNodes.add(nodeId);
 
             if ("branch".equalsIgnoreCase(node.getType())) {
-                Object selectedTarget = context.getReturnValue();
-                if (selectedTarget instanceof String targetNodeId && !targetNodeId.isBlank()) {
-                    return executePathAsync(definition, targetNodeId, nodeMap, adjacency, currentPathVisited, context);
+                if (nodeResult instanceof BranchSelection selection
+                        && selection.targetNodeId() != null
+                        && !selection.targetNodeId().isBlank()) {
+                    activateEdge(nodeId, selection.targetNodeId(), nodeMap, adjacency, indegree, dagState);
                 }
-                return CompletableFuture.completedFuture(null);
+            } else {
+                enqueueActivatedChildren(nodeId, nodeMap, adjacency, indegree, dagState);
             }
-
-            if (nextNodes.size() == 1) {
-                return executePathAsync(definition, nextNodes.get(0), nodeMap, adjacency, currentPathVisited, context);
-            }
-
-            List<CompletableFuture<Void>> nextFutures = new ArrayList<>();
-            for (String nextNodeId : nextNodes) {
-                nextFutures.add(executePathAsync(definition, nextNodeId, nodeMap, adjacency,
-                        new HashSet<>(currentPathVisited), context));
-            }
-            return CompletableFuture.allOf(nextFutures.toArray(new CompletableFuture[0]));
-        }, threadPool);
+        }
     }
 
-    private void executeNode(FlowDefinition definition, NodeDefinition node, FlowContext context) throws Exception {
+    private void activateNode(String nodeId,
+            Map<String, NodeDefinition> nodeMap,
+            Map<String, List<String>> adjacency,
+            Map<String, Integer> indegree,
+            DagExecutionState dagState) {
+        if (nodeId == null || !dagState.reachableNodes.add(nodeId)) {
+            return;
+        }
+        NodeDefinition node = nodeMap.get(nodeId);
+        if (node == null) {
+            return;
+        }
+        String type = node.getType();
+        if ("exit".equalsIgnoreCase(type)) {
+            return;
+        }
+
+        if (!"branch".equalsIgnoreCase(type)) {
+            List<String> nextNodes = adjacency.get(nodeId);
+            if (nextNodes != null) {
+                for (String nextNodeId : nextNodes) {
+                    activateEdge(nodeId, nextNodeId, nodeMap, adjacency, indegree, dagState);
+                }
+            }
+        }
+
+        tryEnqueueNode(nodeId, nodeMap, indegree, dagState);
+    }
+
+    private void activateEdge(String sourceNodeId,
+            String targetNodeId,
+            Map<String, NodeDefinition> nodeMap,
+            Map<String, List<String>> adjacency,
+            Map<String, Integer> indegree,
+            DagExecutionState dagState) {
+        if (sourceNodeId == null || targetNodeId == null || !nodeMap.containsKey(targetNodeId)) {
+            return;
+        }
+        dagState.activePredecessors.computeIfAbsent(targetNodeId, key -> new LinkedHashSet<>()).add(sourceNodeId);
+        activateNode(targetNodeId, nodeMap, adjacency, indegree, dagState);
+        tryEnqueueNode(targetNodeId, nodeMap, indegree, dagState);
+    }
+
+    private void enqueueActivatedChildren(String nodeId,
+            Map<String, NodeDefinition> nodeMap,
+            Map<String, List<String>> adjacency,
+            Map<String, Integer> indegree,
+            DagExecutionState dagState) {
+        List<String> nextNodes = adjacency.get(nodeId);
+        if (nextNodes == null) {
+            return;
+        }
+        for (String nextNodeId : nextNodes) {
+            tryEnqueueNode(nextNodeId, nodeMap, indegree, dagState);
+        }
+    }
+
+    private void tryEnqueueNode(String nodeId,
+            Map<String, NodeDefinition> nodeMap,
+            Map<String, Integer> indegree,
+            DagExecutionState dagState) {
+        if (nodeId == null || dagState.completedNodes.contains(nodeId) || dagState.queuedNodes.contains(nodeId)) {
+            return;
+        }
+        NodeDefinition node = nodeMap.get(nodeId);
+        if (node == null || "exit".equalsIgnoreCase(node.getType())) {
+            return;
+        }
+
+        Set<String> activePredecessors = dagState.activePredecessors.get(nodeId);
+        if (activePredecessors == null || activePredecessors.isEmpty()) {
+            if (indegree.getOrDefault(nodeId, 0) == 0 || "entry".equalsIgnoreCase(node.getType())) {
+                dagState.queuedNodes.add(nodeId);
+                dagState.readyQueue.addLast(nodeId);
+            }
+            return;
+        }
+
+        if (dagState.completedNodes.containsAll(activePredecessors)) {
+            dagState.queuedNodes.add(nodeId);
+            dagState.readyQueue.addLast(nodeId);
+        }
+    }
+
+    private static final class DagExecutionState {
+        private final Set<String> reachableNodes = new LinkedHashSet<>();
+        private final Set<String> completedNodes = new LinkedHashSet<>();
+        private final Set<String> queuedNodes = new LinkedHashSet<>();
+        private final Map<String, Set<String>> activePredecessors = new LinkedHashMap<>();
+        private final Deque<String> readyQueue = new ArrayDeque<>();
+    }
+
+    private Object executeNode(FlowDefinition definition, NodeDefinition node, FlowContext context) throws Exception {
         String type = node.getType() != null ? node.getType() : "service";
         FlowExecutor targetExecutor;
         try {
@@ -203,9 +267,12 @@ public class GraphExecutor {
         Object result = chain.proceed();
 
         Object asObj = node.getConfig() != null ? node.getConfig().get("as") : null;
-        if (asObj instanceof String alias && !alias.isBlank()) {
+        if (!(result instanceof BranchSelection) && asObj instanceof String alias && !alias.isBlank()) {
             context.put(alias, result);
         }
-        context.setReturnValue(result);
+        if (!(result instanceof BranchSelection)) {
+            context.setReturnValue(result);
+        }
+        return result;
     }
 }
