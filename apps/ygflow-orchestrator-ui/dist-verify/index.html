@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>YGFlow Studio</title>
+    <style>
+      :root {
+        --border:#e5e7eb; --muted:#6b7280; --bg:#fff; --chip:#f3f4f6;
+      }
+      *{ box-sizing:border-box; }
+      html,body,#app{ height:100%; margin:0; }
+      .bar{ border-bottom:1px solid var(--border); padding:10px 12px; display:flex; justify-content:space-between; align-items:center; }
+      .sider{ border-right:1px solid var(--border); }
+      .btn{ border:1px solid var(--border); background:#fff; padding:6px 10px; border-radius:8px; font-size:12px; cursor:pointer; }
+      .btn.primary{ background:#111; color:#fff; }
+      .input{ border:1px solid var(--border); padding:6px 8px; border-radius:6px; font-size:14px; }
+      .card{ border:1px solid var(--border); border-radius:12px; padding:12px; background:#fff; }
+      .badge{ background:var(--chip); border:1px solid var(--border); padding:2px 8px; border-radius:999px; font-size:11px; color:#374151; }
+      .grid{ display:grid; gap:12px; }
+      .grid-3{ grid-template-columns: repeat(3, minmax(0,1fr)); }
+      .row{ display:flex; gap:8px; align-items:center; }
+      .col{ display:flex; flex-direction:column; gap:6px; }
+      .muted{ color:var(--muted); font-size:12px; }
+      .list-item{ padding:8px 12px; border-bottom:1px solid var(--border); font-size:14px; display:flex; gap:8px; align-items:center; text-decoration:none; color:inherit; }
+      .list-item:hover{ background:#fafafa; }
+      .active{ background:#f3f4f6; font-weight:600; }
+      .canvas-toolbar{ position:absolute; top:10px; left:10px; display:flex; gap:6px; z-index:10; }
+      .center{ display:flex; align-items:center; justify-content:center; height:100%; color:#6b7280; font-size:14px; }
+    </style>
+    <script type="module" crossorigin src="/assets/index-i6KOILFX.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/vue-core-BPaXYXIm.js">
+    <link rel="modulepreload" crossorigin href="/assets/vue-router-CDv_hIo4.js">
+    <link rel="modulepreload" crossorigin href="/assets/vue-flow-DVvZMKf0.js">
+    <link rel="stylesheet" crossorigin href="/assets/vue-flow-DbF-PLB1.css">
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
+</html>

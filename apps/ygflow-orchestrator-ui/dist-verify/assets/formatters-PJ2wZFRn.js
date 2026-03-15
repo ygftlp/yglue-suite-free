@@ -1,0 +1,1 @@
+function i(t){if(!t)return"-";try{const r=new Date(t);return Number.isNaN(r.getTime())?t:r.toLocaleString("zh-CN",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"})}catch{return t}}function n(t){if(!t)return null;try{return JSON.parse(t)}catch{return null}}export{i as f,n as s};

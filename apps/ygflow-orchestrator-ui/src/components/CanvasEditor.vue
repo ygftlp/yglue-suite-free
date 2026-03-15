@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue"
-import FlowSettingsPanel from "./FlowSettingsPanel.vue"
+import { computed, defineAsyncComponent, ref, watch } from "vue"
 import CanvasPalettePanel from "./CanvasPalettePanel.vue"
 import CanvasToolbar from "./CanvasToolbar.vue"
 import CanvasSurface from "./CanvasSurface.vue"
 import CanvasInspectorPanel from "./CanvasInspectorPanel.vue"
-import VersionList from "./VersionList.vue"
 import { useCanvasEditor, type CanvasEditorProps } from "./useCanvasEditor"
+
+const FlowSettingsPanel = defineAsyncComponent(() => import("./FlowSettingsPanel.vue"))
+const VersionList = defineAsyncComponent(() => import("./VersionList.vue"))
 
 const props = defineProps<CanvasEditorProps>()
 
@@ -160,25 +161,36 @@ function handleDropNode(payload: { item: any; position: { x: number; y: number }
       @update-edge="updateEdge"
     />
   </div>
-  <FlowSettingsPanel
-    :visible="flowSettingsVisible"
-    v-model="flowSettings"
-    :request-schema-fields="props.endpointSchema?.requestSchema ?? undefined"
-    :response-schema="props.endpointSchema?.responseSchema ?? undefined"
-    :inbound-interceptor-catalog="props.inboundInterceptorCatalog ?? undefined"
-    @close="closeFlowSettings"
-  />
-  <VersionList
-    v-if="flowSettings.code"
-    :visible="versionListVisible"
-    :project-key="props.projectKey"
-    :flow-code="flowSettings.code"
-    :current-version-no="currentVersionNo"
-    :published-version-no="publishedVersionNo"
-    @close="closeVersionList"
-    @load-version="loadVersion"
-    @load-version-and-save="loadVersionAndSave"
-  />
+  <Suspense>
+    <FlowSettingsPanel
+      v-if="flowSettingsVisible"
+      :visible="flowSettingsVisible"
+      v-model="flowSettings"
+      :request-schema-fields="props.endpointSchema?.requestSchema ?? undefined"
+      :response-schema="props.endpointSchema?.responseSchema ?? undefined"
+      :inbound-interceptor-catalog="props.inboundInterceptorCatalog ?? undefined"
+      @close="closeFlowSettings"
+    />
+    <template #fallback>
+      <div v-if="flowSettingsVisible" class="async-overlay-loading">正在加载流程设置...</div>
+    </template>
+  </Suspense>
+  <Suspense>
+    <VersionList
+      v-if="versionListVisible && flowSettings.code"
+      :visible="versionListVisible"
+      :project-key="props.projectKey"
+      :flow-code="flowSettings.code"
+      :current-version-no="currentVersionNo"
+      :published-version-no="publishedVersionNo"
+      @close="closeVersionList"
+      @load-version="loadVersion"
+      @load-version-and-save="loadVersionAndSave"
+    />
+    <template #fallback>
+      <div v-if="versionListVisible" class="async-overlay-loading">正在加载版本列表...</div>
+    </template>
+  </Suspense>
 </template>
 
 <style scoped>
@@ -197,6 +209,19 @@ function handleDropNode(payload: { item: any; position: { x: number; y: number }
   flex-direction: column;
   gap: 10px;
   padding: 12px;
+}
+
+.async-overlay-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.2);
+  color: #0f172a;
+  font-size: 13px;
+  backdrop-filter: blur(2px);
 }
 
 :global(.rule-preview-modal) {

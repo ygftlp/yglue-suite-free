@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from "vue"
-import { EditorState } from "@codemirror/state"
-import { EditorView, keymap, lineNumbers, drawSelection, highlightActiveLine } from "@codemirror/view"
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands"
-import { autocompletion, completionKeymap, CompletionContext, CompletionResult } from "@codemirror/autocomplete"
+import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete"
+import type { EditorView as CodeEditorView } from "@codemirror/view"
 import { api, type ClassMemberResponse, type ScriptHelpersResponse } from "../api/client"
 
 // 添加调试日志工具
@@ -41,8 +39,47 @@ interface HelperGroupInput {
 const HELPERS_CACHE_TTL_MS = 60_000
 const MEMBERS_CACHE_TTL_MS = 60_000
 
+interface CodeMirrorRuntime {
+  EditorState: typeof import("@codemirror/state").EditorState
+  EditorView: typeof import("@codemirror/view").EditorView
+  keymap: typeof import("@codemirror/view").keymap
+  lineNumbers: typeof import("@codemirror/view").lineNumbers
+  drawSelection: typeof import("@codemirror/view").drawSelection
+  highlightActiveLine: typeof import("@codemirror/view").highlightActiveLine
+  defaultKeymap: typeof import("@codemirror/commands").defaultKeymap
+  history: typeof import("@codemirror/commands").history
+  historyKeymap: typeof import("@codemirror/commands").historyKeymap
+  autocompletion: typeof import("@codemirror/autocomplete").autocompletion
+  completionKeymap: typeof import("@codemirror/autocomplete").completionKeymap
+}
+
 const helpersCache = new Map<string, { at: number; value: ScriptHelpersResponse }>()
 const classMembersCache = new Map<string, { at: number; value: ClassMemberResponse }>()
+let codeMirrorRuntimePromise: Promise<CodeMirrorRuntime> | null = null
+
+function loadCodeMirrorRuntime(): Promise<CodeMirrorRuntime> {
+  if (!codeMirrorRuntimePromise) {
+    codeMirrorRuntimePromise = Promise.all([
+      import("@codemirror/state"),
+      import("@codemirror/view"),
+      import("@codemirror/commands"),
+      import("@codemirror/autocomplete"),
+    ]).then(([stateModule, viewModule, commandsModule, autocompleteModule]) => ({
+      EditorState: stateModule.EditorState,
+      EditorView: viewModule.EditorView,
+      keymap: viewModule.keymap,
+      lineNumbers: viewModule.lineNumbers,
+      drawSelection: viewModule.drawSelection,
+      highlightActiveLine: viewModule.highlightActiveLine,
+      defaultKeymap: commandsModule.defaultKeymap,
+      history: commandsModule.history,
+      historyKeymap: commandsModule.historyKeymap,
+      autocompletion: autocompleteModule.autocompletion,
+      completionKeymap: autocompleteModule.completionKeymap,
+    }))
+  }
+  return codeMirrorRuntimePromise
+}
 
 function isClassReferenceSnippet(snippet?: string): boolean {
   if (!snippet) return false
@@ -98,7 +135,9 @@ const resolvedTitle = computed(() => (props.title?.trim()?.length ? props.title!
 const showCodeEditor = ref(false)
 const helperTabState = ref<HelperTab>(props.helperTab ?? "variables")
 const codeEditorContainer = ref<HTMLDivElement | null>(null)
-let codeEditorView: EditorView | null = null
+const codeEditorLoading = ref(false)
+const codeEditorLoadError = ref<string | null>(null)
+let codeEditorView: CodeEditorView | null = null
 
 watch(
   () => props.helperTab,
@@ -439,25 +478,38 @@ function normalizeHelperItem(item?: HelperItemInput): HelperItem | null {
   }
 }
 
-function openCodeEditor() {
+async function ensureCodeEditorReady() {
+  if (codeEditorView || codeEditorLoading.value) return
+  codeEditorLoadError.value = null
+  codeEditorLoading.value = true
+  try {
+    await nextTick()
+    await initCodeEditor()
+  } catch (error) {
+    console.error("[ScriptEditor] 加载代码编辑器失败:", error)
+    codeEditorLoadError.value = error instanceof Error ? error.message : "加载代码编辑器失败，请重试。"
+  } finally {
+    codeEditorLoading.value = false
+  }
+}
+
+async function openCodeEditor() {
   showCodeEditor.value = true
   emit("open")
   loadScriptHelpersInternal()
   loadMembersForUpstreamTypeInternal()
-  nextTick(() => {
-    if (codeEditorContainer.value && !codeEditorView) {
-      initCodeEditor()
-    } else if (codeEditorView) {
-      const transaction = codeEditorView.state.update({
-        changes: {
-          from: 0,
-          to: codeEditorView.state.doc.length,
-          insert: scriptValue.value,
-        },
-      })
-      codeEditorView.dispatch(transaction)
-    }
-  })
+  if (codeEditorView) {
+    const transaction = codeEditorView.state.update({
+      changes: {
+        from: 0,
+        to: codeEditorView.state.doc.length,
+        insert: scriptValue.value,
+      },
+    })
+    codeEditorView.dispatch(transaction)
+    return
+  }
+  await ensureCodeEditorReady()
 }
 
 // 添加对 upstreamOutputType 变化的监听
@@ -661,8 +713,22 @@ function saveAndCloseEditor() {
   }
 }
 
-function initCodeEditor() {
+async function initCodeEditor() {
   if (!codeEditorContainer.value || codeEditorView) return
+  const {
+    EditorState,
+    EditorView,
+    keymap,
+    lineNumbers,
+    drawSelection,
+    highlightActiveLine,
+    defaultKeymap,
+    history,
+    historyKeymap,
+    autocompletion,
+    completionKeymap,
+  } = await loadCodeMirrorRuntime()
+  if (!codeEditorContainer.value || codeEditorView || !showCodeEditor.value) return
   const currentScript = scriptValue.value
   const saveKeymap = keymap.of([
     {
@@ -803,7 +869,7 @@ defineExpose({
         <div class="code-editor-header">
           <h3>{{ resolvedTitle }}</h3>
           <div class="code-editor-actions">
-            <button class="btn small" type="button" @click="saveAndCloseEditor">保存并关闭</button>
+            <button class="btn small" type="button" :disabled="codeEditorLoading || !!codeEditorLoadError" @click="saveAndCloseEditor">保存并关闭</button>
             <button class="btn small" type="button" @click="closeCodeEditor">取消</button>
           </div>
         </div>
@@ -861,7 +927,12 @@ defineExpose({
         </div>
       </aside>
       <div class="code-editor-main">
-        <div ref="codeEditorContainer" class="code-editor-container"></div>
+        <div v-if="codeEditorLoading" class="editor-status">正在加载代码编辑器...</div>
+        <div v-else-if="codeEditorLoadError" class="editor-status">
+          <div>{{ codeEditorLoadError }}</div>
+          <button class="btn small" type="button" @click="ensureCodeEditorReady">重试加载</button>
+        </div>
+        <div v-show="!codeEditorLoading && !codeEditorLoadError" ref="codeEditorContainer" class="code-editor-container"></div>
       </div>
     </div>
         <div class="code-editor-footer">
@@ -1143,6 +1214,22 @@ defineExpose({
   width: 100%;
   height: 100%;
   overflow: auto;
+}
+
+.editor-status {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .code-editor-footer {

@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { defineAsyncComponent } from "vue"
 import { ChevronLeft, ChevronRight } from "lucide-vue-next"
-import Palette from "./Palette.vue"
+
+const Palette = defineAsyncComponent(() => import("./Palette.vue"))
 
 const props = defineProps<{
   collapsed: boolean
@@ -25,7 +27,12 @@ const emit = defineEmits<{
       <div class="bar">
         <div class="title">组件面板</div>
       </div>
-      <Palette :project-key="props.projectKey" />
+      <Suspense>
+        <Palette :project-key="props.projectKey" />
+        <template #fallback>
+          <div class="panel-loading">正在加载组件面板...</div>
+        </template>
+      </Suspense>
     </template>
   </div>
 </template>
@@ -87,6 +94,12 @@ const emit = defineEmits<{
   font-weight: 600;
   font-size: 13px;
   color: #0f172a;
+}
+
+.panel-loading {
+  padding: 16px;
+  font-size: 12px;
+  color: #64748b;
 }
 </style>
 

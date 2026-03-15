@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { defineAsyncComponent } from "vue"
 import { ChevronLeft, ChevronRight } from "lucide-vue-next"
-import Inspector from "./Inspector.vue"
 import type { EndpointSchemaHint } from "./useCanvasEditor"
 import type { FlowModel, FlowResolver } from "../api/client"
+
+const Inspector = defineAsyncComponent(() => import("./Inspector.vue"))
 
 const props = defineProps<{
   collapsed: boolean
@@ -38,20 +40,25 @@ const emit = defineEmits<{
     </div>
     <div v-if="!props.collapsed" class="inspector-body">
       <div class="inspector-scroll">
-        <Inspector
-          :endpoint-schema="props.endpointSchema"
-          :entrypoint-path="props.entrypointPath ?? undefined"
-          :flow-models="props.flowModels ?? []"
-          :flow-resolvers="props.flowResolvers ?? []"
-          :selected-node="props.selectedNode"
-          :selected-edge="props.selectedEdge"
-          :nodes="props.nodes"
-          :edges="props.edges"
-          :project-key="props.projectKey"
-          :endpoint-id="props.endpointId"
-          @update-node="emit('update-node', $event)"
-          @update-edge="emit('update-edge', $event)"
-        />
+        <Suspense>
+          <Inspector
+            :endpoint-schema="props.endpointSchema"
+            :entrypoint-path="props.entrypointPath ?? undefined"
+            :flow-models="props.flowModels ?? []"
+            :flow-resolvers="props.flowResolvers ?? []"
+            :selected-node="props.selectedNode"
+            :selected-edge="props.selectedEdge"
+            :nodes="props.nodes"
+            :edges="props.edges"
+            :project-key="props.projectKey"
+            :endpoint-id="props.endpointId"
+            @update-node="emit('update-node', $event)"
+            @update-edge="emit('update-edge', $event)"
+          />
+          <template #fallback>
+            <div class="panel-loading">正在加载节点配置面板...</div>
+          </template>
+        </Suspense>
       </div>
     </div>
   </div>
@@ -128,5 +135,11 @@ const emit = defineEmits<{
   overflow-y: auto;
   overflow-x: hidden;
   min-width: 0;
+}
+
+.panel-loading {
+  padding: 8px 4px;
+  font-size: 12px;
+  color: #64748b;
 }
 </style>
