@@ -18,7 +18,7 @@ const route = useRoute()
 const router = useRouter()
 
 const projectKey = computed(() => route.params.projectKey as string)
-const endpointId = computed(() => Number(route.params.endpointId))
+const flowCode = computed(() => route.params.flowCode as string)
 
 const endpoint = ref<ProjectEndpoint | null>(null)
 const endpointLoading = ref(false)
@@ -41,16 +41,6 @@ const inboundInterceptorCatalog = ref<
     source: "project"
   }>
 >([])
-
-const flowCode = computed(() => {
-  if (!endpoint.value) return undefined
-  if (endpoint.value.flowCode) return endpoint.value.flowCode
-  const ep = endpoint.value.entrypoint
-  if (ep && typeof ep === "object" && (ep as any).flowCode) {
-    return (ep as any).flowCode
-  }
-  return undefined
-})
 
 const hasAnySignatureIssue = computed(() => signatureIssues.value.length > 0)
 const currentFlowSignatureIssue = computed(() => {

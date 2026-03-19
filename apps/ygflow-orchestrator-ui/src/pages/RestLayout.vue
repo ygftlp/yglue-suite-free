@@ -163,7 +163,10 @@ async function handleCreate() {
 }
 
 function openEndpoint(endpoint: ProjectEndpoint) {
-  router.push(`/projects/${encodeURIComponent(projectKey.value)}/rests/${endpoint.id}`)
+  const meta = extractEntrypointMeta(endpoint)
+  if (meta.hasFlow && meta.flowCode) {
+    router.push(`/studio/${encodeURIComponent(projectKey.value)}/${encodeURIComponent(meta.flowCode)}`)
+  }
 }
 
 function refresh() {
