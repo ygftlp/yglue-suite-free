@@ -1,16 +1,12 @@
 package org.yglue.flow.runtime.core.engine.interceptors;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationContext;
 import org.yglue.flow.runtime.core.definition.NodeDefinition;
 import org.yglue.flow.runtime.core.engine.FlowContext;
 import org.yglue.flow.runtime.core.engine.NodeInterceptor;
 import org.yglue.flow.runtime.core.engine.NodeInterceptorChain;
 import org.yglue.flow.runtime.core.engine.evaluator.ListPipelineEvaluator;
-import org.yglue.flow.runtime.core.expression.ExpressionEngines;
-import org.yglue.flow.runtime.core.expression.ExpressionEvaluationContext;
-import org.yglue.flow.runtime.rest.HttpRestInvocationStrategy;
-import org.yglue.flow.runtime.rest.RestInvocationContext;
+import org.yglue.flow.runtime.core.engine.support.DynamicValueResolver;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -19,7 +15,15 @@ import java.util.Map;
 
 public class ParamResolveInterceptor implements NodeInterceptor {
 
-    private static final Logger log = LoggerFactory.getLogger(ParamResolveInterceptor.class);
+    private final ApplicationContext applicationContext;
+
+    public ParamResolveInterceptor() {
+        this(null);
+    }
+
+    public ParamResolveInterceptor(ApplicationContext applicationContext) {
+        this.applicationContext = applicationContext;
+    }
 
     @Override
     @SuppressWarnings("unchecked")
@@ -115,40 +119,16 @@ public class ParamResolveInterceptor implements NodeInterceptor {
             return source.get("constValue");
         }
         if ("expr".equals(kind)) {
-            String expr = (String) source.get("value");
-            if (expr == null || expr.isBlank()) {
-                return null;
-            }
-            try {
-                ExpressionEvaluationContext evaluationContext = ExpressionEvaluationContext.builder()
-                        .variables(context.getVariables())
-                        .variable("ctx", context.getVariables())
-                        .variable("tempVars", tempVars)
-                        .variable("__tmp", tempVars)
-                        .attribute("flowContext", context)
-                        .build();
-                return ExpressionEngines.getDefault().evaluate(expr, evaluationContext);
-            } catch (Exception e) {
-                log.warn("[ParamResolveInterceptor] expression evaluation failed: {}", expr, e);
-                return null;
-            }
+            return DynamicValueResolver.resolveSource(source, context, tempVars, applicationContext);
         }
         if ("listPipeline".equals(kind)) {
-            return ListPipelineEvaluator.evaluate(plan, context, tempVars);
+            return ListPipelineEvaluator.evaluate(plan, context, tempVars, applicationContext);
         }
         if ("httpCall".equals(kind)) {
-            Object httpCallCfg = source.get("httpCall");
-            if (httpCallCfg instanceof Map<?, ?> rawConfig) {
-                Map<String, Object> config = (Map<String, Object>) rawConfig;
-                HttpRestInvocationStrategy strategy = new HttpRestInvocationStrategy();
-                RestInvocationContext invocationContext = new RestInvocationContext(null, context, config, null);
-                try {
-                    return strategy.invoke(invocationContext);
-                } catch (Exception e) {
-                    log.error("[ParamResolveInterceptor] httpCall failed: {}", config, e);
-                    return null;
-                }
-            }
+            return DynamicValueResolver.resolveSource(source, context, tempVars, applicationContext);
+        }
+        if ("serviceCall".equals(kind)) {
+            return DynamicValueResolver.resolveSource(source, context, tempVars, applicationContext);
         }
 
         return null;

@@ -115,8 +115,8 @@ public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
 
     @Bean
     @ConditionalOnMissingBean
-    public ParamResolveInterceptor paramResolveInterceptor() {
-        return new ParamResolveInterceptor();
+    public ParamResolveInterceptor paramResolveInterceptor(ApplicationContext applicationContext) {
+        return new ParamResolveInterceptor(applicationContext);
     }
 
     @Bean
@@ -170,7 +170,7 @@ public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
                 .register("delay", new DelayNodeExecutor())
                 .register("set", new SetNodeExecutor())
                 .register("if", new IfNodeExecutor())
-                .register("branch", new BranchNodeExecutor())
+                .register("branch", new BranchNodeExecutor(applicationContext))
                 .register("call", new CallNodeExecutor(applicationContext))
                 .register("transformer", new TransformerNodeExecutor())
                 .register("service", new RequestScopedServiceNodeExecutor(serviceExecutor))

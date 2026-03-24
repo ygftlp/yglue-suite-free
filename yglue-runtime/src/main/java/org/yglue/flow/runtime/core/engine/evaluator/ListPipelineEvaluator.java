@@ -2,11 +2,13 @@ package org.yglue.flow.runtime.core.engine.evaluator;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationContext;
 import org.springframework.expression.ExpressionParser;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.expression.spel.support.StandardEvaluationContext;
 import org.yglue.flow.runtime.core.engine.FlowContext;
 import org.yglue.flow.runtime.core.engine.interceptors.JsonPathUtil;
+import org.yglue.flow.runtime.core.engine.support.DynamicValueResolver;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -26,11 +28,19 @@ public class ListPipelineEvaluator {
 
     @SuppressWarnings("unchecked")
     public static Object evaluate(Map<String, Object> plan, FlowContext context, Map<String, Object> tempVars) {
+        return evaluate(plan, context, tempVars, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    public static Object evaluate(Map<String, Object> plan,
+            FlowContext context,
+            Map<String, Object> tempVars,
+            ApplicationContext applicationContext) {
         if (plan == null)
             return new ArrayList<>();
 
         Map<String, Object> listInput = (Map<String, Object>) plan.get("listInput");
-        Object sourceCollection = resolveSource(listInput, context, tempVars);
+        Object sourceCollection = resolveSource(listInput, context, tempVars, applicationContext);
 
         if (!(sourceCollection instanceof Collection)) {
             if (sourceCollection == null) {
@@ -55,7 +65,7 @@ public class ListPipelineEvaluator {
         // 2. 处理对象组合 (Compose)
         Map<String, Object> compose = (Map<String, Object>) plan.get("listCompose");
         if (compose != null) {
-            currentList = applyCompose(currentList, compose, context, tempVars);
+            currentList = applyCompose(currentList, compose, context, tempVars, applicationContext);
         }
 
         return currentList;
@@ -101,7 +111,8 @@ public class ListPipelineEvaluator {
 
     @SuppressWarnings("unchecked")
     private static List<Object> applyCompose(List<Object> list, Map<String, Object> compose, FlowContext context,
-            Map<String, Object> tempVars) {
+            Map<String, Object> tempVars,
+            ApplicationContext applicationContext) {
         List<Map<String, Object>> fields = (List<Map<String, Object>>) compose.get("fields");
         if (fields == null || fields.isEmpty()) {
             return list;
@@ -116,7 +127,7 @@ public class ListPipelineEvaluator {
                     continue;
 
                 Map<String, Object> source = (Map<String, Object>) field.get("source");
-                Object val = resolveItemSource(source, item, context, tempVars);
+                Object val = resolveItemSource(source, item, context, tempVars, applicationContext);
 
                 deepPut(composedItem, targetField, val);
             }
@@ -148,7 +159,8 @@ public class ListPipelineEvaluator {
 
     @SuppressWarnings("unchecked")
     private static Object resolveItemSource(Map<String, Object> source, Object item, FlowContext context,
-            Map<String, Object> tempVars) {
+            Map<String, Object> tempVars,
+            ApplicationContext applicationContext) {
         if (source == null)
             return null;
         String kind = (String) source.get("kind");
@@ -177,11 +189,16 @@ public class ListPipelineEvaluator {
             return JsonPathUtil.extract(tempVars, (String) source.get("tempKey"));
         } else if ("const".equals(kind)) {
             return source.get("constValue");
+        } else if ("serviceCall".equals(kind)) {
+            return DynamicValueResolver.resolveSource(source, context, tempVars, applicationContext);
         }
         return null; // serviceCall 目前在列表中不直接支持
     }
 
-    private static Object resolveSource(Map<String, Object> source, FlowContext context, Map<String, Object> tempVars) {
+    private static Object resolveSource(Map<String, Object> source,
+            FlowContext context,
+            Map<String, Object> tempVars,
+            ApplicationContext applicationContext) {
         if (source == null)
             return null;
         String kind = (String) source.get("kind");
@@ -194,6 +211,8 @@ public class ListPipelineEvaluator {
             return JsonPathUtil.extract(tempVars, (String) source.get("tempKey"));
         } else if ("const".equals(kind)) {
             return source.get("constValue");
+        } else if ("serviceCall".equals(kind)) {
+            return DynamicValueResolver.resolveSource(source, context, tempVars, applicationContext);
         }
         return null;
     }

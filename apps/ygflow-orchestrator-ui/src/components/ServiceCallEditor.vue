@@ -95,12 +95,15 @@ const props = defineProps<{
   projectKey?: string
   tempKeys?: string[]
   sourcePathOptions?: string[]
+  showBindings?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: "update:modelValue", value: any): void
   (e: "select-method", value: any | null): void
 }>()
+
+const bindingsVisible = computed(() => props.showBindings !== false)
 
 function toText(value: unknown): string {
   return typeof value === "string" ? value.trim() : ""
@@ -921,10 +924,10 @@ onMounted(() => { loadCatalog() })
 <template>
   <div class="service-call-editor">
     <div class="editor-head">
-      <div class="muted tiny">先选服务方法，再逐个配置参数。</div>
+      <div class="muted tiny">{{ bindingsVisible ? "先选服务方法，再逐个配置参数。" : "先选服务方法，基础装配器会自动生成参数草稿。" }}</div>
       <button type="button" class="btn mini" @click="openPicker">选择方法</button>
     </div>
-    <div class="muted tiny">快速配置：1 选择方法 2 配置参数来源 3 完成并返回。</div>
+    <div class="muted tiny">{{ bindingsVisible ? "快速配置：1 选择方法 2 配置参数来源 3 完成并返回。" : "这里负责方法选择和签名回填，参数结构编辑请在下方装配器中完成。" }}</div>
 
     <div v-if="currentMethodLabel" class="method-pill" :class="{ 'method-missing': hasSelectedMethodButCatalogMissing }">{{ currentMethodLabel }}</div>
     <div v-else class="muted tiny">尚未选择方法</div>
@@ -933,7 +936,7 @@ onMounted(() => { loadCatalog() })
       <div v-for="msg in serviceCallErrors" :key="msg" class="plan-error">{{ msg }}</div>
     </div>
 
-    <div class="arg-list">
+    <div v-if="bindingsVisible" class="arg-list">
       <div class="muted tiny">参数列表（每行一个参数）</div>
       <div v-if="local.argBindings.length === 0" class="muted tiny">当前方法无参数</div>
 
@@ -950,7 +953,7 @@ onMounted(() => { loadCatalog() })
       </div>
     </div>
 
-    <div v-if="editingBinding" class="binding-mask" @click.self="closeBindingEditor">
+    <div v-if="bindingsVisible && editingBinding" class="binding-mask" @click.self="closeBindingEditor">
       <div class="binding-panel">
         <div class="binding-head">
           <div>

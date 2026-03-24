@@ -122,7 +122,7 @@ public class RuleEngine {
                 .register("delay", new DelayNodeExecutor())
                 .register("set", new SetNodeExecutor())
                 .register("if", new IfNodeExecutor())
-                .register("branch", new BranchNodeExecutor())
+                .register("branch", new BranchNodeExecutor(applicationContext))
                 .register("call", new CallNodeExecutor(applicationContext))
                 .register("service", new RequestScopedServiceNodeExecutor(serviceNodeExecutor))
                 .register("group", new GroupNodeExecutor())
@@ -130,7 +130,7 @@ public class RuleEngine {
                 .register("transformer", new TransformerNodeExecutor());
 
         List<NodeInterceptor> interceptors = new ArrayList<>();
-        interceptors.add(new ParamResolveInterceptor());
+        interceptors.add(new ParamResolveInterceptor(applicationContext));
         interceptors.add(new TransactionInterceptor(resolveTransactionManager(applicationContext)));
 
         return new GraphExecutor(registry, interceptors);

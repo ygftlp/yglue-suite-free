@@ -360,6 +360,62 @@ export interface ClassMemberResponse<T = any> {
   items: T[]
 }
 
+export interface ClassAggregateResponse<T = any> {
+  qualifiedName?: string
+  simpleName?: string
+  packageName?: string
+  kind?: string
+  doc?: string | null
+  fields: T[]
+  methods: T[]
+}
+
+export interface ParamAssemblerArgMeta {
+  name: string
+  javaType?: string
+  required?: boolean
+  schema?: Record<string, any> | null
+}
+
+export interface ParamAssemblerIssue {
+  code: string
+  path: string
+  severity: string
+  message: string
+}
+
+export interface ParamAssemblerDraftResponse {
+  ast: Record<string, any>
+  issues: ParamAssemblerIssue[]
+}
+
+export interface ParamAssemblerValidateResponse {
+  valid: boolean
+  issues: ParamAssemblerIssue[]
+}
+
+export interface ParamAssemblerContextResponse {
+  entrypoint?: ProjectEndpoint | null
+  sourcePaths: string[]
+  componentGroups: EndpointComponentGroup[]
+  models: FlowModel[]
+  resolvers: FlowResolver[]
+  selectedJars: Array<{
+    name?: string
+    coordinate?: string | null
+    jarKey?: string
+    groupId?: string
+    artifactId?: string
+    version?: string
+  }>
+  helperClasses: Array<{
+    qualifiedName: string
+    simpleName: string
+    packageName: string
+    kind: string
+  }>
+}
+
 export const api = {
   listProjects(): Promise<Project[]> {
     return request<Project[]>("/projects")
@@ -517,6 +573,47 @@ export const api = {
     const { qualifiedName, kind, page = 1, size = 50 } = params
     const q = new URLSearchParams({ qualifiedName, kind, page: String(page), size: String(size) }).toString()
     return request<ClassMemberResponse>(`/projects/${encodeURIComponent(projectKey)}/code-snapshots/class-members?${q}`)
+  },
+
+  getClassAggregate(projectKey: string, qualifiedName: string): Promise<ClassAggregateResponse> {
+    const q = new URLSearchParams({ qualifiedName }).toString()
+    return request<ClassAggregateResponse>(
+      `/projects/${encodeURIComponent(projectKey)}/code-snapshots/class-aggregate?${q}`
+    )
+  },
+
+  getParamAssemblerContext(
+    projectKey: string,
+    params?: { endpointId?: number | null }
+  ): Promise<ParamAssemblerContextResponse> {
+    const query = params?.endpointId
+      ? `?endpointId=${encodeURIComponent(String(params.endpointId))}`
+      : ""
+    return request<ParamAssemblerContextResponse>(
+      `/projects/${encodeURIComponent(projectKey)}/param-assembler/context${query}`
+    )
+  },
+
+  buildParamAssemblerDraft(
+    projectKey: string,
+    payload: { args: ParamAssemblerArgMeta[]; sourcePaths?: string[] }
+  ): Promise<ParamAssemblerDraftResponse> {
+    return jsonRequest<ParamAssemblerDraftResponse>(
+      `/projects/${encodeURIComponent(projectKey)}/param-assembler/draft`,
+      payload,
+      { method: "POST" }
+    )
+  },
+
+  validateParamAssemblerAst(
+    projectKey: string,
+    payload: { ast: Record<string, any>; args?: ParamAssemblerArgMeta[] }
+  ): Promise<ParamAssemblerValidateResponse> {
+    return jsonRequest<ParamAssemblerValidateResponse>(
+      `/projects/${encodeURIComponent(projectKey)}/param-assembler/validate`,
+      payload,
+      { method: "POST" }
+    )
   },
 }
 

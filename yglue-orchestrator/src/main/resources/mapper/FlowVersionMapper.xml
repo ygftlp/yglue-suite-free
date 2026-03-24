@@ -58,4 +58,12 @@
           AND del_flag = 0
     </select>
 
+    <update id="updateContentJson">
+        UPDATE yglue_flow_version
+        SET content_json = #{contentJson},
+            update_by = #{updateBy}
+        WHERE id = #{id}
+          AND del_flag = 0
+    </update>
+
 </mapper>

@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.yglue.flow.orch.domain.Flow;
 import org.yglue.flow.orch.domain.FlowVersion;
+import org.yglue.flow.orch.service.FlowAuthoringService;
 import org.yglue.flow.orch.service.FlowService;
 import org.yglue.flow.orch.web.dto.flow.request.FlowSaveRequest;
 import org.yglue.flow.orch.web.dto.flow.request.FlowPublishRequest;
@@ -21,21 +22,24 @@ import java.util.List;
 public class FlowController {
 
     private final FlowService flowService;
+    private final FlowAuthoringService flowAuthoringService;
 
-    public FlowController(FlowService flowService) {
+    public FlowController(FlowService flowService,
+                          FlowAuthoringService flowAuthoringService) {
         this.flowService = flowService;
+        this.flowAuthoringService = flowAuthoringService;
     }
 
     @PostMapping
     public FlowVersion save(@PathVariable("projectKey") String projectKey, @RequestBody @Valid FlowSaveRequest req) {
-        return flowService.saveFlow(projectKey, req);
+        return flowAuthoringService.saveFlow(projectKey, req);
     }
 
     @PostMapping("/{code}/publish")
     public FlowVersion publish(@PathVariable("projectKey") String projectKey,
                                @PathVariable("code") String code,
                                @RequestBody @Valid FlowPublishRequest req) {
-        return flowService.publishFlow(projectKey, code, req);
+        return flowAuthoringService.publishFlow(projectKey, code, req);
     }
 
     @GetMapping

@@ -109,6 +109,19 @@ public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
 
     @Bean
     @ConditionalOnMissingBean
+    public ParamResolveInterceptor paramResolveInterceptor(ApplicationContext applicationContext) {
+        return new ParamResolveInterceptor(applicationContext);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public TransactionInterceptor transactionInterceptor(
+            @Autowired(required = false) PlatformTransactionManager txManager) {
+        return new TransactionInterceptor(txManager);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public org.yglue.flow.runtime.core.NodeExecutorRegistry nodeExecutorRegistry(
             ApplicationContext applicationContext) {
         org.yglue.flow.runtime.core.executors.ServiceNodeExecutor serviceExecutor = new org.yglue.flow.runtime.core.executors.ServiceNodeExecutor(
@@ -118,7 +131,7 @@ public class FlowRuntimeAutoConfiguration implements WebMvcConfigurer {
                 .register("delay", new org.yglue.flow.runtime.core.executors.DelayNodeExecutor())
                 .register("set", new org.yglue.flow.runtime.core.executors.SetNodeExecutor())
                 .register("if", new org.yglue.flow.runtime.core.executors.IfNodeExecutor())
-                .register("branch", new org.yglue.flow.runtime.core.executors.BranchNodeExecutor())
+                .register("branch", new org.yglue.flow.runtime.core.executors.BranchNodeExecutor(applicationContext))
                 .register("call", new org.yglue.flow.runtime.core.executors.CallNodeExecutor(applicationContext))
                 .register("transformer", new org.yglue.flow.runtime.core.executors.TransformerNodeExecutor())
                 .register("service", serviceExecutor)

@@ -22,6 +22,7 @@ interface SourceConfig {
   path: string
   tempKey: string
   constValue: string
+  serviceResultPath: string
   serviceCall: ServiceCallConfig
 }
 
@@ -56,6 +57,7 @@ function createSource(kind: SourceKind = "ctx"): SourceConfig {
     path: "request.body.xxx",
     tempKey: "",
     constValue: "",
+    serviceResultPath: "",
     serviceCall: {
       fn: "",
       argsMode: "list",
@@ -199,7 +201,7 @@ const operatorOptions = [
       {{
         sourceEditorMode === "quick"
           ? "快速模式：建议使用 ctx / 常量 / tempVar 组合分支条件。"
-          : "高级模式：允许在分支线上直接服务调用（建议先用 tempVar 预计算）。"
+          : "高级模式：允许在分支线上直接服务调用。若方法返回包装对象，建议补充结果提取路径，避免直接比较整包返回值。"
       }}
     </div>
 
@@ -253,6 +255,14 @@ const operatorOptions = [
                 :temp-keys="props.tempVarKeys ?? []"
                 :source-path-options="props.sourcePathOptions"
               />
+              <input
+                class="input"
+                v-model="rule.left.serviceResultPath"
+                placeholder="结果提取路径（可选），例如 data.status / $.data.score"
+              />
+              <div class="muted tiny hint-line">
+                服务方法返回包装对象时，在这里提取真正参与比较的字段；留空则直接比较整个返回值。
+              </div>
             </template>
           </div>
 
@@ -307,6 +317,14 @@ const operatorOptions = [
                 :temp-keys="props.tempVarKeys ?? []"
                 :source-path-options="props.sourcePathOptions"
               />
+              <input
+                class="input"
+                v-model="rule.right.serviceResultPath"
+                placeholder="结果提取路径（可选），例如 data.status / $.data.score"
+              />
+              <div class="muted tiny hint-line">
+                服务方法返回包装对象时，在这里提取真正参与比较的字段；留空则直接比较整个返回值。
+              </div>
             </template>
           </div>
         </div>
@@ -422,6 +440,10 @@ const operatorOptions = [
 
 .muted.tiny {
   font-size: 10px;
+}
+
+.hint-line {
+  line-height: 1.4;
 }
 
 .btn.mini {

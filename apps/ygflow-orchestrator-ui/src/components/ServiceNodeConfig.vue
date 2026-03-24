@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue"
 import { api } from "../api/client"
+import ParamAssemblerPanel from "./ParamAssemblerPanel.vue"
 import ParamPlanBuilder from "./ParamPlanBuilder.vue"
 import ServiceCallEditor from "./ServiceCallEditor.vue"
 
@@ -85,6 +86,7 @@ type MethodMeta = {
 
 const selectedMethodMeta = ref<MethodMeta>(null)
 const requestPathOptions = ref<string[]>([])
+const activeAssemblerMode = ref<"basic" | "advanced">("basic")
 
 function toText(value: unknown): string {
   return typeof value === "string" ? value.trim() : ""
@@ -102,6 +104,40 @@ function safeParseJson(raw: unknown): Record<string, any> | null {
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value))
+}
+
+function hasUsefulParamPlans(value: any): boolean {
+  return Boolean(
+    (Array.isArray(value?.argPlans) && value.argPlans.length > 0)
+    || (Array.isArray(value?.tempPlans) && value.tempPlans.length > 0),
+  )
+}
+
+function getStoredParamAssemblerAst(): Record<string, any> | null {
+  const config = safeParseJson(props.comp?.configJson)
+  const ast = config?.paramAssemblerAst
+  return ast && typeof ast === "object" && !Array.isArray(ast) ? ast : null
+}
+
+function detectPreferredAssemblerMode(): "basic" | "advanced" {
+  const config = safeParseJson(props.comp?.configJson)
+  const storedMode = toText(config?.paramAssemblerMode)
+  if (storedMode === "advanced") return "advanced"
+  if (storedMode === "basic") return "basic"
+  if (getStoredParamAssemblerAst()) return "basic"
+  if (hasUsefulParamPlans(props.paramPlans)) return "advanced"
+  return "basic"
+}
+
+function patchCompConfig(partial: Record<string, any>) {
+  if (!props.comp || typeof props.comp !== "object") return
+  const current = clone(props.comp)
+  const currentConfig = safeParseJson(current.configJson) || {}
+  current.configJson = JSON.stringify({
+    ...currentConfig,
+    ...partial,
+  })
+  emit("update:comp", current)
 }
 
 function inferValueType(typeName: string): string {
@@ -381,6 +417,13 @@ function buildEditorModel(): ServiceCallModel {
 }
 
 const serviceCallModel = computed(() => buildEditorModel())
+const currentMethodKey = computed(() => {
+  const refInfo = serviceCallModel.value?.serviceRef
+  const bean = toText(selectedMethodMeta.value?.serviceBean) || toText(refInfo?.serviceBean)
+  const signature = toText(selectedMethodMeta.value?.methodSignature) || toText(refInfo?.methodSignature) || toText(props.comp?.method)
+  return bean && signature ? `${bean}|${signature}` : ""
+})
+const currentParamAssemblerAst = computed(() => getStoredParamAssemblerAst())
 const tempKeys = computed(() =>
   (Array.isArray(props.paramPlans?.tempPlans) ? props.paramPlans.tempPlans : [])
     .map((item: any) => toText(item?.key))
@@ -424,6 +467,10 @@ const inputSummaryText = computed(() => {
   if (size === 0) return "未识别到入参"
   return `已识别 ${size} 个入参`
 })
+
+watch(() => props.nodeId, () => {
+  activeAssemblerMode.value = detectPreferredAssemblerMode()
+}, { immediate: true })
 
 function buildCompPayload(model: ServiceCallModel, meta: MethodMeta) {
   const current = props.comp && typeof props.comp === "object" ? clone(props.comp) : {}
@@ -547,6 +594,14 @@ function handleMethodMeta(next: MethodMeta) {
   selectedMethodMeta.value = next ? clone(next) : null
 }
 
+function setAssemblerMode(mode: "basic" | "advanced") {
+  activeAssemblerMode.value = mode
+  patchCompConfig({
+    paramAssemblerMode: mode,
+    paramAssemblerAst: mode === "basic" ? getStoredParamAssemblerAst() : undefined,
+  })
+}
+
 function handleServiceCallUpdate(model: ServiceCallModel) {
   const meta = selectedMethodMeta.value
   if (!model?.serviceRef?.serviceBean || !model?.serviceRef?.methodName) {
@@ -560,17 +615,27 @@ function handleServiceCallUpdate(model: ServiceCallModel) {
   const nextComp = buildCompPayload(model, meta)
   const nextInputs = buildInputsPayload(model, meta)
   const nextOutput = buildOutputPayload(meta)
-  const nextParamPlans = buildParamPlansPayload(model)
 
   emit("update:comp", nextComp)
   emit("update:inputs", nextInputs)
   emit("update:output", nextOutput)
-  emit("update:paramPlans", nextParamPlans)
 
   if (!toText(props.label)) {
     const fallbackLabel = toText(meta?.serviceName) || toText(model.serviceRef?.serviceName) || toText(model.serviceRef?.methodName)
     if (fallbackLabel) emit("update:label", fallbackLabel)
   }
+}
+
+function handleBasicAssemblerAstUpdate(ast: Record<string, any> | null) {
+  if (!props.comp || typeof props.comp !== "object") return
+  patchCompConfig({
+    paramAssemblerMode: "basic",
+    paramAssemblerAst: ast,
+  })
+}
+
+function handleBasicParamPlansUpdate(paramPlans: any) {
+  emit("update:paramPlans", paramPlans)
 }
 </script>
 
@@ -599,6 +664,7 @@ function handleServiceCallUpdate(model: ServiceCallModel) {
           :project-key="projectKey"
           :temp-keys="tempKeys"
           :source-path-options="sourcePathOptions"
+          :show-bindings="false"
           @update:model-value="handleServiceCallUpdate"
           @select-method="handleMethodMeta"
         />
@@ -636,6 +702,47 @@ function handleServiceCallUpdate(model: ServiceCallModel) {
         <div class="muted tiny signature-hint">上方服务选择器会自动回填签名；这里只保留摘要预览。</div>
       </div>
       <div v-else class="muted empty-tip">当前节点无入参定义。</div>
+    </section>
+
+    <section class="section">
+      <div class="row section-head">
+        <div class="muted section-title">参数装配方式</div>
+        <div class="muted tiny">基础装配适合绝大多数对象和单层集合场景；复杂编排仍走高级模式。</div>
+      </div>
+      <div class="assembler-mode-switch">
+        <button
+          type="button"
+          class="btn mini"
+          :class="{ active: activeAssemblerMode === 'basic' }"
+          @click="setAssemblerMode('basic')"
+        >
+          基础装配
+        </button>
+        <button
+          type="button"
+          class="btn mini"
+          :class="{ active: activeAssemblerMode === 'advanced' }"
+          @click="setAssemblerMode('advanced')"
+        >
+          高级模式
+        </button>
+      </div>
+
+      <div v-if="activeAssemblerMode === 'basic'" class="card primary-card">
+        <ParamAssemblerPanel
+          :model-value="currentParamAssemblerAst"
+          :project-key="projectKey"
+          :endpoint-id="endpointId"
+          :method-key="currentMethodKey"
+          :input-defs="inputs"
+          :source-path-options="sourcePathOptions"
+          @update:model-value="handleBasicAssemblerAstUpdate"
+          @update:paramPlans="handleBasicParamPlansUpdate"
+        />
+      </div>
+      <div v-else class="muted tiny mode-hint">
+        高级模式会直接编辑原始参数计划，适合基础装配未覆盖的复杂补数、特殊列表管线和兼容性调试场景。
+      </div>
     </section>
 
     <section class="section">
@@ -712,6 +819,22 @@ function handleServiceCallUpdate(model: ServiceCallModel) {
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid #e5e7eb;
+}
+
+.assembler-mode-switch {
+  display: inline-flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.assembler-mode-switch .btn.active {
+  border-color: #2563eb;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.mode-hint {
+  line-height: 1.5;
 }
 
 .row {

@@ -2,6 +2,7 @@ package org.yglue.flow.runtime.core.executors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationContext;
 import org.yglue.flow.runtime.core.FlowExecutor;
 import org.yglue.flow.runtime.core.NodeExecutionContext;
 import org.yglue.flow.runtime.core.definition.FlowDefinition;
@@ -25,6 +26,15 @@ import java.util.Map;
 public class BranchNodeExecutor implements FlowExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(BranchNodeExecutor.class);
+    private final ApplicationContext applicationContext;
+
+    public BranchNodeExecutor() {
+        this(null);
+    }
+
+    public BranchNodeExecutor(ApplicationContext applicationContext) {
+        this.applicationContext = applicationContext;
+    }
 
     @Override
     @SuppressWarnings("unchecked")
@@ -68,7 +78,7 @@ public class BranchNodeExecutor implements FlowExecutor {
                 conditionAst = (Map<String, Object>) defaultConditionObj;
             }
 
-            boolean conditionMet = BranchConditionEvaluator.evaluate(conditionAst, flowContext, tempVars);
+            boolean conditionMet = BranchConditionEvaluator.evaluate(conditionAst, flowContext, tempVars, applicationContext);
             if (!conditionMet) {
                 continue;
             }
@@ -114,6 +124,10 @@ public class BranchNodeExecutor implements FlowExecutor {
         Object rawAst = data.get("condition");
         if (rawAst instanceof Map) {
             return (Map<String, Object>) rawAst;
+        }
+        Object rawConditionV2 = data.get("conditionV2");
+        if (rawConditionV2 instanceof Map) {
+            return (Map<String, Object>) rawConditionV2;
         }
         return null;
     }

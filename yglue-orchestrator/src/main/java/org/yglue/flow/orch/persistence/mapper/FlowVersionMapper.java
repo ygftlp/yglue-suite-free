@@ -17,4 +17,8 @@ public interface FlowVersionMapper {
     Integer selectMaxVersion(@Param("flowId") Long flowId);
 
     List<FlowVersion> selectByIds(@Param("ids") List<Long> ids);
+
+    void updateContentJson(@Param("id") Long id,
+                           @Param("contentJson") String contentJson,
+                           @Param("updateBy") String updateBy);
 }
