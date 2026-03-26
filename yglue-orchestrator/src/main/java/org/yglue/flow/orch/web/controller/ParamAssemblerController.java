@@ -10,9 +10,11 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.yglue.flow.orch.service.ParamAssemblerService;
 import org.yglue.flow.orch.web.dto.paramassembler.request.ParamAssemblerDraftRequest;
+import org.yglue.flow.orch.web.dto.paramassembler.request.ParamAssemblerSuggestRequest;
 import org.yglue.flow.orch.web.dto.paramassembler.request.ParamAssemblerValidateRequest;
 import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerContextResponse;
 import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerDraftResponse;
+import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerSuggestResponse;
 import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerValidateResponse;
 
 @RestController
@@ -35,6 +37,12 @@ public class ParamAssemblerController {
     public ParamAssemblerDraftResponse draft(@PathVariable("projectKey") String projectKey,
                                              @RequestBody @Valid ParamAssemblerDraftRequest request) {
         return paramAssemblerService.buildDraft(projectKey, request);
+    }
+
+    @PostMapping("/suggest")
+    public ParamAssemblerSuggestResponse suggest(@PathVariable("projectKey") String projectKey,
+                                                 @RequestBody @Valid ParamAssemblerSuggestRequest request) {
+        return paramAssemblerService.suggest(projectKey, request);
     }
 
     @PostMapping("/validate")

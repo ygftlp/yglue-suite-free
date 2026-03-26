@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue"
+import { computed, ref, watch, type ComponentPublicInstance } from "vue"
 import {
   api,
   type ParamAssemblerArgMeta,
@@ -37,9 +37,15 @@ type ObjectNode = {
 
 type ListNode = {
   kind: "list"
-  source: SourceNode
+  source: SourceNode | CallNode
   item?: ValueNode
   ops?: Array<Record<string, any>>
+}
+
+type ListExpressionOp = {
+  id: string
+  op: "filter"
+  expression: string
 }
 
 type CallArgNode = {
@@ -105,6 +111,31 @@ type ParamAssemblerInsight = {
   warnings: string[]
 }
 
+type SmartFillMode = "all" | "emptyOnly"
+
+type ServiceCallTrace = {
+  label: string
+  fn: string
+  args: number
+  resultPath: string
+}
+
+type ValuePreviewItem = {
+  name: string
+  summary: string
+  sourceRefs: string[]
+  tempRefs: string[]
+  serviceCalls: ServiceCallTrace[]
+}
+
+type IssueActionKind = "smart-fill-empty" | "smart-fill-all" | "rebuild-draft" | "focus"
+
+type IssueAction = {
+  detail: string
+  actionLabel?: string
+  actionKind?: IssueActionKind
+}
+
 const props = defineProps<{
   modelValue?: Record<string, any> | null
   projectKey?: string
@@ -136,10 +167,23 @@ const issues = ref<ParamAssemblerIssue[]>([])
 const hasPendingChanges = ref(false)
 const lastDraftSignature = ref("")
 const syncFromCode = ref(false)
+const focusedIssueTarget = ref("")
+const lastSmartFillSummary = ref("")
 let requestSeq = 0
+const argCardRefs = new Map<string, HTMLElement>()
+const tempCardRefs = new Map<number, HTMLElement>()
+const issueTargetRefs = new Map<string, HTMLElement>()
 
 function toText(value: unknown): string {
   return typeof value === "string" ? value.trim() : ""
+}
+
+function firstNonBlank(...values: unknown[]): string {
+  for (const value of values) {
+    const text = toText(value)
+    if (text) return text
+  }
+  return ""
 }
 
 function clone<T>(value: T): T {
@@ -222,6 +266,14 @@ function normalizeLeaf(value: string): string {
 
 function buildFieldId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+function createListExpressionOp(op: "filter" = "filter", expression = ""): ListExpressionOp {
+  return {
+    id: buildFieldId(`list_${op}`),
+    op,
+    expression,
+  }
 }
 
 function guessSourcePath(name: string): string {
@@ -398,6 +450,13 @@ function normalizeNestedValueNode(raw: unknown): ValueNode {
   return normalizeSourceNode(raw, "")
 }
 
+function normalizeListOp(raw: unknown): ListExpressionOp | null {
+  if (!isRecord(raw)) return null
+  const op = toText(raw.op).toLowerCase()
+  if (op !== "filter") return null
+  return createListExpressionOp("filter", firstNonBlank(raw.expression, raw.exprText, raw.value))
+}
+
 function normalizeValueNode(raw: unknown, meta: ParamAssemblerArgMeta): ValueNode {
   if (!isRecord(raw)) return defaultValueForArg(meta)
   const kind = toText(raw.kind).toLowerCase()
@@ -433,9 +492,15 @@ function normalizeValueNode(raw: unknown, meta: ParamAssemblerArgMeta): ValueNod
       : undefined
     return {
       kind: "list",
-      source: normalizeSourceNode(raw.source, guessSourcePath(meta.name)),
+      source: isRecord(raw.source) && toText(raw.source.kind).toLowerCase() === "call"
+        ? normalizeCallNode(raw.source)
+        : normalizeSourceNode(raw.source, guessSourcePath(meta.name)),
       item: itemNode,
-      ops: Array.isArray(raw.ops) ? clone(raw.ops) : [],
+      ops: Array.isArray(raw.ops)
+        ? raw.ops
+          .map((item) => normalizeListOp(item) ?? (isRecord(item) ? clone(item) : null))
+          .filter(Boolean) as Array<Record<string, any>>
+        : [],
     }
   }
   if (kind === "call") {
@@ -545,6 +610,171 @@ const unsupportedNotes = computed(() => {
 const tempPathOptions = computed(() =>
   uniquePaths((localAst.value.temps || []).map((item) => `temp.${toText(item.key)}`).filter(Boolean)),
 )
+
+const nonItemContextSourcePaths = computed(() =>
+  contextSourcePaths.value.filter((item) => !item.startsWith("item.") && !item.startsWith("$.") && !item.startsWith("temp.")),
+)
+
+const itemContextSourcePaths = computed(() =>
+  contextSourcePaths.value.filter((item) => item.startsWith("item.") || item.startsWith("$.")),
+)
+
+function normalizeMatchToken(value: string): string {
+  return toText(value)
+    .replace(/^request\.(body|query|path)\./, "")
+    .replace(/^request\./, "")
+    .replace(/^context\./, "")
+    .replace(/^ctx\./, "")
+    .replace(/^nodeOutput\./, "")
+    .replace(/^temp\./, "")
+    .replace(/^item\./, "")
+    .replace(/^\$\./, "")
+    .replace(/\[\]/g, "")
+    .replace(/\[\*\]/g, "")
+    .toLowerCase()
+}
+
+function tailToken(value: string): string {
+  const normalized = normalizeMatchToken(value)
+  if (!normalized) return ""
+  const parts = normalized.split(".").filter(Boolean)
+  return parts[parts.length - 1] || normalized
+}
+
+function scoreCandidate(target: string, candidate: string): number {
+  const normalizedTarget = normalizeMatchToken(target)
+  const normalizedCandidate = normalizeMatchToken(candidate)
+  if (!normalizedTarget || !normalizedCandidate) return Number.NEGATIVE_INFINITY
+  if (normalizedTarget === normalizedCandidate) return 300
+  if (normalizedCandidate.endsWith(`.${normalizedTarget}`)) return 220
+  if (normalizedTarget.endsWith(`.${normalizedCandidate}`)) return 180
+  const targetTail = tailToken(normalizedTarget)
+  const candidateTail = tailToken(normalizedCandidate)
+  let score = 0
+  if (targetTail && targetTail === candidateTail) score += 120
+  if (normalizedCandidate.includes(normalizedTarget)) score += 60
+  if (normalizedTarget.includes(normalizedCandidate)) score += 40
+  return score
+}
+
+function findBestCandidate(target: string, candidates: string[], minScore = 1): string {
+  let best = ""
+  let bestScore = Number.NEGATIVE_INFINITY
+  candidates.forEach((candidate) => {
+    const score = scoreCandidate(target, candidate)
+    if (score > bestScore) {
+      bestScore = score
+      best = candidate
+    }
+  })
+  return bestScore >= minScore ? best : ""
+}
+
+function isSourceNodeBlank(source: SourceNode): boolean {
+  if (source.sourceType === "const") return !toText(source.constValue)
+  return !toText(source.path)
+}
+
+function applySuggestedSourcePath(source: SourceNode, candidate: string): boolean {
+  const nextPath = toText(candidate)
+  if (!nextPath) return false
+  const nextType = inferSourceTypeFromPath(nextPath)
+  if (!nextType || nextType === "const") return false
+  const changed = source.sourceType !== nextType || toText(source.path) !== nextPath || toText(source.constValue)
+  source.sourceType = nextType
+  source.path = nextPath
+  source.constValue = ""
+  return changed
+}
+
+function smartFillSourceNode(
+  source: SourceNode,
+  target: string,
+  options: { emptyOnly: boolean; preferItem?: boolean } = { emptyOnly: true },
+): boolean {
+  if (source.sourceType === "const") return false
+  if (options.emptyOnly && !isSourceNodeBlank(source)) return false
+
+  if (options.preferItem) {
+    const itemCandidate = findBestCandidate(target, itemContextSourcePaths.value)
+    if (itemCandidate && applySuggestedSourcePath(source, itemCandidate)) return true
+  }
+
+  const pathCandidate = findBestCandidate(target, nonItemContextSourcePaths.value)
+  if (pathCandidate && applySuggestedSourcePath(source, pathCandidate)) return true
+
+  const tempCandidate = findBestCandidate(target, tempPathOptions.value, 80)
+  if (tempCandidate && applySuggestedSourcePath(source, tempCandidate)) return true
+
+  return false
+}
+
+function smartFillObjectFields(fields: ObjectFieldNode[], emptyOnly: boolean, preferItem = false): number {
+  return fields.reduce((count, field) => {
+    const source = getFieldSourceValue(field)
+    const target = toText(field.path)
+    if (!target) return count
+    return count + (smartFillSourceNode(source, target, { emptyOnly, preferItem }) ? 1 : 0)
+  }, 0)
+}
+
+function smartFillArg(arg: ArgAstNode, emptyOnly: boolean): number {
+  const kind = toText(arg.value?.kind).toLowerCase()
+  if (kind === "source") {
+    return smartFillSourceNode(getArgSourceValue(arg), arg.name, { emptyOnly }) ? 1 : 0
+  }
+  if (kind === "object") {
+    return smartFillObjectFields(getObjectFieldList(arg), emptyOnly)
+  }
+  if (kind !== "list") return 0
+
+  let changed = 0
+  if (getListSourceMode(arg) === "source") {
+    changed += smartFillSourceNode(getListSourceValue(arg), arg.name, { emptyOnly }) ? 1 : 0
+  }
+  if (canShowItemBuilder(arg.name)) {
+    changed += smartFillObjectFields(getListItemFieldList(arg), emptyOnly, true)
+  } else {
+    changed += smartFillSourceNode(getPrimitiveListItemSource(arg), arg.name, { emptyOnly, preferItem: true }) ? 1 : 0
+  }
+  return changed
+}
+
+async function applySmartFill(mode: SmartFillMode) {
+  if (!props.projectKey || argMetas.value.length === 0) {
+    lastSmartFillSummary.value = "当前没有可推荐的参数装配上下文。"
+    return
+  }
+  validating.value = true
+  draftError.value = ""
+  try {
+    const response = await api.suggestParamAssemblerAst(props.projectKey, {
+      ast: clone(localAst.value),
+      args: argMetas.value,
+      sourcePaths: contextSourcePaths.value,
+      mode,
+    })
+    applyAst(response.ast as ParamAssemblerAst, {
+      emitChange: true,
+      pending: false,
+      issues: response.issues || [],
+    })
+    const touchedArgs = Array.isArray(response.touchedArgs)
+      ? response.touchedArgs.map((item) => toText(item)).filter(Boolean)
+      : []
+    const touchedSummary = touchedArgs.length > 0
+      ? `涉及参数：${touchedArgs.slice(0, 4).join("、")}${touchedArgs.length > 4 ? ` 等 ${touchedArgs.length} 个` : ""}。`
+      : ""
+    const baseSummary = toText(response.summary)
+    lastSmartFillSummary.value = baseSummary
+      ? `${baseSummary}${touchedSummary ? ` ${touchedSummary}` : ""}`
+      : `${mode === "emptyOnly" ? "已自动补齐空白映射" : "已重算推荐映射"}${response.updatedCount > 0 ? `，共更新 ${response.updatedCount} 处。` : "。"}${touchedSummary}`
+  } catch (error) {
+    draftError.value = error instanceof Error ? error.message : "参数自动补齐失败。"
+  } finally {
+    validating.value = false
+  }
+}
 
 function toAstSourceNodeFromLegacy(raw: any): SourceNode {
   const kind = toText(raw?.kind)
@@ -690,8 +920,25 @@ function compileSourceToLegacy(source: SourceNode, scope: "arg" | "listItem" = "
   }
 }
 
+function stripListItemPrefix(path: string): string {
+  const raw = toText(path)
+  if (!raw) return ""
+  if (raw.startsWith("$.")) return raw.slice(2)
+  if (raw.startsWith("item.")) return raw.slice(5)
+  if (raw === "item") return ""
+  return raw
+}
+
+function compileListInputValueToLegacy(value: SourceNode | CallNode): Record<string, any> {
+  if (isRecord(value) && toText(value.kind).toLowerCase() === "call") {
+    return compileCallSourceToLegacy(value as CallNode)
+  }
+  return compileSourceToLegacy(value as SourceNode)
+}
+
 function compileListNodeToPlan(arg: ArgAstNode, value: ListNode): Record<string, any> {
   const itemMeta = findArgMeta(arg.name)
+  const listSteps: Array<Record<string, any>> = []
   const composeFields = value.item && isRecord(value.item) && toText(value.item.kind).toLowerCase() === "object"
     ? (Array.isArray((value.item as ObjectNode).fields) ? (value.item as ObjectNode).fields : []).map((field) => ({
       id: buildFieldId("lf"),
@@ -701,7 +948,31 @@ function compileListNodeToPlan(arg: ArgAstNode, value: ListNode): Record<string,
     }))
     : []
 
-  return {
+  if (value.item && isRecord(value.item) && toText(value.item.kind).toLowerCase() === "source") {
+    const itemSource = normalizeSourceNode(value.item, "")
+    if (itemSource.sourceType === "item") {
+      const itemPath = stripListItemPrefix(itemSource.path || "")
+      if (itemPath) {
+        listSteps.push({
+          op: "map",
+          exprText: itemPath,
+        })
+      }
+    }
+  }
+
+  ;(Array.isArray(value.ops) ? value.ops : []).forEach((raw) => {
+    const op = normalizeListOp(raw)
+    if (!op) return
+    const expression = toText(op.expression)
+    if (!expression) return
+    listSteps.push({
+      op: "filter",
+      exprText: expression,
+    })
+  })
+
+  const plan: Record<string, any> = {
     target: arg.name,
     typeHint: arg.javaType || itemMeta.javaType || "",
     source: {
@@ -710,13 +981,19 @@ function compileListNodeToPlan(arg: ArgAstNode, value: ListNode): Record<string,
       constValue: "",
       tempKey: "",
     },
-    listInput: compileSourceToLegacy(value.source),
-    listCompose: {
+    listInput: compileListInputValueToLegacy(value.source),
+  }
+
+  if (composeFields.length > 0) {
+    plan.listCompose = {
       itemTypeHint: deriveListItemType(arg.javaType || itemMeta.javaType || "", itemMeta.schema || null),
       fields: composeFields,
-    },
-    listSteps: [],
+    }
   }
+  if (listSteps.length > 0) {
+    plan.listSteps = listSteps
+  }
+  return plan
 }
 
 function compileCallArgValueToLegacy(value: ValueNode): Record<string, any> {
@@ -747,6 +1024,24 @@ function compileCallArgValueToLegacy(value: ValueNode): Record<string, any> {
     }
   }
   return compileSourceToLegacy(normalizeSourceNode(value, ""))
+}
+
+function compileCallSourceToLegacy(call: CallNode): Record<string, any> {
+  const ref = isRecord(call.ref) ? clone(call.ref) : {}
+  return {
+    kind: "serviceCall",
+    serviceCall: {
+      fn: toText(call.fn),
+      serviceRef: ref,
+      argBindings: Array.isArray(call.args)
+        ? call.args.map((arg) => ({
+          name: toText(arg.name),
+          source: compileCallArgValueToLegacy(arg.value),
+        }))
+        : [],
+    },
+    serviceResultPath: toText(call.resultPath),
+  }
 }
 
 function compileTempPlan(temp: TempAstNode): Record<string, any> {
@@ -967,6 +1262,53 @@ function removeListItemField(argName: string, index: number) {
   fields.splice(index, 1)
 }
 
+function canShowPrimitiveListItemMapper(argName: string): boolean {
+  return !canShowItemBuilder(argName)
+}
+
+function getPrimitiveListItemSource(arg: ArgAstNode): SourceNode {
+  const listValue = getListValue(arg)
+  if (!listValue.item || !isRecord(listValue.item) || toText(listValue.item.kind).toLowerCase() !== "source") {
+    listValue.item = createSourceNode("item", "")
+  }
+  return listValue.item as SourceNode
+}
+
+function clearPrimitiveListItemSource(argName: string) {
+  const arg = localAst.value.args.find((item) => item.name === argName)
+  if (!arg || !isRecord(arg.value) || toText(arg.value.kind).toLowerCase() !== "list") return
+  const listValue = arg.value as ListNode
+  if (listValue.item && isRecord(listValue.item) && toText(listValue.item.kind).toLowerCase() === "source") {
+    listValue.item = undefined
+  }
+}
+
+function getListFilterOps(arg: ArgAstNode): ListExpressionOp[] {
+  const listValue = getListValue(arg)
+  if (!Array.isArray(listValue.ops)) listValue.ops = []
+  listValue.ops = listValue.ops
+    .map((item) => normalizeListOp(item) ?? (isRecord(item) ? item : null))
+    .filter(Boolean) as Array<Record<string, any>>
+  return (listValue.ops.filter((item) => toText(item?.op).toLowerCase() === "filter")) as ListExpressionOp[]
+}
+
+function addListFilterOp(argName: string) {
+  const arg = localAst.value.args.find((item) => item.name === argName)
+  if (!arg || !isRecord(arg.value) || toText(arg.value.kind).toLowerCase() !== "list") return
+  const listValue = arg.value as ListNode
+  if (!Array.isArray(listValue.ops)) listValue.ops = []
+  listValue.ops.push(createListExpressionOp("filter", ""))
+}
+
+function removeListFilterOp(argName: string, opId: string) {
+  const arg = localAst.value.args.find((item) => item.name === argName)
+  if (!arg || !isRecord(arg.value) || toText(arg.value.kind).toLowerCase() !== "list") return
+  const listValue = arg.value as ListNode
+  if (!Array.isArray(listValue.ops)) return
+  const index = listValue.ops.findIndex((item) => toText(item?.id) === toText(opId))
+  if (index >= 0) listValue.ops.splice(index, 1)
+}
+
 function addTempCall() {
   localAst.value.temps.push(createTempNode())
 }
@@ -996,6 +1338,53 @@ function handleTempCallModelUpdate(index: number, model: ServiceCallEditorModel)
   if (!current) return
   current.value = editorModelToCallNode(model, current.value)
   current.javaType = toText(current.value.ref?.returnType) || current.javaType || ""
+}
+
+function getListSourceMode(arg: ArgAstNode): "source" | "call" {
+  const source = getListValue(arg).source
+  return isRecord(source) && toText(source.kind).toLowerCase() === "call" ? "call" : "source"
+}
+
+function handleListSourceModeChange(argName: string, event: Event) {
+  const arg = localAst.value.args.find((item) => item.name === argName)
+  if (!arg || !isRecord(arg.value) || toText(arg.value.kind).toLowerCase() !== "list") return
+  const nextMode = toText((event.target as HTMLSelectElement | null)?.value)
+  const listValue = arg.value as ListNode
+  if (nextMode === "call") {
+    if (!isRecord(listValue.source) || toText(listValue.source.kind).toLowerCase() !== "call") {
+      listValue.source = createCallNode()
+    }
+    return
+  }
+  if (!isRecord(listValue.source) || toText(listValue.source.kind).toLowerCase() !== "source") {
+    listValue.source = createSourceNode("request", guessSourcePath(arg.name))
+  }
+}
+
+function getListSourceValue(arg: ArgAstNode): SourceNode {
+  const listValue = getListValue(arg)
+  if (!isRecord(listValue.source) || toText(listValue.source.kind).toLowerCase() !== "source") {
+    listValue.source = createSourceNode("request", guessSourcePath(arg.name))
+  }
+  return listValue.source as SourceNode
+}
+
+function getListSourceCallEditorModel(arg: ArgAstNode): ServiceCallEditorModel {
+  const listValue = getListValue(arg)
+  if (!isRecord(listValue.source) || toText(listValue.source.kind).toLowerCase() !== "call") {
+    listValue.source = createCallNode()
+  }
+  return callNodeToEditorModel(listValue.source as CallNode)
+}
+
+function handleListSourceCallModelUpdate(argName: string, model: ServiceCallEditorModel) {
+  const arg = localAst.value.args.find((item) => item.name === argName)
+  if (!arg || !isRecord(arg.value) || toText(arg.value.kind).toLowerCase() !== "list") return
+  const listValue = arg.value as ListNode
+  const current = isRecord(listValue.source) && toText(listValue.source.kind).toLowerCase() === "call"
+    ? listValue.source as CallNode
+    : createCallNode()
+  listValue.source = editorModelToCallNode(model, current)
 }
 
 function getSourceOptionsForNode(sourceType: SourceNode["sourceType"], scope: "arg" | "listItem") {
@@ -1155,6 +1544,283 @@ function getTempCardState(index: number) {
   return "ok"
 }
 
+function setArgCardRef(argName: string, element: Element | null) {
+  const htmlElement = unwrapTargetElement(element)
+  if (htmlElement) {
+    argCardRefs.set(argName, htmlElement)
+    return
+  }
+  argCardRefs.delete(argName)
+}
+
+function setTempCardRef(index: number, element: Element | null) {
+  const htmlElement = unwrapTargetElement(element)
+  if (htmlElement) {
+    tempCardRefs.set(index, htmlElement)
+    return
+  }
+  tempCardRefs.delete(index)
+}
+
+function unwrapTargetElement(target: Element | ComponentPublicInstance | null): HTMLElement | null {
+  if (target instanceof HTMLElement) return target
+  const root = (target as { $el?: unknown } | null)?.$el
+  return root instanceof HTMLElement ? root : null
+}
+
+function setIssueTargetRef(key: string, target: Element | ComponentPublicInstance | null) {
+  const htmlElement = unwrapTargetElement(target)
+  if (htmlElement) {
+    issueTargetRefs.set(key, htmlElement)
+    return
+  }
+  issueTargetRefs.delete(key)
+}
+
+function isIssueTargetFocused(key: string): boolean {
+  return focusedIssueTarget.value === key
+}
+
+function isIssueTargetActive(prefix: string): boolean {
+  return focusedIssueTarget.value === prefix || focusedIssueTarget.value.startsWith(`${prefix}:`)
+}
+
+function activateIssueElement(target: HTMLElement) {
+  const focusTarget = target.matches("input, textarea, select, button, [tabindex]")
+    ? target
+    : target.querySelector<HTMLElement>("input, textarea, select, button, [tabindex]")
+  focusTarget?.focus({ preventScroll: true })
+}
+
+function findIssueTarget(keys: string[]): { key: string; element: HTMLElement | null } | null {
+  for (const key of keys) {
+    const element = issueTargetRefs.get(key)
+    if (element) {
+      return { key, element }
+    }
+  }
+  return null
+}
+
+function addTargetKey(targets: string[], key: string) {
+  if (key && !targets.includes(key)) targets.push(key)
+}
+
+function resolveIssueTarget(issue: ParamAssemblerIssue): { key: string; element: HTMLElement | null } | null {
+  const path = toText(issue.path)
+  const tempMatch = path.match(/^temps\[(\d+)\](?:\.(.+))?$/)
+  if (tempMatch) {
+    const index = Number.parseInt(tempMatch[1], 10)
+    if (Number.isFinite(index)) {
+      const suffix = toText(tempMatch[2])
+      const targetKeys: string[] = []
+      if (suffix === "key") {
+        addTargetKey(targetKeys, `temp:${index}:key`)
+      } else if (suffix === "value.resultPath") {
+        addTargetKey(targetKeys, `temp:${index}:resultPath`)
+      } else if (suffix === "value" || suffix.startsWith("value.")) {
+        addTargetKey(targetKeys, `temp:${index}:call`)
+      }
+      const nestedTarget = findIssueTarget(targetKeys)
+      if (nestedTarget) return nestedTarget
+      return {
+        key: `temp:${index}`,
+        element: tempCardRefs.get(index) || null,
+      }
+    }
+  }
+
+  const argMatch = path.match(/^args\[(\d+)\](?:\.(.+))?$/)
+  if (argMatch) {
+    const index = Number.parseInt(argMatch[1], 10)
+    const arg = localAst.value.args[index]
+    if (arg?.name) {
+      const suffix = toText(argMatch[2])
+      const targetKeys: string[] = []
+      if (!suffix || suffix === "value") {
+        addTargetKey(targetKeys, `arg:${arg.name}`)
+      } else if (suffix === "value.fields") {
+        addTargetKey(targetKeys, `arg:${arg.name}:fields`)
+      } else if (suffix === "value.ops") {
+        addTargetKey(targetKeys, `arg:${arg.name}:filters`)
+      } else if (suffix === "value.sourceType") {
+        addTargetKey(targetKeys, `arg:${arg.name}:source:type`)
+      } else if (suffix === "value.path" || suffix === "value.constValue") {
+        addTargetKey(targetKeys, `arg:${arg.name}:source:value`)
+      } else if (suffix === "value.source") {
+        addTargetKey(targetKeys, `arg:${arg.name}:list-source`)
+      } else if (suffix === "value.source.kind") {
+        addTargetKey(targetKeys, `arg:${arg.name}:list-source:mode`)
+      } else if (suffix === "value.source.sourceType") {
+        addTargetKey(targetKeys, `arg:${arg.name}:list-source:type`)
+      } else if (suffix === "value.source.path" || suffix === "value.source.constValue") {
+        addTargetKey(targetKeys, `arg:${arg.name}:list-source:value`)
+      } else if (suffix.startsWith("value.source.")) {
+        addTargetKey(targetKeys, `arg:${arg.name}:list-source:call`)
+        addTargetKey(targetKeys, `arg:${arg.name}:list-source`)
+      } else if (suffix === "value.item.sourceType") {
+        addTargetKey(targetKeys, `arg:${arg.name}:primitive-item:type`)
+      } else if (suffix === "value.item.path" || suffix === "value.item.constValue") {
+        addTargetKey(targetKeys, `arg:${arg.name}:primitive-item:value`)
+        addTargetKey(targetKeys, `arg:${arg.name}:item`)
+      } else if (suffix === "value.item" || suffix === "value.item.fields") {
+        addTargetKey(targetKeys, `arg:${arg.name}:item`)
+      }
+
+      const objectFieldMatch = suffix.match(/^value\.fields\[(\d+)\](?:\.(.+))?$/)
+      if (objectFieldMatch) {
+        const fieldIndex = Number.parseInt(objectFieldMatch[1], 10)
+        const fieldSuffix = toText(objectFieldMatch[2])
+        const fieldKey = `arg:${arg.name}:field:${fieldIndex}`
+        if (!fieldSuffix || fieldSuffix === "value") {
+          addTargetKey(targetKeys, fieldKey)
+        } else if (fieldSuffix === "path") {
+          addTargetKey(targetKeys, `${fieldKey}:path`)
+        } else if (fieldSuffix === "value.sourceType") {
+          addTargetKey(targetKeys, `${fieldKey}:source-type`)
+          addTargetKey(targetKeys, fieldKey)
+        } else if (fieldSuffix === "value.path" || fieldSuffix === "value.constValue") {
+          addTargetKey(targetKeys, `${fieldKey}:source`)
+          addTargetKey(targetKeys, fieldKey)
+        } else {
+          addTargetKey(targetKeys, fieldKey)
+        }
+      }
+
+      const filterMatch = suffix.match(/^value\.ops\[(\d+)\](?:\.(.+))?$/)
+      if (filterMatch) {
+        const filterIndex = Number.parseInt(filterMatch[1], 10)
+        const filterSuffix = toText(filterMatch[2])
+        const filterKey = `arg:${arg.name}:filter:${filterIndex}`
+        if (!filterSuffix) {
+          addTargetKey(targetKeys, filterKey)
+        } else {
+          addTargetKey(targetKeys, `${filterKey}:expression`)
+          addTargetKey(targetKeys, filterKey)
+        }
+      }
+
+      const itemFieldMatch = suffix.match(/^value\.item\.fields\[(\d+)\](?:\.(.+))?$/)
+      if (itemFieldMatch) {
+        const fieldIndex = Number.parseInt(itemFieldMatch[1], 10)
+        const fieldSuffix = toText(itemFieldMatch[2])
+        const fieldKey = `arg:${arg.name}:item-field:${fieldIndex}`
+        if (!fieldSuffix || fieldSuffix === "value") {
+          addTargetKey(targetKeys, fieldKey)
+        } else if (fieldSuffix === "path") {
+          addTargetKey(targetKeys, `${fieldKey}:path`)
+        } else if (fieldSuffix === "value.sourceType") {
+          addTargetKey(targetKeys, `${fieldKey}:source-type`)
+          addTargetKey(targetKeys, fieldKey)
+        } else if (fieldSuffix === "value.path" || fieldSuffix === "value.constValue") {
+          addTargetKey(targetKeys, `${fieldKey}:source`)
+          addTargetKey(targetKeys, fieldKey)
+        } else {
+          addTargetKey(targetKeys, fieldKey)
+        }
+        addTargetKey(targetKeys, `arg:${arg.name}:item`)
+      }
+
+      const nestedTarget = findIssueTarget(targetKeys)
+      if (nestedTarget) return nestedTarget
+      return {
+        key: `arg:${arg.name}`,
+        element: argCardRefs.get(arg.name) || null,
+      }
+    }
+  }
+
+  return null
+}
+
+function focusIssue(issue: ParamAssemblerIssue) {
+  const target = resolveIssueTarget(issue)
+  if (!target?.element) return
+  focusedIssueTarget.value = target.key
+  target.element.scrollIntoView({ behavior: "smooth", block: "center" })
+  requestAnimationFrame(() => activateIssueElement(target.element!))
+}
+
+function getIssueAction(issue: ParamAssemblerIssue): IssueAction {
+  const code = toText(issue.code)
+  if (["value.required", "source.path.required", "list.source.required", "object.field.required"].includes(code)) {
+    return {
+      detail: "当前缺少来源映射，建议先自动补齐空白项，再人工确认来源路径或 Temp 依赖。",
+      actionLabel: "自动补空白",
+      actionKind: "smart-fill-empty",
+    }
+  }
+  if (code === "object.field.unknown") {
+    return {
+      detail: "字段可能拼写不对，或当前 schema / 元数据上报还不完整。可以先重算推荐映射，再检查字段路径。",
+      actionLabel: "重算推荐",
+      actionKind: "smart-fill-all",
+    }
+  }
+  if (code === "arg.extra") {
+    return {
+      detail: "当前方法签名和现有草稿不一致，建议重新生成草稿，再确认补数步骤是否仍然适配。",
+      actionLabel: "重新生成草稿",
+      actionKind: "rebuild-draft",
+    }
+  }
+  if (["source.temp.missing", "source.temp.forward", "source.temp.self", "temp.ref.cycle", "temp.key.required", "temp.key.duplicate"].includes(code)) {
+    return {
+      detail: "这类问题通常和 Temp 命名、引用链或顺序有关，可先定位到对应位置并结合装配预览检查依赖。",
+      actionLabel: "定位问题",
+      actionKind: "focus",
+    }
+  }
+  if (["call.service.bean.required", "call.service.method.required", "call.http.url.required", "call.arg.value.required"].includes(code)) {
+    return {
+      detail: "服务补数配置还不完整，先补齐调用目标和入参，再重新执行校验。",
+      actionLabel: "定位问题",
+      actionKind: "focus",
+    }
+  }
+  if (["list.nested.unsupported", "list.op.unsupported", "expr.required"].includes(code)) {
+    return {
+      detail: "当前属于复杂集合或表达式场景，建议先拆成 Temp 补数 + 单层列表装配；更复杂逻辑切到高级模式。",
+      actionLabel: "定位问题",
+      actionKind: "focus",
+    }
+  }
+  return {
+    detail: "建议先定位到对应字段，检查来源路径、Temp 依赖和服务补数配置是否完整。",
+    actionLabel: "定位问题",
+    actionKind: "focus",
+  }
+}
+
+async function runIssueAction(issue: ParamAssemblerIssue) {
+  const action = getIssueAction(issue)
+  if (!action.actionKind) return
+  if (action.actionKind === "smart-fill-empty") {
+    await applySmartFill("emptyOnly")
+    requestAnimationFrame(() => focusIssue(issue))
+    return
+  }
+  if (action.actionKind === "smart-fill-all") {
+    await applySmartFill("all")
+    requestAnimationFrame(() => focusIssue(issue))
+    return
+  }
+  if (action.actionKind === "rebuild-draft") {
+    await buildDraft(true)
+    requestAnimationFrame(() => focusIssue(issue))
+    return
+  }
+  focusIssue(issue)
+}
+
+function isArgFocused(argName: string): boolean {
+  return isIssueTargetActive(`arg:${argName}`)
+}
+
+function isTempFocused(index: number): boolean {
+  return isIssueTargetActive(`temp:${index}`)
+}
+
 function fieldSourceOptions(scope: "arg" | "listItem") {
   const options = [
     { value: "request", label: "请求入参" },
@@ -1176,8 +1842,8 @@ function getSourcePlaceholder(sourceType: SourceNode["sourceType"], fallback: st
   return ""
 }
 
-function getArgCardState(arg: ArgAstNode) {
-  const hits = issues.value.filter((item) => item.path.includes(arg.name))
+function getArgCardState(arg: ArgAstNode, argIndex: number) {
+  const hits = issues.value.filter((item) => item.path.includes(`args[${argIndex}]`) || item.message.includes(arg.name))
   if (hits.some((item) => item.severity === "error")) return "error"
   if (hits.some((item) => item.severity === "warning")) return "warning"
   return "ok"
@@ -1192,10 +1858,17 @@ function getArgSummary(arg: ArgAstNode): string {
   if (kind === "object") return `对象装配 / ${(arg.value as ObjectNode).fields.length} 个字段`
   if (kind === "list") {
     const listValue = arg.value as ListNode
+    const filterCount = (Array.isArray(listValue.ops) ? listValue.ops : []).filter((item) => toText(item?.op) === "filter").length
+    const sourceSummary = isRecord(listValue.source) && toText(listValue.source.kind).toLowerCase() === "call" ? "服务补数" : "路径来源"
     const itemFields = listValue.item && isRecord(listValue.item) && toText(listValue.item.kind).toLowerCase() === "object"
       ? (listValue.item as ObjectNode).fields.length
       : 0
-    return itemFields > 0 ? `单层列表 / ${itemFields} 个元素字段` : "单层列表 / 直接透传"
+    const itemSummary = itemFields > 0
+      ? `${itemFields} 个元素字段`
+      : (listValue.item && isRecord(listValue.item) && toText(listValue.item.kind).toLowerCase() === "source"
+        ? "元素取值映射"
+        : "直接透传")
+    return filterCount > 0 ? `单层列表 / ${sourceSummary} / ${itemSummary} / ${filterCount} 条过滤` : `单层列表 / ${sourceSummary} / ${itemSummary}`
   }
   return `高级节点 / ${kind || "unknown"}`
 }
@@ -1231,6 +1904,128 @@ function getListItemFieldList(arg: ArgAstNode): ObjectFieldNode[] {
 function getFieldSourceValue(field: ObjectFieldNode): SourceNode {
   return field.value as SourceNode
 }
+
+function pushUniqueText(target: string[], value: string) {
+  const text = toText(value)
+  if (!text || target.includes(text)) return
+  target.push(text)
+}
+
+function pushUniqueServiceCall(target: ServiceCallTrace[], call: ServiceCallTrace) {
+  const key = `${call.label}|${call.fn}|${call.resultPath}|${call.args}`
+  if (target.some((item) => `${item.label}|${item.fn}|${item.resultPath}|${item.args}` === key)) return
+  target.push(call)
+}
+
+function describeSourceNode(source: SourceNode): string {
+  if (source.sourceType === "const") return "常量"
+  if (source.sourceType === "temp") {
+    const path = toText(source.path)
+    return path.startsWith("temp.") ? path : `temp.${path}`
+  }
+  return toText(source.path)
+}
+
+function describeCallNode(call: CallNode): string {
+  const ref = isRecord(call.ref) ? call.ref : {}
+  return firstNonBlank(
+    [toText(ref.serviceBean), toText(ref.methodName)].filter(Boolean).join("."),
+    toText(call.fn),
+    "未命名服务调用",
+  )
+}
+
+function collectPreviewFromValue(
+  value: ValueNode,
+  label: string,
+  sourceRefs: string[],
+  tempRefs: string[],
+  serviceCalls: ServiceCallTrace[],
+) {
+  if (!isRecord(value)) return
+  const kind = toText(value.kind).toLowerCase()
+  if (kind === "source") {
+    const source = value as SourceNode
+    const text = describeSourceNode(source)
+    if (source.sourceType === "temp") {
+      pushUniqueText(tempRefs, text)
+      return
+    }
+    pushUniqueText(sourceRefs, text)
+    return
+  }
+  if (kind === "object") {
+    const fields = Array.isArray((value as ObjectNode).fields) ? (value as ObjectNode).fields : []
+    fields.forEach((field) => {
+      const fieldLabel = toText(field.path) ? `${label}.${toText(field.path)}` : label
+      collectPreviewFromValue(field.value, fieldLabel, sourceRefs, tempRefs, serviceCalls)
+    })
+    return
+  }
+  if (kind === "list") {
+    const listValue = value as ListNode
+    collectPreviewFromValue(listValue.source, `${label} 列表来源`, sourceRefs, tempRefs, serviceCalls)
+    if (listValue.item) {
+      collectPreviewFromValue(listValue.item, `${label} 元素映射`, sourceRefs, tempRefs, serviceCalls)
+    }
+    return
+  }
+  if (kind === "call") {
+    const callValue = value as CallNode
+    pushUniqueServiceCall(serviceCalls, {
+      label,
+      fn: describeCallNode(callValue),
+      args: Array.isArray(callValue.args) ? callValue.args.length : 0,
+      resultPath: toText(callValue.resultPath),
+    })
+    ;(Array.isArray(callValue.args) ? callValue.args : []).forEach((arg) => {
+      const argLabel = toText(arg.name) ? `${label}.${toText(arg.name)}` : `${label}.参数`
+      collectPreviewFromValue(arg.value, argLabel, sourceRefs, tempRefs, serviceCalls)
+    })
+  }
+}
+
+const tempPreviewItems = computed<ValuePreviewItem[]>(() =>
+  (localAst.value.temps || []).map((temp, index) => {
+    const sourceRefs: string[] = []
+    const tempRefs: string[] = []
+    const serviceCalls: ServiceCallTrace[] = []
+    const name = toText(temp.key) || `补数 ${index + 1}`
+    collectPreviewFromValue(temp.value, `补数 ${index + 1}`, sourceRefs, tempRefs, serviceCalls)
+    return {
+      name,
+      summary: `补数步骤 ${index + 1}${toText(temp.javaType) ? ` / ${toText(temp.javaType)}` : ""}`,
+      sourceRefs,
+      tempRefs,
+      serviceCalls,
+    }
+  }),
+)
+
+const argPreviewItems = computed<ValuePreviewItem[]>(() =>
+  (localAst.value.args || []).map((arg) => {
+    const sourceRefs: string[] = []
+    const tempRefs: string[] = []
+    const serviceCalls: ServiceCallTrace[] = []
+    collectPreviewFromValue(arg.value, `参数 ${arg.name}`, sourceRefs, tempRefs, serviceCalls)
+    return {
+      name: arg.name,
+      summary: getArgSummary(arg),
+      sourceRefs,
+      tempRefs,
+      serviceCalls,
+    }
+  }),
+)
+
+const assemblyPreviewSummary = computed(() => ({
+  args: argPreviewItems.value.length,
+  temps: tempPreviewItems.value.length,
+  tempRefs: argPreviewItems.value.reduce((sum, item) => sum + item.tempRefs.length, 0)
+    + tempPreviewItems.value.reduce((sum, item) => sum + item.tempRefs.length, 0),
+  serviceCalls: argPreviewItems.value.reduce((sum, item) => sum + item.serviceCalls.length, 0)
+    + tempPreviewItems.value.reduce((sum, item) => sum + item.serviceCalls.length, 0),
+}))
 
 const validationSummary = computed(() => ({
   errors: issues.value.filter((item) => item.severity === "error").length,
@@ -1334,9 +2129,95 @@ watch(
       <div class="toolbar-actions">
         <button type="button" class="btn mini" :disabled="loadingContext || !projectKey || !methodKey" @click="loadContext">刷新 Context</button>
         <button type="button" class="btn mini" :disabled="loadingDraft || !projectKey || !methodKey" @click="buildDraft(true)">重建 Draft</button>
+        <button type="button" class="btn mini" :disabled="validating || localAst.args.length === 0" @click="applySmartFill('emptyOnly')">智能补齐空白</button>
+        <button type="button" class="btn mini" :disabled="validating || localAst.args.length === 0" @click="applySmartFill('all')">重算推荐</button>
         <button type="button" class="btn mini primary" :disabled="validating || !projectKey || localAst.args.length === 0" @click="validateAst">
           {{ validating ? "校验中..." : "立即校验" }}
         </button>
+      </div>
+    </div>
+
+    <div v-if="lastSmartFillSummary" class="info-card">
+      <div class="info-title">自动补齐</div>
+      <div class="muted tiny">{{ lastSmartFillSummary }}</div>
+    </div>
+
+    <div v-if="tempPreviewItems.length > 0 || argPreviewItems.length > 0" class="info-card">
+      <div class="section-head">
+        <div class="panel-title">装配预览</div>
+        <div class="context-summary">
+          <span class="summary-chip">参数 {{ assemblyPreviewSummary.args }}</span>
+          <span class="summary-chip">补数 {{ assemblyPreviewSummary.temps }}</span>
+          <span class="summary-chip">Temp 依赖 {{ assemblyPreviewSummary.tempRefs }}</span>
+          <span class="summary-chip">服务补数 {{ assemblyPreviewSummary.serviceCalls }}</span>
+        </div>
+      </div>
+      <div class="muted tiny">这里展示每个参数/补数当前依赖了哪些来源路径、哪些临时变量、哪些服务调用，方便检查复杂对象和集合装配链路。</div>
+
+      <div v-if="tempPreviewItems.length > 0" class="preview-list">
+        <div class="field-label">补数解释</div>
+        <div v-for="item in tempPreviewItems" :key="`temp-preview-${item.name}`" class="preview-card">
+          <div class="preview-head">
+            <div class="arg-title">{{ item.name }}</div>
+            <div class="muted tiny">{{ item.summary }}</div>
+          </div>
+          <div class="preview-section">
+            <span class="preview-label">来源路径</span>
+            <div class="preview-chips">
+              <span v-if="item.sourceRefs.length === 0" class="summary-chip">无</span>
+              <span v-for="source in item.sourceRefs.slice(0, 6)" :key="`${item.name}_${source}`" class="summary-chip">{{ source }}</span>
+            </div>
+          </div>
+          <div class="preview-section">
+            <span class="preview-label">依赖 Temp</span>
+            <div class="preview-chips">
+              <span v-if="item.tempRefs.length === 0" class="summary-chip">无</span>
+              <span v-for="tempRef in item.tempRefs.slice(0, 6)" :key="`${item.name}_${tempRef}`" class="summary-chip ready">{{ tempRef }}</span>
+            </div>
+          </div>
+          <div class="preview-section" v-if="item.serviceCalls.length > 0">
+            <span class="preview-label">服务调用</span>
+            <div class="preview-call-list">
+              <div v-for="call in item.serviceCalls" :key="`${item.name}_${call.label}_${call.fn}`" class="preview-call-item">
+                <span class="preview-call-name">{{ call.fn }}</span>
+                <span class="muted tiny">{{ call.label }} / 入参 {{ call.args }} 个<span v-if="call.resultPath"> / 结果 {{ call.resultPath }}</span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="argPreviewItems.length > 0" class="preview-list">
+        <div class="field-label">参数解释</div>
+        <div v-for="item in argPreviewItems" :key="`arg-preview-${item.name}`" class="preview-card">
+          <div class="preview-head">
+            <div class="arg-title">{{ item.name }}</div>
+            <div class="muted tiny">{{ item.summary }}</div>
+          </div>
+          <div class="preview-section">
+            <span class="preview-label">来源路径</span>
+            <div class="preview-chips">
+              <span v-if="item.sourceRefs.length === 0" class="summary-chip">无</span>
+              <span v-for="source in item.sourceRefs.slice(0, 8)" :key="`${item.name}_${source}`" class="summary-chip">{{ source }}</span>
+            </div>
+          </div>
+          <div class="preview-section">
+            <span class="preview-label">依赖 Temp</span>
+            <div class="preview-chips">
+              <span v-if="item.tempRefs.length === 0" class="summary-chip">无</span>
+              <span v-for="tempRef in item.tempRefs.slice(0, 8)" :key="`${item.name}_${tempRef}`" class="summary-chip ready">{{ tempRef }}</span>
+            </div>
+          </div>
+          <div class="preview-section" v-if="item.serviceCalls.length > 0">
+            <span class="preview-label">服务调用</span>
+            <div class="preview-call-list">
+              <div v-for="call in item.serviceCalls" :key="`${item.name}_${call.label}_${call.fn}`" class="preview-call-item">
+                <span class="preview-call-name">{{ call.fn }}</span>
+                <span class="muted tiny">{{ call.label }} / 入参 {{ call.args }} 个<span v-if="call.resultPath"> / 结果 {{ call.resultPath }}</span></span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1358,10 +2239,32 @@ watch(
         <span class="muted tiny" v-if="!hasPendingChanges && issues.length === 0 && localAst.args.length > 0">当前结构已通过一期规则校验。</span>
       </div>
       <div v-if="issues.length > 0" class="issue-list">
-        <div v-for="item in issues" :key="`${item.code}_${item.path}_${item.message}`" class="issue-item" :class="item.severity">
+        <div
+          v-for="item in issues"
+          :key="`${item.code}_${item.path}_${item.message}`"
+          class="issue-item clickable"
+          :class="item.severity"
+          role="button"
+          tabindex="0"
+          @click="focusIssue(item)"
+          @keydown.enter.prevent="focusIssue(item)"
+          @keydown.space.prevent="focusIssue(item)"
+        >
           <span class="issue-code">{{ item.code }}</span>
           <span class="issue-message">{{ item.message }}</span>
           <span class="issue-path">{{ item.path }}</span>
+          <span class="issue-hint">{{ getIssueAction(item).detail }}</span>
+          <button
+            v-if="getIssueAction(item).actionLabel"
+            type="button"
+            class="btn mini issue-action"
+            :disabled="validating || loadingDraft"
+            @click.stop="runIssueAction(item)"
+            @keydown.enter.stop
+            @keydown.space.stop
+          >
+            {{ getIssueAction(item).actionLabel }}
+          </button>
         </div>
       </div>
     </div>
@@ -1374,7 +2277,13 @@ watch(
       <div class="muted tiny">当对象或列表字段需要先查服务再拼装时，先在这里定义中间结果，再在字段来源里选择 `临时变量` 并填写 `temp.xxx`。</div>
       <div class="muted tiny">数组/对象集合建议先让补数输出完整对象或单层列表，再在目标入参中分别配置“对象字段”或“元素映射”；嵌套数组、动态 Map key、groupBy / reduce / flatten 仍建议切到高级模式。</div>
       <div v-if="localAst.temps.length === 0" class="muted tiny">当前还没有补数步骤，简单场景可以直接用请求、上下文或上游节点输出。</div>
-      <div v-for="(temp, tempIndex) in localAst.temps" :key="`${temp.key}_${tempIndex}`" class="temp-card" :class="getTempCardState(tempIndex)">
+      <div
+        v-for="(temp, tempIndex) in localAst.temps"
+        :key="`${temp.key}_${tempIndex}`"
+        :ref="(el) => setTempCardRef(tempIndex, el)"
+        class="temp-card"
+        :class="[getTempCardState(tempIndex), { focused: isTempFocused(tempIndex) }]"
+      >
         <div class="field-row-head">
           <div class="panel-title">补数 {{ tempIndex + 1 }}</div>
           <div class="row-actions">
@@ -1390,9 +2299,17 @@ watch(
           <span class="summary-chip ready" v-if="getTempInfo(tempIndex).consumers.length > 0">下游使用 {{ getTempInfo(tempIndex).consumers.length }} 处</span>
           <span class="summary-chip" v-else>下游使用 0 处</span>
         </div>
-        <input class="input" v-model="temp.key" placeholder="临时变量 key，例如 profile / skuCatalog / priceProfile" />
         <input
+          :ref="(el) => setIssueTargetRef(`temp:${tempIndex}:key`, el)"
           class="input"
+          :class="{ focused: isIssueTargetFocused(`temp:${tempIndex}:key`) }"
+          v-model="temp.key"
+          placeholder="临时变量 key，例如 profile / skuCatalog / priceProfile"
+        />
+        <input
+          :ref="(el) => setIssueTargetRef(`temp:${tempIndex}:resultPath`, el)"
+          class="input"
+          :class="{ focused: isIssueTargetFocused(`temp:${tempIndex}:resultPath`) }"
           v-model="temp.value.resultPath"
           placeholder="结果提取路径（可选），例如 data / data.profile / $.data.items"
         />
@@ -1409,13 +2326,19 @@ watch(
           </div>
         </div>
         <div v-else class="muted tiny">当前补数还没有被后续补数或目标入参使用，适合先完成依赖顺序调整再继续映射。</div>
-        <ServiceCallEditor
-          :model-value="getTempCallEditorModel(temp)"
-          :project-key="projectKey"
-          :temp-keys="tempPathOptions.map((item) => item.replace(/^temp\./, ''))"
-          :source-path-options="contextSourcePaths"
-          @update:model-value="handleTempCallModelUpdate(tempIndex, $event)"
-        />
+        <div
+          :ref="(el) => setIssueTargetRef(`temp:${tempIndex}:call`, el)"
+          class="focus-anchor"
+          :class="{ focused: isIssueTargetActive(`temp:${tempIndex}:call`) }"
+        >
+          <ServiceCallEditor
+            :model-value="getTempCallEditorModel(temp)"
+            :project-key="projectKey"
+            :temp-keys="tempPathOptions.map((item) => item.replace(/^temp\./, ''))"
+            :source-path-options="contextSourcePaths"
+            @update:model-value="handleTempCallModelUpdate(tempIndex, $event)"
+          />
+        </div>
         <div class="muted tiny">生成后可在字段来源中使用 `temp.{{ temp.key || 'yourKey' }}` 或 `temp.{{ temp.key || 'yourKey' }}.xxx`。</div>
       </div>
     </div>
@@ -1431,7 +2354,13 @@ watch(
     </div>
 
     <div v-else class="arg-list">
-      <div v-for="arg in localAst.args" :key="arg.name" class="arg-card" :class="getArgCardState(arg)">
+      <div
+        v-for="(arg, argIndex) in localAst.args"
+        :key="arg.name"
+        :ref="(el) => setArgCardRef(arg.name, el)"
+        class="arg-card"
+        :class="[getArgCardState(arg, argIndex), { focused: isArgFocused(arg.name) }]"
+      >
         <div class="arg-head">
           <div class="arg-meta">
             <div class="arg-title-row">
@@ -1445,21 +2374,38 @@ watch(
         </div>
 
         <template v-if="arg.value.kind === 'source'">
-          <div class="field-block">
+          <div
+            :ref="(el) => setIssueTargetRef(`arg:${arg.name}:source`, el)"
+            class="field-block"
+            :class="{ focused: isIssueTargetActive(`arg:${arg.name}:source`) }"
+          >
             <div class="field-label">来源配置</div>
-            <select class="input" v-model="getArgSourceValue(arg).sourceType">
+            <select
+              :ref="(el) => setIssueTargetRef(`arg:${arg.name}:source:type`, el)"
+              class="input"
+              :class="{ focused: isIssueTargetFocused(`arg:${arg.name}:source:type`) }"
+              v-model="getArgSourceValue(arg).sourceType"
+            >
               <option v-for="option in fieldSourceOptions('arg')" :key="option.value" :value="option.value">{{ option.label }}</option>
             </select>
-            <SourcePathInput
+            <div
               v-if="getArgSourceValue(arg).sourceType !== 'const'"
-              :model-value="getArgSourceValue(arg).path || ''"
-              :options="getSourceOptionsForNode(getArgSourceValue(arg).sourceType, 'arg')"
-              :placeholder="getSourcePlaceholder(getArgSourceValue(arg).sourceType, guessSourcePath(arg.name))"
-              @update:model-value="getArgSourceValue(arg).path = $event"
-            />
+              :ref="(el) => setIssueTargetRef(`arg:${arg.name}:source:value`, el)"
+              class="focus-anchor"
+              :class="{ focused: isIssueTargetFocused(`arg:${arg.name}:source:value`) }"
+            >
+              <SourcePathInput
+                :model-value="getArgSourceValue(arg).path || ''"
+                :options="getSourceOptionsForNode(getArgSourceValue(arg).sourceType, 'arg')"
+                :placeholder="getSourcePlaceholder(getArgSourceValue(arg).sourceType, guessSourcePath(arg.name))"
+                @update:model-value="getArgSourceValue(arg).path = $event"
+              />
+            </div>
             <textarea
               v-else
+              :ref="(el) => setIssueTargetRef(`arg:${arg.name}:source:value`, el)"
               class="input textarea"
+              :class="{ focused: isIssueTargetFocused(`arg:${arg.name}:source:value`) }"
               v-model="getArgSourceValue(arg).constValue"
               placeholder='常量值，例如 "A100" / 1 / {"id":"u1"} / [{"id":"1"}]'
             ></textarea>
@@ -1467,7 +2413,11 @@ watch(
         </template>
 
         <template v-else-if="arg.value.kind === 'object'">
-          <div class="field-block">
+          <div
+            :ref="(el) => setIssueTargetRef(`arg:${arg.name}:fields`, el)"
+            class="field-block"
+            :class="{ focused: isIssueTargetActive(`arg:${arg.name}:fields`) }"
+          >
             <div class="section-head">
               <div class="field-label">对象字段映射</div>
               <div class="row-actions">
@@ -1476,25 +2426,50 @@ watch(
               </div>
             </div>
             <div class="muted tiny">对象参数按字段展开显示，避免用户直接面对整段 JSON。</div>
-            <div v-for="(field, index) in getObjectFieldList(arg)" :key="`${arg.name}_${index}`" class="field-row-card">
+            <div
+              v-for="(field, index) in getObjectFieldList(arg)"
+              :key="`${arg.name}_${index}`"
+              :ref="(el) => setIssueTargetRef(`arg:${arg.name}:field:${index}`, el)"
+              class="field-row-card"
+              :class="{ focused: isIssueTargetActive(`arg:${arg.name}:field:${index}`) }"
+            >
               <div class="field-row-head">
                 <div class="muted tiny">字段 {{ index + 1 }}</div>
                 <button type="button" class="btn mini" @click="removeObjectField(arg.name, index)">删</button>
               </div>
-              <input class="input" v-model="field.path" placeholder="字段路径，例如 profile.name / address.city" />
-              <select class="input" v-model="getFieldSourceValue(field).sourceType">
+              <input
+                :ref="(el) => setIssueTargetRef(`arg:${arg.name}:field:${index}:path`, el)"
+                class="input"
+                :class="{ focused: isIssueTargetFocused(`arg:${arg.name}:field:${index}:path`) }"
+                v-model="field.path"
+                placeholder="字段路径，例如 profile.name / address.city"
+              />
+              <select
+                :ref="(el) => setIssueTargetRef(`arg:${arg.name}:field:${index}:source-type`, el)"
+                class="input"
+                :class="{ focused: isIssueTargetFocused(`arg:${arg.name}:field:${index}:source-type`) }"
+                v-model="getFieldSourceValue(field).sourceType"
+              >
                 <option v-for="option in fieldSourceOptions('arg')" :key="option.value" :value="option.value">{{ option.label }}</option>
               </select>
-              <SourcePathInput
+              <div
                 v-if="getFieldSourceValue(field).sourceType !== 'const'"
-                :model-value="getFieldSourceValue(field).path || ''"
-                :options="getSourceOptionsForNode(getFieldSourceValue(field).sourceType, 'arg')"
-                :placeholder="getSourcePlaceholder(getFieldSourceValue(field).sourceType, guessSourcePath(field.path || arg.name))"
-                @update:model-value="getFieldSourceValue(field).path = $event"
-              />
+                :ref="(el) => setIssueTargetRef(`arg:${arg.name}:field:${index}:source`, el)"
+                class="focus-anchor"
+                :class="{ focused: isIssueTargetFocused(`arg:${arg.name}:field:${index}:source`) }"
+              >
+                <SourcePathInput
+                  :model-value="getFieldSourceValue(field).path || ''"
+                  :options="getSourceOptionsForNode(getFieldSourceValue(field).sourceType, 'arg')"
+                  :placeholder="getSourcePlaceholder(getFieldSourceValue(field).sourceType, guessSourcePath(field.path || arg.name))"
+                  @update:model-value="getFieldSourceValue(field).path = $event"
+                />
+              </div>
               <textarea
                 v-else
+                :ref="(el) => setIssueTargetRef(`arg:${arg.name}:field:${index}:source`, el)"
                 class="input textarea mini-textarea"
+                :class="{ focused: isIssueTargetFocused(`arg:${arg.name}:field:${index}:source`) }"
                 v-model="getFieldSourceValue(field).constValue"
                 placeholder='常量值，例如 "Tom" / 18 / {"code":"VIP"}'
               ></textarea>
@@ -1503,27 +2478,111 @@ watch(
         </template>
 
         <template v-else-if="arg.value.kind === 'list'">
-          <div class="field-block">
+          <div
+            :ref="(el) => setIssueTargetRef(`arg:${arg.name}:list-source`, el)"
+            class="field-block"
+            :class="{ focused: isIssueTargetActive(`arg:${arg.name}:list-source`) }"
+          >
             <div class="field-label">列表来源</div>
-            <select class="input" v-model="getListValue(arg).source.sourceType">
-              <option v-for="option in fieldSourceOptions('arg')" :key="option.value" :value="option.value">{{ option.label }}</option>
+            <select
+              :ref="(el) => setIssueTargetRef(`arg:${arg.name}:list-source:mode`, el)"
+              class="input"
+              :class="{ focused: isIssueTargetFocused(`arg:${arg.name}:list-source:mode`) }"
+              :value="getListSourceMode(arg)"
+              @change="handleListSourceModeChange(arg.name, $event)"
+            >
+              <option value="source">路径 / 常量</option>
+              <option value="call">服务调用补数</option>
             </select>
-            <SourcePathInput
-              v-if="getListValue(arg).source.sourceType !== 'const'"
-              :model-value="getListValue(arg).source.path || ''"
-              :options="getSourceOptionsForNode(getListValue(arg).source.sourceType, 'arg')"
-              :placeholder="getSourcePlaceholder(getListValue(arg).source.sourceType, guessSourcePath(arg.name))"
-              @update:model-value="getListValue(arg).source.path = $event"
-            />
-            <textarea
-              v-else
-              class="input textarea"
-              v-model="getListValue(arg).source.constValue"
-              placeholder='常量列表，例如 [{"skuId":"A100"}]'
-            ></textarea>
+            <template v-if="getListSourceMode(arg) === 'source'">
+              <select
+                :ref="(el) => setIssueTargetRef(`arg:${arg.name}:list-source:type`, el)"
+                class="input"
+                :class="{ focused: isIssueTargetFocused(`arg:${arg.name}:list-source:type`) }"
+                v-model="getListSourceValue(arg).sourceType"
+              >
+                <option v-for="option in fieldSourceOptions('arg')" :key="option.value" :value="option.value">{{ option.label }}</option>
+              </select>
+              <div
+                v-if="getListSourceValue(arg).sourceType !== 'const'"
+                :ref="(el) => setIssueTargetRef(`arg:${arg.name}:list-source:value`, el)"
+                class="focus-anchor"
+                :class="{ focused: isIssueTargetFocused(`arg:${arg.name}:list-source:value`) }"
+              >
+                <SourcePathInput
+                  :model-value="getListSourceValue(arg).path || ''"
+                  :options="getSourceOptionsForNode(getListSourceValue(arg).sourceType, 'arg')"
+                  :placeholder="getSourcePlaceholder(getListSourceValue(arg).sourceType, guessSourcePath(arg.name))"
+                  @update:model-value="getListSourceValue(arg).path = $event"
+                />
+              </div>
+              <textarea
+                v-else
+                :ref="(el) => setIssueTargetRef(`arg:${arg.name}:list-source:value`, el)"
+                class="input textarea"
+                :class="{ focused: isIssueTargetFocused(`arg:${arg.name}:list-source:value`) }"
+                v-model="getListSourceValue(arg).constValue"
+                placeholder='常量列表，例如 [{"skuId":"A100"}]'
+              ></textarea>
+            </template>
+            <template v-else>
+              <div class="muted tiny">当列表需要先查商品、用户、库存等服务后再装配时，直接在这里配置补数服务。</div>
+              <div
+                :ref="(el) => setIssueTargetRef(`arg:${arg.name}:list-source:call`, el)"
+                class="focus-anchor"
+                :class="{ focused: isIssueTargetActive(`arg:${arg.name}:list-source:call`) }"
+              >
+                <ServiceCallEditor
+                  :model-value="getListSourceCallEditorModel(arg)"
+                  :project-key="projectKey"
+                  :temp-keys="tempPathOptions.map((item) => item.replace(/^temp\./, ''))"
+                  :source-path-options="contextSourcePaths"
+                  @update:model-value="handleListSourceCallModelUpdate(arg.name, $event)"
+                />
+              </div>
+            </template>
           </div>
 
-          <div v-if="canShowItemBuilder(arg.name)" class="field-block">
+          <div
+            :ref="(el) => setIssueTargetRef(`arg:${arg.name}:filters`, el)"
+            class="field-block"
+            :class="{ focused: isIssueTargetActive(`arg:${arg.name}:filters`) }"
+          >
+            <div class="section-head">
+              <div class="field-label">列表过滤</div>
+              <div class="row-actions">
+                <button type="button" class="btn mini" @click="addListFilterOp(arg.name)">+ 过滤条件</button>
+              </div>
+            </div>
+            <div class="muted tiny">过滤表达式面向当前列表项编写，例如 `item.enabled == true`、`item.qty > 0`。</div>
+            <div v-if="getListFilterOps(arg).length === 0" class="muted tiny">当前未配置过滤条件，将透传全部列表项。</div>
+            <div
+              v-for="(op, index) in getListFilterOps(arg)"
+              :key="op.id || `${arg.name}_filter_${index}`"
+              class="field-row-card"
+              :ref="(el) => setIssueTargetRef(`arg:${arg.name}:filter:${index}`, el)"
+              :class="{ focused: isIssueTargetActive(`arg:${arg.name}:filter:${index}`) }"
+            >
+              <div class="field-row-head">
+                <div class="muted tiny">过滤 {{ index + 1 }}</div>
+                <button type="button" class="btn mini" @click="removeListFilterOp(arg.name, op.id)">删</button>
+              </div>
+              <textarea
+                :ref="(el) => setIssueTargetRef(`arg:${arg.name}:filter:${index}:expression`, el)"
+                class="input textarea mini-textarea"
+                :class="{ focused: isIssueTargetFocused(`arg:${arg.name}:filter:${index}:expression`) }"
+                v-model="op.expression"
+                placeholder='例如 item.enabled == true && item.stock > 0'
+              ></textarea>
+            </div>
+          </div>
+
+          <div
+            v-if="canShowItemBuilder(arg.name)"
+            :ref="(el) => setIssueTargetRef(`arg:${arg.name}:item`, el)"
+            class="field-block"
+            :class="{ focused: isIssueTargetActive(`arg:${arg.name}:item`) }"
+          >
             <div class="section-head">
               <div class="field-label">元素结构映射</div>
               <div class="row-actions">
@@ -1536,28 +2595,84 @@ watch(
               v-for="(field, index) in getListItemFieldList(arg)"
               :key="`${arg.name}_item_${index}`"
               class="field-row-card"
+              :ref="(el) => setIssueTargetRef(`arg:${arg.name}:item-field:${index}`, el)"
+              :class="{ focused: isIssueTargetActive(`arg:${arg.name}:item-field:${index}`) }"
             >
               <div class="field-row-head">
                 <div class="muted tiny">元素字段 {{ index + 1 }}</div>
                 <button type="button" class="btn mini" @click="removeListItemField(arg.name, index)">删</button>
               </div>
-              <input class="input" v-model="field.path" placeholder="元素字段路径，例如 skuId / profile.name" />
-              <select class="input" v-model="getFieldSourceValue(field).sourceType">
+              <input
+                :ref="(el) => setIssueTargetRef(`arg:${arg.name}:item-field:${index}:path`, el)"
+                class="input"
+                :class="{ focused: isIssueTargetFocused(`arg:${arg.name}:item-field:${index}:path`) }"
+                v-model="field.path"
+                placeholder="元素字段路径，例如 skuId / profile.name"
+              />
+              <select
+                :ref="(el) => setIssueTargetRef(`arg:${arg.name}:item-field:${index}:source-type`, el)"
+                class="input"
+                :class="{ focused: isIssueTargetFocused(`arg:${arg.name}:item-field:${index}:source-type`) }"
+                v-model="getFieldSourceValue(field).sourceType"
+              >
                 <option v-for="option in fieldSourceOptions('listItem')" :key="option.value" :value="option.value">{{ option.label }}</option>
               </select>
-              <SourcePathInput
+              <div
                 v-if="getFieldSourceValue(field).sourceType !== 'const'"
-                :model-value="getFieldSourceValue(field).path || ''"
-                :options="getSourceOptionsForNode(getFieldSourceValue(field).sourceType, 'listItem')"
-                :placeholder="getSourcePlaceholder(getFieldSourceValue(field).sourceType, field.path || 'skuId')"
-                @update:model-value="getFieldSourceValue(field).path = $event"
-              />
+                :ref="(el) => setIssueTargetRef(`arg:${arg.name}:item-field:${index}:source`, el)"
+                class="focus-anchor"
+                :class="{ focused: isIssueTargetFocused(`arg:${arg.name}:item-field:${index}:source`) }"
+              >
+                <SourcePathInput
+                  :model-value="getFieldSourceValue(field).path || ''"
+                  :options="getSourceOptionsForNode(getFieldSourceValue(field).sourceType, 'listItem')"
+                  :placeholder="getSourcePlaceholder(getFieldSourceValue(field).sourceType, field.path || 'skuId')"
+                  @update:model-value="getFieldSourceValue(field).path = $event"
+                />
+              </div>
               <textarea
                 v-else
+                :ref="(el) => setIssueTargetRef(`arg:${arg.name}:item-field:${index}:source`, el)"
                 class="input textarea mini-textarea"
+                :class="{ focused: isIssueTargetFocused(`arg:${arg.name}:item-field:${index}:source`) }"
                 v-model="getFieldSourceValue(field).constValue"
                 placeholder='元素常量，例如 "DEFAULT" / 0'
               ></textarea>
+            </div>
+          </div>
+
+          <div
+            v-else-if="canShowPrimitiveListItemMapper(arg.name)"
+            :ref="(el) => setIssueTargetRef(`arg:${arg.name}:item`, el)"
+            class="field-block"
+            :class="{ focused: isIssueTargetActive(`arg:${arg.name}:item`) }"
+          >
+            <div class="section-head">
+              <div class="field-label">元素取值映射</div>
+              <div class="row-actions">
+                <button type="button" class="btn mini" @click="clearPrimitiveListItemSource(arg.name)">恢复透传</button>
+              </div>
+            </div>
+            <div class="muted tiny">适用于 `List&lt;String&gt;`、`List&lt;Long&gt;` 或从对象数组中提取单个字段。当前仅支持从当前列表项取值。</div>
+            <select
+              :ref="(el) => setIssueTargetRef(`arg:${arg.name}:primitive-item:type`, el)"
+              class="input"
+              :class="{ focused: isIssueTargetFocused(`arg:${arg.name}:primitive-item:type`) }"
+              v-model="getPrimitiveListItemSource(arg).sourceType"
+            >
+              <option value="item">当前列表项</option>
+            </select>
+            <div
+              :ref="(el) => setIssueTargetRef(`arg:${arg.name}:primitive-item:value`, el)"
+              class="focus-anchor"
+              :class="{ focused: isIssueTargetFocused(`arg:${arg.name}:primitive-item:value`) }"
+            >
+              <SourcePathInput
+                :model-value="getPrimitiveListItemSource(arg).path || ''"
+                :options="getSourceOptionsForNode('item', 'listItem')"
+                :placeholder="getSourcePlaceholder('item', 'item.id / $.id')"
+                @update:model-value="getPrimitiveListItemSource(arg).path = $event"
+              />
             </div>
           </div>
 
@@ -1680,6 +2795,12 @@ watch(
   background: rgba(255, 251, 235, 0.82);
 }
 
+.temp-card.focused,
+.arg-card.focused {
+  border-color: rgba(37, 99, 235, 0.45);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+}
+
 .temp-meta-row,
 .plan-warnings {
   display: flex;
@@ -1776,9 +2897,21 @@ watch(
   border-radius: 10px;
   padding: 8px 10px;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 6px 10px;
   align-items: start;
+}
+
+.issue-item.clickable {
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.issue-item.clickable:hover,
+.issue-item.clickable:focus-visible {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+  outline: none;
 }
 
 .issue-code {
@@ -1787,7 +2920,8 @@ watch(
 }
 
 .issue-message,
-.issue-path {
+.issue-path,
+.issue-hint {
   font-size: 11px;
   word-break: break-word;
 }
@@ -1795,6 +2929,65 @@ watch(
 .issue-path {
   grid-column: 2;
   opacity: 0.75;
+}
+
+.issue-hint {
+  grid-column: 2;
+  color: #475569;
+}
+
+.issue-action {
+  grid-column: 3;
+  grid-row: 1 / span 3;
+  align-self: center;
+  white-space: nowrap;
+}
+
+.preview-list,
+.preview-call-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.preview-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fbfdff;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.preview-head,
+.preview-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.preview-label,
+.preview-call-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.preview-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.preview-call-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(37, 99, 235, 0.14);
+  background: rgba(239, 246, 255, 0.58);
 }
 
 .arg-head,
@@ -1815,6 +3008,13 @@ watch(
   gap: 8px;
 }
 
+.field-block.focused,
+.field-row-card.focused,
+.focus-anchor.focused {
+  border-color: rgba(37, 99, 235, 0.4);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
 .field-label {
   font-size: 12px;
   font-weight: 600;
@@ -1831,6 +3031,11 @@ watch(
   gap: 8px;
 }
 
+.focus-anchor {
+  border: 1px solid transparent;
+  border-radius: 10px;
+}
+
 .input {
   width: 100%;
   max-width: 100%;
@@ -1840,6 +3045,11 @@ watch(
   border-radius: 10px;
   padding: 8px 10px;
   font-size: 13px;
+}
+
+.input.focused {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
 }
 
 .input:focus {

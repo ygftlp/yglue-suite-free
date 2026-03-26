@@ -394,6 +394,14 @@ export interface ParamAssemblerValidateResponse {
   issues: ParamAssemblerIssue[]
 }
 
+export interface ParamAssemblerSuggestResponse {
+  ast: Record<string, any>
+  issues: ParamAssemblerIssue[]
+  updatedCount: number
+  touchedArgs: string[]
+  summary?: string
+}
+
 export interface ParamAssemblerContextResponse {
   entrypoint?: ProjectEndpoint | null
   sourcePaths: string[]
@@ -600,6 +608,17 @@ export const api = {
   ): Promise<ParamAssemblerDraftResponse> {
     return jsonRequest<ParamAssemblerDraftResponse>(
       `/projects/${encodeURIComponent(projectKey)}/param-assembler/draft`,
+      payload,
+      { method: "POST" }
+    )
+  },
+
+  suggestParamAssemblerAst(
+    projectKey: string,
+    payload: { ast?: Record<string, any>; args?: ParamAssemblerArgMeta[]; sourcePaths?: string[]; mode?: "all" | "emptyOnly" }
+  ): Promise<ParamAssemblerSuggestResponse> {
+    return jsonRequest<ParamAssemblerSuggestResponse>(
+      `/projects/${encodeURIComponent(projectKey)}/param-assembler/suggest`,
       payload,
       { method: "POST" }
     )

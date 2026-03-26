@@ -26,10 +26,12 @@ import org.yglue.flow.orch.web.dto.flow.response.FlowModelResponse;
 import org.yglue.flow.orch.web.dto.flow.response.FlowResolverResponse;
 import org.yglue.flow.orch.web.dto.paramassembler.request.ParamAssemblerArgMeta;
 import org.yglue.flow.orch.web.dto.paramassembler.request.ParamAssemblerDraftRequest;
+import org.yglue.flow.orch.web.dto.paramassembler.request.ParamAssemblerSuggestRequest;
 import org.yglue.flow.orch.web.dto.paramassembler.request.ParamAssemblerValidateRequest;
 import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerContextResponse;
 import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerDraftResponse;
 import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerIssueResponse;
+import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerSuggestResponse;
 import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerValidateResponse;
 
 import java.util.ArrayList;
@@ -144,6 +146,22 @@ public class ParamAssemblerService {
         List<ParamAssemblerIssueResponse> issues = validateAst(request.getAst(), safeArgs(request.getArgs()));
         response.setIssues(issues);
         response.setValid(issues.stream().noneMatch(item -> "error".equalsIgnoreCase(item.getSeverity())));
+        return response;
+    }
+
+    public ParamAssemblerSuggestResponse suggest(String projectKey, ParamAssemblerSuggestRequest request) {
+        projectService.requireProject(projectKey);
+        List<ParamAssemblerArgMeta> args = safeArgs(request.getArgs());
+        List<String> baseSourcePaths = normalizeSourcePaths(request.getSourcePaths());
+        Map<String, Object> ast = prepareSuggestAst(request.getAst(), args, baseSourcePaths);
+        SuggestStats stats = applyAstSuggestions(ast, args, baseSourcePaths, isSuggestAllMode(request.getMode()));
+
+        ParamAssemblerSuggestResponse response = new ParamAssemblerSuggestResponse();
+        response.setAst(ast);
+        response.setUpdatedCount(stats.updatedCount());
+        response.setTouchedArgs(stats.touchedArgs());
+        response.setSummary(buildSuggestSummary(stats, request.getMode()));
+        response.setIssues(validateAst(ast, args));
         return response;
     }
 
@@ -1793,6 +1811,170 @@ public class ParamAssemblerService {
         return source;
     }
 
+    private Map<String, Object> prepareSuggestAst(Map<String, Object> rawAst,
+                                                  List<ParamAssemblerArgMeta> argsMeta,
+                                                  List<String> sourcePaths) {
+        Map<String, Object> ast = deepCopyMap(rawAst);
+        Map<String, Object> normalized = new LinkedHashMap<>();
+        normalized.put("version", AST_VERSION);
+        normalized.put("temps", deepCopyList(asMapList(ast.get("temps"))));
+
+        List<Map<String, Object>> rawArgs = asMapList(ast.get("args"));
+        Map<String, Map<String, Object>> byName = new LinkedHashMap<>();
+        for (Map<String, Object> rawArg : rawArgs) {
+            String name = text(rawArg.get("name"));
+            if (StringUtils.hasText(name)) {
+                byName.put(name, rawArg);
+            }
+        }
+
+        List<Map<String, Object>> normalizedArgs = new ArrayList<>();
+        for (int index = 0; index < argsMeta.size(); index += 1) {
+            ParamAssemblerArgMeta meta = argsMeta.get(index);
+            Map<String, Object> rawArg = byName.get(text(meta.getName()));
+            if (rawArg == null && index < rawArgs.size()) {
+                rawArg = rawArgs.get(index);
+            }
+            Map<String, Object> argNode = new LinkedHashMap<>();
+            argNode.put("name", text(meta.getName()));
+            argNode.put("javaType", firstNonBlank(text(rawArg != null ? rawArg.get("javaType") : null), text(meta.getJavaType())));
+            argNode.put("required", Boolean.TRUE.equals(meta.getRequired()));
+            if (rawArg != null && rawArg.containsKey("value")) {
+                argNode.put("value", deepCopyMapOrValue(rawArg.get("value")));
+            } else {
+                argNode.put("value", buildDraftValue(meta, sourcePaths));
+            }
+            normalizedArgs.add(argNode);
+        }
+        normalized.put("args", normalizedArgs);
+        return normalized;
+    }
+
+    private SuggestStats applyAstSuggestions(Map<String, Object> ast,
+                                             List<ParamAssemblerArgMeta> argsMeta,
+                                             List<String> baseSourcePaths,
+                                             boolean overrideAll) {
+        List<String> sourcePaths = new ArrayList<>(baseSourcePaths);
+        sourcePaths.addAll(buildTempSourcePaths(ast));
+        sourcePaths = normalizeSourcePaths(sourcePaths);
+
+        int updatedCount = 0;
+        Set<String> touchedArgs = new LinkedHashSet<>();
+        List<Map<String, Object>> args = asMapList(ast.get("args"));
+        for (int index = 0; index < Math.min(args.size(), argsMeta.size()); index += 1) {
+            Map<String, Object> arg = args.get(index);
+            ParamAssemblerArgMeta meta = argsMeta.get(index);
+            int changed = applyArgSuggestion(arg, meta, sourcePaths, !overrideAll);
+            if (changed > 0) {
+                updatedCount += changed;
+                touchedArgs.add(text(meta.getName()));
+            }
+        }
+        ast.put("args", args);
+        return new SuggestStats(updatedCount, new ArrayList<>(touchedArgs));
+    }
+
+    private int applyArgSuggestion(Map<String, Object> arg,
+                                   ParamAssemblerArgMeta meta,
+                                   List<String> sourcePaths,
+                                   boolean emptyOnly) {
+        Map<String, Object> value = castMap(arg.get("value"));
+        String kind = text(value.get("kind")).toLowerCase(Locale.ROOT);
+        String argName = text(meta.getName());
+        if ("source".equals(kind)) {
+            return suggestSourceNode(value, "", argName, sourcePaths, emptyOnly);
+        }
+        if ("object".equals(kind)) {
+            List<Map<String, Object>> fields = asMapList(value.get("fields"));
+            int changed = suggestObjectFields(fields, argName, sourcePaths, emptyOnly, false);
+            value.put("fields", fields);
+            arg.put("value", value);
+            return changed;
+        }
+        if (!"list".equals(kind)) {
+            return 0;
+        }
+
+        int changed = 0;
+        Map<String, Object> source = castMap(value.get("source"));
+        if ("source".equalsIgnoreCase(text(source.get("kind")))) {
+            String bestSourcePath = firstNonBlank(
+                    findBestSourcePath(argName + "[]", sourcePaths),
+                    findBestSourcePath(argName, sourcePaths));
+            changed += suggestSourceNode(source, bestSourcePath, argName, sourcePaths, emptyOnly);
+            value.put("source", source);
+        }
+
+        Map<String, Object> item = castMap(value.get("item"));
+        String itemKind = text(item.get("kind")).toLowerCase(Locale.ROOT);
+        if ("object".equals(itemKind)) {
+            List<Map<String, Object>> itemFields = asMapList(item.get("fields"));
+            changed += suggestObjectFields(itemFields, argName, sourcePaths, emptyOnly, true);
+            item.put("fields", itemFields);
+            value.put("item", item);
+        }
+        arg.put("value", value);
+        return changed;
+    }
+
+    private int suggestObjectFields(List<Map<String, Object>> fields,
+                                    String targetName,
+                                    List<String> sourcePaths,
+                                    boolean emptyOnly,
+                                    boolean preferItemPath) {
+        int changed = 0;
+        for (Map<String, Object> field : fields) {
+            String leafPath = text(field.get("path"));
+            if (!StringUtils.hasText(leafPath)) {
+                continue;
+            }
+            Map<String, Object> source = castMap(field.get("value"));
+            String preferredPath = preferItemPath ? "item." + leafPath : "";
+            String lookupTarget = firstNonBlank(targetName + "." + leafPath, leafPath);
+            changed += suggestSourceNode(source, preferredPath, lookupTarget, sourcePaths, emptyOnly);
+            field.put("value", source);
+        }
+        return changed;
+    }
+
+    private int suggestSourceNode(Map<String, Object> source,
+                                  String preferredPath,
+                                  String target,
+                                  List<String> sourcePaths,
+                                  boolean emptyOnly) {
+        if (source.isEmpty() || !"source".equalsIgnoreCase(text(source.get("kind")))) {
+            return 0;
+        }
+        if ("const".equalsIgnoreCase(text(source.get("sourceType")))) {
+            return 0;
+        }
+
+        boolean blank = !StringUtils.hasText(text(source.get("path")));
+        if (emptyOnly && !blank) {
+            return 0;
+        }
+
+        String nextPath = firstNonBlank(preferredPath, findBestSourcePath(target, sourcePaths));
+        if (!StringUtils.hasText(nextPath)) {
+            return 0;
+        }
+
+        String nextSourceType = determineSourceType(nextPath);
+        boolean changed = !nextPath.equals(text(source.get("path")))
+                || !nextSourceType.equalsIgnoreCase(text(source.get("sourceType")))
+                || StringUtils.hasText(text(source.get("constValue")));
+        if (!changed) {
+            return 0;
+        }
+        source.put("kind", "source");
+        source.put("sourceType", nextSourceType);
+        source.put("path", nextPath);
+        if (source.containsKey("constValue")) {
+            source.put("constValue", "");
+        }
+        return 1;
+    }
+
     private String determineSourceType(String sourcePath) {
         String path = text(sourcePath);
         if (!StringUtils.hasText(path)) {
@@ -2053,7 +2235,14 @@ public class ParamAssemblerService {
         if (source.isEmpty()) {
             issues.add(error("list.source.required", path + ".source", "List node requires source."));
         } else {
-            issues.addAll(validateSource(source, path + ".source", validationContext));
+            String sourceKind = text(source.get("kind")).toLowerCase(Locale.ROOT);
+            if ("call".equals(sourceKind)) {
+                issues.addAll(validateCall(source, path + ".source", validationContext));
+            } else if ("source".equals(sourceKind) || !StringUtils.hasText(sourceKind)) {
+                issues.addAll(validateSource(source, path + ".source", validationContext));
+            } else {
+                issues.add(error("list.source.kind.unsupported", path + ".source.kind", "List source only supports source or call."));
+            }
         }
 
         List<Map<String, Object>> ops = asMapList(list.get("ops"));
@@ -2567,6 +2756,27 @@ public class ParamAssemblerService {
         return normalized;
     }
 
+    private boolean isSuggestAllMode(String mode) {
+        return "all".equalsIgnoreCase(text(mode));
+    }
+
+    private List<String> buildTempSourcePaths(Map<String, Object> ast) {
+        return asMapList(ast.get("temps")).stream()
+                .map(item -> text(item.get("key")))
+                .filter(StringUtils::hasText)
+                .map(key -> "temp." + key)
+                .collect(Collectors.toList());
+    }
+
+    private String buildSuggestSummary(SuggestStats stats, String mode) {
+        String action = isSuggestAllMode(mode) ? "已重算推荐映射" : "已自动补齐空白映射";
+        if (stats.updatedCount() <= 0) {
+            return action + "，当前未找到可更新的推荐项。";
+        }
+        return action + "，共更新 " + stats.updatedCount() + " 处配置，覆盖 "
+                + stats.touchedArgs().size() + " 个参数。";
+    }
+
     private List<String> normalizeSourcePaths(List<String> sourcePaths) {
         if (sourcePaths == null || sourcePaths.isEmpty()) {
             return List.of();
@@ -2640,6 +2850,30 @@ public class ParamAssemblerService {
         return output;
     }
 
+    private Map<String, Object> deepCopyMap(Map<String, Object> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return new LinkedHashMap<>();
+        }
+        return OBJECT_MAPPER.convertValue(raw, new TypeReference<LinkedHashMap<String, Object>>() {});
+    }
+
+    private List<Map<String, Object>> deepCopyList(List<Map<String, Object>> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return new ArrayList<>();
+        }
+        return OBJECT_MAPPER.convertValue(raw, new TypeReference<List<Map<String, Object>>>() {});
+    }
+
+    private Object deepCopyMapOrValue(Object raw) {
+        if (raw instanceof Map<?, ?> map) {
+            return deepCopyMap(castMap(map));
+        }
+        if (raw instanceof Collection<?> collection) {
+            return OBJECT_MAPPER.convertValue(collection, new TypeReference<List<Object>>() {});
+        }
+        return raw;
+    }
+
     private String text(Object value) {
         return value == null ? "" : String.valueOf(value).trim();
     }
@@ -2659,5 +2893,8 @@ public class ParamAssemblerService {
 
     private ParamAssemblerIssueResponse warning(String code, String path, String message) {
         return new ParamAssemblerIssueResponse(code, path, "warning", message);
+    }
+
+    private record SuggestStats(int updatedCount, List<String> touchedArgs) {
     }
 }
