@@ -90,6 +90,26 @@ interface CatalogMethodOption {
   params: CatalogParam[]
 }
 
+interface ServiceCallInsight {
+  errors: string[]
+  warnings: string[]
+}
+
+type SmartFillMode = "all" | "emptyOnly"
+
+interface SmartFillChange {
+  label: string
+  nextValue: string
+}
+
+interface SmartFillPreviewItem {
+  bindingId: string
+  paramName: string
+  summary: string
+  changes: SmartFillChange[]
+  nextBinding: ArgBinding
+}
+
 const props = defineProps<{
   modelValue?: any
   projectKey?: string
@@ -101,6 +121,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "update:modelValue", value: any): void
   (e: "select-method", value: any | null): void
+  (e: "insight-change", value: ServiceCallInsight): void
 }>()
 
 const bindingsVisible = computed(() => props.showBindings !== false)
@@ -120,6 +141,18 @@ function safeParseJson(raw: unknown): any | null {
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value))
+}
+
+function uniqueTextList(items: string[]): string[] {
+  const result: string[] = []
+  const seen = new Set<string>()
+  items.forEach((item) => {
+    const text = toText(item)
+    if (!text || seen.has(text)) return
+    seen.add(text)
+    result.push(text)
+  })
+  return result
 }
 
 function isRecord(value: unknown): value is Record<string, any> {
@@ -555,6 +588,8 @@ const editingBindingId = ref("")
 const editingBindingIndex = ref(-1)
 const objectTemplateText = ref("{\n  \"profile\": {\n    \"name\": \"\",\n    \"age\": 0\n  }\n}")
 const objectTemplateError = ref("")
+const smartFillMode = ref<SmartFillMode>("emptyOnly")
+const smartFillPreviewVisible = ref(false)
 
 const tempKeys = computed(() =>
   (Array.isArray(props.tempKeys) ? props.tempKeys : []).map((item) => String(item || "").trim()).filter((item) => Boolean(item))
@@ -586,6 +621,32 @@ const serviceCallErrors = computed(() => {
     errors.push("已选方法在最新目录中不存在，请重新选择服务方法。")
   }
   return errors
+})
+const serviceCallInsight = computed<ServiceCallInsight>(() => {
+  const errors: string[] = []
+  const warnings: string[] = []
+
+  if (loadError.value) {
+    errors.push(loadError.value)
+  }
+  errors.push(...serviceCallErrors.value)
+
+  if (!toText(local.value.serviceRef?.serviceBean) || !toText(local.value.serviceRef?.methodName)) {
+    warnings.push("尚未选择服务方法。")
+  }
+
+  if (bindingsVisible.value && !hasSelectedMethodButCatalogMissing.value) {
+    local.value.argBindings.forEach((binding, index) => {
+      const label = toText(binding.paramName) || `参数 ${index + 1}`
+      getBindingErrors(binding).forEach((msg) => errors.push(`${label}: ${msg}`))
+      getBindingWarnings(binding).forEach((msg) => warnings.push(`${label}: ${msg}`))
+    })
+  }
+
+  return {
+    errors: uniqueTextList(errors),
+    warnings: uniqueTextList(warnings),
+  }
 })
 const editingParamMeta = computed(() => {
   if (!editingBinding.value) return null
@@ -748,6 +809,223 @@ function getDefaultConstValue(binding: ArgBinding): string {
   if (raw.includes("bool")) return "false"
   if (raw.includes("int") || raw.includes("long") || raw.includes("double") || raw.includes("float") || raw.includes("number")) return "0"
   return "\"\""
+}
+
+function normalizeMatchToken(value: string): string {
+  return toText(value)
+    .replace(/^\$\./, "")
+    .replace(/^request\.(body|query|path|headers)\./, "")
+    .replace(/^context\./, "")
+    .replace(/^temp\./, "")
+    .replace(/\[\]/g, "")
+    .replace(/\[\*\]/g, "")
+    .toLowerCase()
+}
+
+function tailToken(value: string): string {
+  const normalized = normalizeMatchToken(value)
+  if (!normalized) return ""
+  const parts = normalized.split(".").filter(Boolean)
+  return parts[parts.length - 1] || normalized
+}
+
+function scoreCandidate(target: string, candidate: string): number {
+  const normalizedTarget = normalizeMatchToken(target)
+  const normalizedCandidate = normalizeMatchToken(candidate)
+  if (!normalizedTarget || !normalizedCandidate) return Number.NEGATIVE_INFINITY
+  if (normalizedTarget === normalizedCandidate) return 300
+  if (normalizedCandidate.endsWith(`.${normalizedTarget}`)) return 220
+  if (normalizedTarget.endsWith(`.${normalizedCandidate}`)) return 180
+  const targetTail = tailToken(normalizedTarget)
+  const candidateTail = tailToken(normalizedCandidate)
+  let score = 0
+  if (targetTail && targetTail === candidateTail) score += 120
+  if (normalizedCandidate.includes(normalizedTarget)) score += 60
+  if (normalizedTarget.includes(normalizedCandidate)) score += 40
+  return score
+}
+
+function findBestSourcePath(target: string): string {
+  let best = ""
+  let bestScore = Number.NEGATIVE_INFINITY
+  sourcePathOptions.value.forEach((candidate) => {
+    const score = scoreCandidate(target, candidate)
+    if (score > bestScore) {
+      bestScore = score
+      best = candidate
+    }
+  })
+  return bestScore > 0 ? best : ""
+}
+
+function findBestTempKey(target: string): string {
+  let best = ""
+  let bestScore = Number.NEGATIVE_INFINITY
+  tempKeys.value.forEach((candidate) => {
+    const score = scoreCandidate(target, candidate)
+    if (score > bestScore) {
+      bestScore = score
+      best = candidate
+    }
+  })
+  return bestScore > 80 ? best : ""
+}
+
+function isSourceBlank(source: ObjectFieldSource | ArgBindingSource): boolean {
+  if (source.kind === "ctx") return !toText(source.path)
+  if (source.kind === "tempVar") return !toText(source.tempKey)
+  if (source.kind === "const") return !toText(source.constValue)
+  return true
+}
+
+function isObjectBuilderEffectivelyEmpty(binding: ArgBinding): boolean {
+  return !Array.isArray(binding.source.objectFields)
+    || binding.source.objectFields.length === 0
+    || binding.source.objectFields.every((field) => !toText(field.fieldPath) || isSourceBlank(field.source))
+}
+
+function describeFieldSource(source: ObjectFieldSource | ArgBindingSource): string {
+  if (source.kind === "ctx") return toText(source.path)
+  if (source.kind === "tempVar") return `temp.${toText(source.tempKey)}`
+  return truncateText(toText(source.constValue) || "常量")
+}
+
+function planSmartFillField(field: ObjectFieldBinding, emptyOnly: boolean): ObjectFieldBinding {
+  const next = clone(field)
+  const currentBlank = !toText(next.fieldPath) || isSourceBlank(next.source)
+  if (emptyOnly && !currentBlank) {
+    return next
+  }
+  const bestPath = findBestSourcePath(next.fieldPath)
+  if (bestPath) {
+    next.source.kind = "ctx"
+    next.source.path = bestPath
+    next.source.tempKey = ""
+    return next
+  }
+  const bestTemp = findBestTempKey(next.fieldPath)
+  if (bestTemp) {
+    next.source.kind = "tempVar"
+    next.source.tempKey = bestTemp
+    next.source.path = ""
+  }
+  return next
+}
+
+function buildSmartFillChanges(before: ArgBinding, after: ArgBinding): SmartFillChange[] {
+  const changes: SmartFillChange[] = []
+  if (before.source.mode !== after.source.mode) {
+    changes.push({
+      label: "模式",
+      nextValue: after.source.mode === "objectBuilder" ? "切换为对象构造器" : "切换为直接取值",
+    })
+  }
+  if (after.source.mode === "objectBuilder") {
+    const beforeFields = new Map((before.source.objectFields || []).map((field) => [toText(field.fieldPath), field]))
+    ;(after.source.objectFields || []).forEach((field) => {
+      const key = toText(field.fieldPath)
+      const previous = beforeFields.get(key)
+      const previousValue = previous ? describeFieldSource(previous.source) : ""
+      const nextValue = describeFieldSource(field.source)
+      if (nextValue && previousValue !== nextValue) {
+        changes.push({
+          label: `字段 ${key || "未命名"}`,
+          nextValue,
+        })
+      }
+    })
+    return changes
+  }
+  const beforeValue = describeFieldSource(before.source)
+  const afterValue = describeFieldSource(after.source)
+  if (before.source.kind !== after.source.kind || beforeValue !== afterValue) {
+    changes.push({
+      label: "参数来源",
+      nextValue: afterValue || after.source.kind,
+    })
+  }
+  return changes
+}
+
+function planSmartFillBinding(binding: ArgBinding, index: number, mode: SmartFillMode): SmartFillPreviewItem | null {
+  const emptyOnly = mode === "emptyOnly"
+  const next = clone(binding)
+  const meta = getParamMeta(binding, index)
+  if (canUseObjectBuilder(next) && meta?.schema) {
+    const paths = flattenSchemaLeafPaths(meta.schema)
+    if (paths.length > 0) {
+      const canPromote = !emptyOnly || (next.source.mode === "objectBuilder" || isSourceBlank(next.source))
+      if (canPromote) {
+        next.source.mode = "objectBuilder"
+        if (!emptyOnly || isObjectBuilderEffectivelyEmpty(next)) {
+          next.source.objectFields = paths.map((path) => planSmartFillField(createObjectField(path), false))
+        } else {
+          const existingByPath = new Map((next.source.objectFields || []).map((field) => [toText(field.fieldPath), clone(field)]))
+          next.source.objectFields = paths.map((path) => {
+            const current = existingByPath.get(path) || createObjectField(path)
+            return planSmartFillField(current, emptyOnly)
+          })
+        }
+      }
+    } else if (next.source.mode === "objectBuilder") {
+      next.source.objectFields = (next.source.objectFields || []).map((field) => planSmartFillField(field, emptyOnly))
+    }
+  }
+
+  if (next.source.mode === "direct") {
+    const canFillDirect = !emptyOnly || isSourceBlank(next.source)
+    if (canFillDirect) {
+      const bestPath = findBestSourcePath(next.paramName)
+      if (bestPath) {
+        next.source.kind = "ctx"
+        next.source.path = bestPath
+        next.source.tempKey = ""
+      } else {
+        const bestTemp = findBestTempKey(next.paramName)
+        if (bestTemp) {
+          next.source.kind = "tempVar"
+          next.source.tempKey = bestTemp
+          next.source.path = ""
+        }
+      }
+    }
+  }
+
+  const changes = buildSmartFillChanges(binding, next)
+  if (changes.length === 0) return null
+  return {
+    bindingId: binding.id,
+    paramName: toText(binding.paramName) || `参数 ${index + 1}`,
+    summary: next.source.mode === "objectBuilder" ? `建议补齐 ${changes.length} 处对象字段/模式` : `建议补齐 ${changes.length} 处参数来源`,
+    changes,
+    nextBinding: next,
+  }
+}
+
+const smartFillPreviewItems = computed<SmartFillPreviewItem[]>(() =>
+  local.value.argBindings
+    .map((binding, index) => planSmartFillBinding(binding, index, smartFillMode.value))
+    .filter((item): item is SmartFillPreviewItem => Boolean(item)),
+)
+
+const smartFillPreviewSummary = computed(() => ({
+  bindings: smartFillPreviewItems.value.length,
+  changes: smartFillPreviewItems.value.reduce((sum, item) => sum + item.changes.length, 0),
+}))
+
+function openSmartFillPreview(mode: SmartFillMode) {
+  smartFillMode.value = mode
+  smartFillPreviewVisible.value = true
+}
+
+function applySmartFillPreview() {
+  if (smartFillPreviewItems.value.length === 0) {
+    smartFillPreviewVisible.value = false
+    return
+  }
+  const nextById = new Map(smartFillPreviewItems.value.map((item) => [item.bindingId, item.nextBinding]))
+  local.value.argBindings = local.value.argBindings.map((binding) => nextById.get(binding.id) || binding)
+  smartFillPreviewVisible.value = false
 }
 
 function applyBindingPreset(binding: ArgBinding, preset: BindingPreset) {
@@ -917,6 +1195,7 @@ watch(() => props.modelValue, (next) => { local.value = normalizeModel(next) }, 
 watch(local, (next) => emit("update:modelValue", buildEmitPayload(next)), { deep: true })
 watch(currentMethodOption, (next) => emit("select-method", next ? clone(next) : null), { immediate: true })
 watch(() => props.projectKey, () => { loadCatalog() }, { immediate: true })
+watch(serviceCallInsight, (next) => emit("insight-change", clone(next)), { deep: true, immediate: true })
 
 onMounted(() => { loadCatalog() })
 </script>
@@ -925,7 +1204,11 @@ onMounted(() => { loadCatalog() })
   <div class="service-call-editor">
     <div class="editor-head">
       <div class="muted tiny">{{ bindingsVisible ? "先选服务方法，再逐个配置参数。" : "先选服务方法，基础装配器会自动生成参数草稿。" }}</div>
-      <button type="button" class="btn mini" @click="openPicker">选择方法</button>
+      <div class="editor-actions">
+        <button type="button" class="btn mini" :disabled="!bindingsVisible || local.argBindings.length === 0" @click="openSmartFillPreview('emptyOnly')">仅补空项</button>
+        <button type="button" class="btn mini" :disabled="!bindingsVisible || local.argBindings.length === 0" @click="openSmartFillPreview('all')">智能补齐</button>
+        <button type="button" class="btn mini" @click="openPicker">选择方法</button>
+      </div>
     </div>
     <div class="muted tiny">{{ bindingsVisible ? "快速配置：1 选择方法 2 配置参数来源 3 完成并返回。" : "这里负责方法选择和签名回填，参数结构编辑请在下方装配器中完成。" }}</div>
 
@@ -934,6 +1217,36 @@ onMounted(() => { loadCatalog() })
     <div v-if="loadError" class="warn">{{ loadError }}</div>
     <div v-if="serviceCallErrors.length > 0" class="plan-errors">
       <div v-for="msg in serviceCallErrors" :key="msg" class="plan-error">{{ msg }}</div>
+    </div>
+    <div v-if="bindingsVisible && smartFillPreviewVisible" class="smartfill-card">
+      <div class="smartfill-head">
+        <div>
+          <div class="tool-title">智能补齐预览</div>
+          <div class="muted tiny">
+            {{ smartFillMode === "emptyOnly" ? "当前模式：仅补空项，尽量保留你已经手工配置的映射。" : "当前模式：全量补齐，会按最新元数据重算可匹配项。" }}
+          </div>
+        </div>
+        <div class="smartfill-actions">
+          <button type="button" class="btn mini" @click="smartFillPreviewVisible = false">关闭</button>
+          <button type="button" class="btn mini primary" :disabled="smartFillPreviewItems.length === 0" @click="applySmartFillPreview">应用 {{ smartFillPreviewSummary.changes }} 处建议</button>
+        </div>
+      </div>
+      <div v-if="smartFillPreviewItems.length === 0" class="muted tiny">
+        当前没有可自动补齐的项，说明已有配置已经较完整，或者元数据还不足以给出可靠建议。
+      </div>
+      <div v-else class="smartfill-list">
+        <div v-for="item in smartFillPreviewItems" :key="item.bindingId" class="smartfill-item">
+          <div class="smartfill-title">{{ item.paramName }}</div>
+          <div class="muted tiny">{{ item.summary }}</div>
+          <div v-for="change in item.changes.slice(0, 5)" :key="`${item.bindingId}_${change.label}_${change.nextValue}`" class="smartfill-change">
+            <span class="smartfill-label">{{ change.label }}</span>
+            <span class="smartfill-value">{{ change.nextValue }}</span>
+          </div>
+          <div v-if="item.changes.length > 5" class="muted tiny">
+            还有 {{ item.changes.length - 5 }} 处变更，应用后可继续手工微调。
+          </div>
+        </div>
+      </div>
     </div>
 
     <div v-if="bindingsVisible" class="arg-list">
@@ -1171,6 +1484,13 @@ onMounted(() => { loadCatalog() })
   gap: 8px;
 }
 
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .preset-row {
   display: flex;
   flex-direction: column;
@@ -1401,6 +1721,69 @@ onMounted(() => { loadCatalog() })
   color: #92400e;
   border: 1px solid rgba(245, 158, 11, 0.35);
   background: rgba(255, 251, 235, 0.85);
+}
+
+.smartfill-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid #dbeafe;
+  background: linear-gradient(180deg, rgba(239, 246, 255, 0.92), rgba(248, 250, 252, 0.98));
+}
+
+.smartfill-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.smartfill-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.smartfill-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.smartfill-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.smartfill-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.smartfill-change {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.smartfill-label {
+  font-size: 12px;
+  color: #475569;
+}
+
+.smartfill-value {
+  font-size: 12px;
+  color: #1e3a8a;
+  word-break: break-all;
 }
 
 .type-prop-panel {

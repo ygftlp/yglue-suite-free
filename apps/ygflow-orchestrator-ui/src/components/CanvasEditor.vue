@@ -28,6 +28,10 @@ const {
   canSave,
   canPublish,
   showPublishButton,
+  flowPrecheckSummary,
+  flowPrecheckBlocking,
+  flowPrecheckHighlights,
+  flowPrecheckMessage,
   contextMenu,
   nodeTypes,
   logPreview,
@@ -117,6 +121,11 @@ function handleDropNode(payload: { item: any; position: { x: number; y: number }
         :can-save="canSave"
         :can-publish="canPublish"
         :show-publish-button="showPublishButton"
+        :precheck-errors="flowPrecheckSummary.errors"
+        :precheck-warnings="flowPrecheckSummary.warnings"
+        :precheck-blocking="flowPrecheckBlocking"
+        :precheck-highlights="flowPrecheckHighlights"
+        :precheck-message="flowPrecheckMessage"
         @open-flow-settings="openFlowSettings"
         @clear-selection="clearSelection"
         @delete-selection="deleteSelection"

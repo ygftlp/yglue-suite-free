@@ -84,9 +84,16 @@ type MethodMeta = {
   }>
 } | null
 
+type PreflightInsight = {
+  errors: string[]
+  warnings: string[]
+}
+
 const selectedMethodMeta = ref<MethodMeta>(null)
 const requestPathOptions = ref<string[]>([])
 const activeAssemblerMode = ref<"basic" | "advanced">("basic")
+const serviceCallInsight = ref<PreflightInsight>({ errors: [], warnings: [] })
+const paramAssemblerInsight = ref<PreflightInsight>({ errors: [], warnings: [] })
 
 function toText(value: unknown): string {
   return typeof value === "string" ? value.trim() : ""
@@ -104,6 +111,25 @@ function safeParseJson(raw: unknown): Record<string, any> | null {
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value))
+}
+
+function uniqueTextList(items: string[]): string[] {
+  const result: string[] = []
+  const seen = new Set<string>()
+  items.forEach((item) => {
+    const text = toText(item)
+    if (!text || seen.has(text)) return
+    seen.add(text)
+    result.push(text)
+  })
+  return result
+}
+
+function normalizeInsight(raw: any): PreflightInsight {
+  return {
+    errors: uniqueTextList(Array.isArray(raw?.errors) ? raw.errors.map((item: any) => String(item || "")) : []),
+    warnings: uniqueTextList(Array.isArray(raw?.warnings) ? raw.warnings.map((item: any) => String(item || "")) : []),
+  }
 }
 
 function hasUsefulParamPlans(value: any): boolean {
@@ -467,6 +493,30 @@ const inputSummaryText = computed(() => {
   if (size === 0) return "未识别到入参"
   return `已识别 ${size} 个入参`
 })
+const serviceNodePreflight = computed(() => {
+  const errors: string[] = []
+  const warnings: string[] = []
+
+  serviceCallInsight.value.errors.forEach((msg) => errors.push(`服务方法: ${msg}`))
+  serviceCallInsight.value.warnings.forEach((msg) => warnings.push(`服务方法: ${msg}`))
+
+  if (activeAssemblerMode.value === "basic") {
+    paramAssemblerInsight.value.errors.forEach((msg) => errors.push(`基础装配: ${msg}`))
+    paramAssemblerInsight.value.warnings.forEach((msg) => warnings.push(`基础装配: ${msg}`))
+  } else if (hasUsefulParamPlans(props.paramPlans)) {
+    warnings.push("当前使用高级模式，统一预检主要覆盖方法选择；复杂参数管线请结合下方高级面板复核。")
+  }
+
+  return {
+    errors: uniqueTextList(errors),
+    warnings: uniqueTextList(warnings),
+  }
+})
+const serviceNodePreflightState = computed(() => {
+  if (serviceNodePreflight.value.errors.length > 0) return "error"
+  if (serviceNodePreflight.value.warnings.length > 0) return "warn"
+  return "pass"
+})
 
 watch(() => props.nodeId, () => {
   activeAssemblerMode.value = detectPreferredAssemblerMode()
@@ -637,6 +687,14 @@ function handleBasicAssemblerAstUpdate(ast: Record<string, any> | null) {
 function handleBasicParamPlansUpdate(paramPlans: any) {
   emit("update:paramPlans", paramPlans)
 }
+
+function handleServiceCallInsightChange(next: PreflightInsight) {
+  serviceCallInsight.value = normalizeInsight(next)
+}
+
+function handleParamAssemblerInsightChange(next: PreflightInsight) {
+  paramAssemblerInsight.value = normalizeInsight(next)
+}
 </script>
 
 <template>
@@ -667,7 +725,32 @@ function handleBasicParamPlansUpdate(paramPlans: any) {
           :show-bindings="false"
           @update:model-value="handleServiceCallUpdate"
           @select-method="handleMethodMeta"
+          @insight-change="handleServiceCallInsightChange"
         />
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="row section-head">
+        <div class="muted section-title">保存前预检</div>
+        <div class="muted tiny">
+          错误 {{ serviceNodePreflight.errors.length }} / 告警 {{ serviceNodePreflight.warnings.length }}
+        </div>
+      </div>
+      <div class="preflight-card" :class="serviceNodePreflightState">
+        <div v-if="serviceNodePreflightState === 'pass'" class="preflight-pass">
+          当前服务节点配置未发现明显阻塞项，可以继续保存并进入发布前复核。
+        </div>
+        <div v-else class="preflight-list">
+          <div v-for="msg in serviceNodePreflight.errors.slice(0, 4)" :key="`service-node-error-${msg}`" class="preflight-item error">{{ msg }}</div>
+          <div v-for="msg in serviceNodePreflight.warnings.slice(0, 6)" :key="`service-node-warning-${msg}`" class="preflight-item warn">{{ msg }}</div>
+          <div
+            v-if="serviceNodePreflight.errors.length + serviceNodePreflight.warnings.length > 10"
+            class="muted tiny"
+          >
+            还有 {{ serviceNodePreflight.errors.length + serviceNodePreflight.warnings.length - 10 }} 项，请继续在下方配置区域逐项修正。
+          </div>
+        </div>
       </div>
     </section>
 
@@ -738,6 +821,7 @@ function handleBasicParamPlansUpdate(paramPlans: any) {
           :source-path-options="sourcePathOptions"
           @update:model-value="handleBasicAssemblerAstUpdate"
           @update:paramPlans="handleBasicParamPlansUpdate"
+          @insight-change="handleParamAssemblerInsightChange"
         />
       </div>
       <div v-else class="muted tiny mode-hint">
@@ -864,6 +948,59 @@ function handleBasicParamPlansUpdate(paramPlans: any) {
 
 .muted.tiny {
   font-size: 11px;
+}
+
+.preflight-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.preflight-card.pass {
+  border-color: rgba(34, 197, 94, 0.25);
+  background: rgba(240, 253, 244, 0.92);
+}
+
+.preflight-card.warn {
+  border-color: rgba(245, 158, 11, 0.28);
+  background: rgba(255, 251, 235, 0.95);
+}
+
+.preflight-card.error {
+  border-color: rgba(239, 68, 68, 0.24);
+  background: rgba(254, 242, 242, 0.96);
+}
+
+.preflight-pass {
+  font-size: 12px;
+  color: #166534;
+  line-height: 1.5;
+}
+
+.preflight-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.preflight-item {
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.preflight-item.error {
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  background: rgba(254, 226, 226, 0.7);
+  color: #991b1b;
+}
+
+.preflight-item.warn {
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  background: rgba(255, 247, 237, 0.84);
+  color: #9a3412;
 }
 
 .input {

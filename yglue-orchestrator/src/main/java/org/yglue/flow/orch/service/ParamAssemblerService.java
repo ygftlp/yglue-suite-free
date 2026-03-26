@@ -36,6 +36,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -55,6 +56,10 @@ public class ParamAssemblerService {
     private static final int MAX_HELPER_LIMIT = 2000;
     private static final Set<String> SOURCE_TYPES = Set.of("request", "context", "temp", "nodeOutput", "const", "item");
     private static final Set<String> LIST_OPS = Set.of("filter", "map", "compose");
+    private static final Set<String> BRANCH_TEMP_KINDS = Set.of("ctx", "tempVar", "const", "expression", "serviceCall");
+    private static final Set<String> BRANCH_CONDITION_GROUP_OPS = Set.of("and", "or");
+    private static final Set<String> BRANCH_CONDITION_RULE_OPS = Set.of("eq", "ne", "gt", "ge", "lt", "le", "contains", "in");
+    private static final Set<String> BRANCH_CONDITION_SOURCE_KINDS = Set.of("ctx", "const", "tempVar", "serviceCall");
     private static final Map<String, String> COMPONENT_DISPLAY_NAMES = Map.of(
             "BUSINESS", "Business Components",
             "SYSTEM", "System Components",
@@ -185,6 +190,9 @@ public class ParamAssemblerService {
                     changed = prepareNodeContent(nodeObject, strict, errors) || changed;
                 }
             }
+            if (strict) {
+                validateBranchAuthoring(objectRoot, nodes, errors);
+            }
 
             if (strict && !errors.isEmpty()) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, String.join(" ; ", errors));
@@ -257,6 +265,361 @@ public class ParamAssemblerService {
         }
 
         return changed;
+    }
+
+    private void validateBranchAuthoring(ObjectNode root, ArrayNode nodes, List<String> errors) {
+        Map<String, BranchValidationContext> branchContexts = new LinkedHashMap<>();
+        for (JsonNode node : nodes) {
+            if (!(node instanceof ObjectNode nodeObject)) {
+                continue;
+            }
+            ObjectNode data = objectNode(nodeObject.get("data"));
+            if (!isBranchNode(nodeObject, data)) {
+                continue;
+            }
+            BranchValidationContext context = buildBranchValidationContext(nodeObject, data, errors);
+            if (context != null && StringUtils.hasText(context.nodeId())) {
+                branchContexts.put(context.nodeId(), context);
+            }
+        }
+
+        JsonNode edgesNode = root.get("edges");
+        if (!(edgesNode instanceof ArrayNode edges) || branchContexts.isEmpty()) {
+            return;
+        }
+        for (JsonNode edge : edges) {
+            if (edge instanceof ObjectNode edgeObject) {
+                validateBranchEdge(edgeObject, branchContexts, errors);
+            }
+        }
+    }
+
+    private BranchValidationContext buildBranchValidationContext(ObjectNode node,
+                                                                ObjectNode data,
+                                                                List<String> errors) {
+        String nodeId = text(node.path("id").asText(null));
+        String nodeRef = buildNodeRef(node, data);
+        List<Map<String, Object>> tempVars = jsonMapList(data.get("tempVars"));
+        Map<String, Integer> tempOrderByKey = new LinkedHashMap<>();
+
+        for (int index = 0; index < tempVars.size(); index += 1) {
+            Map<String, Object> plan = tempVars.get(index);
+            String key = normalizeBranchTempKey(text(plan.get("key")));
+            if (!StringUtils.hasText(key)) {
+                errors.add(nodeRef + " -> tempVars[" + index + "].key : Branch tempVar key is required.");
+                continue;
+            }
+            Integer previousIndex = tempOrderByKey.putIfAbsent(key, index);
+            if (previousIndex != null) {
+                errors.add(nodeRef + " -> tempVars[" + index + "].key : Duplicated branch tempVar key: " + key);
+            }
+        }
+
+        for (int index = 0; index < tempVars.size(); index += 1) {
+            validateBranchTempVar(tempVars.get(index), index, nodeRef, tempOrderByKey, errors);
+        }
+        return new BranchValidationContext(nodeId, nodeRef, tempOrderByKey);
+    }
+
+    private void validateBranchTempVar(Map<String, Object> plan,
+                                       int index,
+                                       String nodeRef,
+                                       Map<String, Integer> tempOrderByKey,
+                                       List<String> errors) {
+        String location = "tempVars[" + index + "]";
+        String kind = text(plan.get("kind"));
+        if (!StringUtils.hasText(kind)) {
+            kind = "ctx";
+        }
+        if (!BRANCH_TEMP_KINDS.contains(kind)) {
+            errors.add(nodeRef + " -> " + location + ".kind : Unsupported branch tempVar kind: " + kind);
+            return;
+        }
+
+        String key = normalizeBranchTempKey(text(plan.get("key")));
+        switch (kind) {
+            case "ctx" -> {
+                if (!StringUtils.hasText(text(plan.get("path")))) {
+                    errors.add(nodeRef + " -> " + location + ".path : Branch ctx tempVar requires path.");
+                }
+            }
+            case "tempVar" -> validateBranchTempReference(
+                    text(plan.get("tempKey")),
+                    key,
+                    tempOrderByKey,
+                    index,
+                    nodeRef,
+                    location + ".tempKey",
+                    errors);
+            case "expression" -> {
+                String expression = firstNonBlank(text(plan.get("expression")), text(plan.get("constValue")));
+                if (!StringUtils.hasText(expression)) {
+                    errors.add(nodeRef + " -> " + location + ".expression : Branch expression tempVar requires expression.");
+                }
+            }
+            case "serviceCall" -> {
+                Map<String, Object> source = new LinkedHashMap<>();
+                source.put("kind", "serviceCall");
+                source.put("serviceCall", castMap(plan.get("serviceCall")));
+                source.put("serviceResultPath", firstNonBlank(text(plan.get("serviceResultPath")), text(plan.get("resultPath"))));
+                validateLegacyCallSource(source, location + ".serviceCall", errors);
+                validateBranchLegacySourceTempRefs(
+                        source,
+                        tempOrderByKey,
+                        index,
+                        key,
+                        nodeRef,
+                        location + ".serviceCall",
+                        errors);
+            }
+            default -> {
+                // const allows blank string and does not need additional validation.
+            }
+        }
+    }
+
+    private void validateBranchEdge(ObjectNode edge,
+                                    Map<String, BranchValidationContext> branchContexts,
+                                    List<String> errors) {
+        String sourceId = text(edge.path("source").asText(null));
+        BranchValidationContext context = branchContexts.get(sourceId);
+        if (context == null) {
+            return;
+        }
+        ObjectNode data = objectNode(edge.get("data"));
+        if (data == null) {
+            return;
+        }
+
+        Map<String, Object> condition = jsonMap(data.get("conditionV2"));
+        if (condition.isEmpty()) {
+            condition = jsonMap(data.get("condition"));
+        }
+        if (condition.isEmpty()) {
+            return;
+        }
+
+        String edgeRef = buildEdgeRef(edge, data, context.nodeRef());
+        validateBranchConditionTree(condition, edgeRef, context, errors);
+    }
+
+    private void validateBranchConditionTree(Map<String, Object> tree,
+                                             String edgeRef,
+                                             BranchValidationContext context,
+                                             List<String> errors) {
+        String groupOp = text(tree.get("op"));
+        if (StringUtils.hasText(groupOp) && !BRANCH_CONDITION_GROUP_OPS.contains(groupOp)) {
+            errors.add(edgeRef + " -> condition.op : Unsupported branch condition group op: " + groupOp);
+        }
+
+        List<Map<String, Object>> rules = asMapList(tree.get("rules"));
+        for (int index = 0; index < rules.size(); index += 1) {
+            Map<String, Object> rule = rules.get(index);
+            String rulePath = "condition.rules[" + index + "]";
+            String op = text(rule.get("op"));
+            if (StringUtils.hasText(op) && !BRANCH_CONDITION_RULE_OPS.contains(op)) {
+                errors.add(edgeRef + " -> " + rulePath + ".op : Unsupported branch rule op: " + op);
+            }
+            validateBranchConditionSource(castMap(rule.get("left")), edgeRef, context, rulePath + ".left", errors);
+            validateBranchConditionSource(castMap(rule.get("right")), edgeRef, context, rulePath + ".right", errors);
+        }
+    }
+
+    private void validateBranchConditionSource(Map<String, Object> source,
+                                               String edgeRef,
+                                               BranchValidationContext context,
+                                               String location,
+                                               List<String> errors) {
+        if (source.isEmpty()) {
+            errors.add(edgeRef + " -> " + location + " : Branch condition source is required.");
+            return;
+        }
+
+        String kind = text(source.get("kind"));
+        if (!StringUtils.hasText(kind)) {
+            kind = source.containsKey("constValue") ? "const" : "";
+        }
+        if (!BRANCH_CONDITION_SOURCE_KINDS.contains(kind)) {
+            errors.add(edgeRef + " -> " + location + ".kind : Unsupported branch condition source kind: " + kind);
+            return;
+        }
+
+        switch (kind) {
+            case "ctx" -> {
+                if (!StringUtils.hasText(text(source.get("path")))) {
+                    errors.add(edgeRef + " -> " + location + ".path : Branch condition ctx source requires path.");
+                }
+            }
+            case "tempVar" -> validateBranchTempReference(
+                    text(source.get("tempKey")),
+                    null,
+                    context.tempOrderByKey(),
+                    null,
+                    edgeRef,
+                    location + ".tempKey",
+                    errors);
+            case "serviceCall" -> {
+                validateLegacyCallSource(source, location, errors);
+                validateBranchLegacySourceTempRefs(
+                        source,
+                        context.tempOrderByKey(),
+                        null,
+                        null,
+                        edgeRef,
+                        location,
+                        errors);
+            }
+            default -> {
+                // const is always allowed, including empty string.
+            }
+        }
+    }
+
+    private void validateBranchLegacySourceTempRefs(Map<String, Object> source,
+                                                    Map<String, Integer> tempOrderByKey,
+                                                    Integer currentIndex,
+                                                    String currentKey,
+                                                    String ownerRef,
+                                                    String location,
+                                                    List<String> errors) {
+        List<TempReference> refs = new ArrayList<>();
+        collectLegacyTempReferences(source, location, refs);
+        for (TempReference ref : refs) {
+            validateBranchTempReference(
+                    ref.targetKey(),
+                    currentKey,
+                    tempOrderByKey,
+                    currentIndex,
+                    ownerRef,
+                    ref.path(),
+                    errors);
+        }
+    }
+
+    private void collectLegacyTempReferences(Map<String, Object> source,
+                                             String location,
+                                             Collection<TempReference> refs) {
+        if (source == null || source.isEmpty()) {
+            return;
+        }
+
+        String kind = text(source.get("kind"));
+        String mode = text(source.get("mode"));
+        if ("objectBuilder".equalsIgnoreCase(mode)) {
+            List<Map<String, Object>> objectFields = asMapList(source.get("objectFields"));
+            for (int index = 0; index < objectFields.size(); index += 1) {
+                collectLegacyTempReferences(
+                        castMap(objectFields.get(index).get("source")),
+                        location + ".objectFields[" + index + "].source",
+                        refs);
+            }
+            return;
+        }
+
+        if ("tempVar".equals(kind)) {
+            String tempKey = normalizeBranchTempReference(text(source.get("tempKey")));
+            if (StringUtils.hasText(tempKey)) {
+                refs.add(new TempReference(firstSegment(tempKey), location));
+            }
+            return;
+        }
+
+        if ("serviceCall".equals(kind)) {
+            Map<String, Object> serviceCall = castMap(source.get("serviceCall"));
+            List<Map<String, Object>> argBindings = asMapList(serviceCall.get("argBindings"));
+            for (int index = 0; index < argBindings.size(); index += 1) {
+                collectLegacyTempReferences(
+                        castMap(argBindings.get(index).get("source")),
+                        location + ".serviceCall.argBindings[" + index + "].source",
+                        refs);
+            }
+        }
+    }
+
+    private void validateBranchTempReference(String rawRef,
+                                             String currentKey,
+                                             Map<String, Integer> tempOrderByKey,
+                                             Integer currentIndex,
+                                             String ownerRef,
+                                             String location,
+                                             List<String> errors) {
+        String normalized = normalizeBranchTempReference(rawRef);
+        String rootKey = firstSegment(normalized);
+        if (!StringUtils.hasText(rootKey)) {
+            errors.add(ownerRef + " -> " + location + " : Branch tempVar reference is required.");
+            return;
+        }
+        if (StringUtils.hasText(currentKey) && rootKey.equals(currentKey)) {
+            errors.add(ownerRef + " -> " + location + " : Branch tempVar cannot reference itself: " + rootKey);
+            return;
+        }
+        Integer targetIndex = tempOrderByKey.get(rootKey);
+        if (targetIndex == null) {
+            errors.add(ownerRef + " -> " + location + " : Referenced branch tempVar does not exist: " + rootKey);
+            return;
+        }
+        if (currentIndex != null && targetIndex >= currentIndex) {
+            errors.add(ownerRef + " -> " + location + " : Branch tempVar can only reference an earlier tempVar: " + rootKey);
+        }
+    }
+
+    private boolean isBranchNode(ObjectNode node, ObjectNode data) {
+        if (node == null) {
+            return false;
+        }
+        String type = text(node.path("type").asText(null));
+        if ("branch".equals(type)) {
+            return true;
+        }
+        return data != null && Boolean.TRUE.equals(data.get("branch") == null ? null : data.get("branch").asBoolean(false));
+    }
+
+    private String buildEdgeRef(ObjectNode edge, ObjectNode data, String branchRef) {
+        String source = text(edge.path("source").asText(null));
+        String target = text(edge.path("target").asText(null));
+        String label = text(data.path("label").asText(null));
+        String priority = text(data.path("priority").asText(null));
+        if (StringUtils.hasText(label)) {
+            return branchRef + " edge(" + label + ")";
+        }
+        if (StringUtils.hasText(priority)) {
+            return branchRef + " edge(priority=" + priority + ", target=" + firstNonBlank(target, "unknown") + ")";
+        }
+        return branchRef + " edge(" + firstNonBlank(source, "unknown") + " -> " + firstNonBlank(target, "unknown") + ")";
+    }
+
+    private String normalizeBranchTempKey(String value) {
+        return normalizeKey(value);
+    }
+
+    private String normalizeBranchTempReference(String value) {
+        String normalized = normalizeKey(value);
+        if (!StringUtils.hasText(normalized)) {
+            return "";
+        }
+        if (normalized.startsWith("tempVar(") && normalized.endsWith(")")) {
+            normalized = normalized.substring("tempVar(".length(), normalized.length() - 1).trim();
+        }
+        if (normalized.startsWith("temp.")) {
+            normalized = normalized.substring("temp.".length()).trim();
+        }
+        return normalized;
+    }
+
+    private String normalizeKey(String value) {
+        return text(value);
+    }
+
+    private String firstSegment(String value) {
+        String normalized = text(value);
+        if (!StringUtils.hasText(normalized)) {
+            return "";
+        }
+        int dotIndex = normalized.indexOf('.');
+        if (dotIndex < 0) {
+            return normalized;
+        }
+        return normalized.substring(0, dotIndex);
     }
 
     private JsonNode findParamAstNode(ObjectNode data) {
@@ -998,6 +1361,91 @@ public class ParamAssemblerService {
         }
     }
 
+    private static final class TempReference {
+        private final String targetKey;
+        private final String path;
+
+        private TempReference(String targetKey, String path) {
+            this.targetKey = targetKey;
+            this.path = path;
+        }
+
+        private String targetKey() {
+            return targetKey;
+        }
+
+        private String path() {
+            return path;
+        }
+    }
+
+    private static final class BranchValidationContext {
+        private final String nodeId;
+        private final String nodeRef;
+        private final Map<String, Integer> tempOrderByKey;
+
+        private BranchValidationContext(String nodeId,
+                                        String nodeRef,
+                                        Map<String, Integer> tempOrderByKey) {
+            this.nodeId = nodeId;
+            this.nodeRef = nodeRef;
+            this.tempOrderByKey = tempOrderByKey;
+        }
+
+        private String nodeId() {
+            return nodeId;
+        }
+
+        private String nodeRef() {
+            return nodeRef;
+        }
+
+        private Map<String, Integer> tempOrderByKey() {
+            return tempOrderByKey;
+        }
+    }
+
+    private static final class ValidationContext {
+        private final Map<String, Integer> tempOrderByKey;
+        private final String currentTempKey;
+        private final Integer currentTempIndex;
+
+        private ValidationContext(Map<String, Integer> tempOrderByKey,
+                                  String currentTempKey,
+                                  Integer currentTempIndex) {
+            this.tempOrderByKey = tempOrderByKey;
+            this.currentTempKey = currentTempKey;
+            this.currentTempIndex = currentTempIndex;
+        }
+
+        private static ValidationContext root(Map<String, Integer> tempOrderByKey) {
+            return new ValidationContext(tempOrderByKey, null, null);
+        }
+
+        private static ValidationContext forTemp(Map<String, Integer> tempOrderByKey,
+                                                 String currentTempKey,
+                                                 Integer currentTempIndex) {
+            return new ValidationContext(tempOrderByKey, currentTempKey, currentTempIndex);
+        }
+
+        private boolean hasTemp(String key) {
+            return tempOrderByKey.containsKey(key);
+        }
+
+        private boolean isTempScope() {
+            return StringUtils.hasText(currentTempKey) && currentTempIndex != null;
+        }
+
+        private boolean isForwardReference(String key) {
+            Integer targetIndex = tempOrderByKey.get(key);
+            return targetIndex != null && currentTempIndex != null && targetIndex > currentTempIndex;
+        }
+
+        private String currentTempKey() {
+            return currentTempKey;
+        }
+    }
+
     private List<ProjectComponentGroupResponse> buildComponentGroups(String projectKey) {
         List<ProjectEndpointResponse> endpoints = projectEndpointService.list(projectKey).stream()
                 .map(this::toEndpointResponse)
@@ -1380,6 +1828,10 @@ public class ParamAssemblerService {
             issues.add(error("ast.version.unsupported", "version", "Only param-ast/v1 is supported."));
         }
 
+        List<Map<String, Object>> temps = asMapList(ast.get("temps"));
+        Map<String, Integer> tempOrderByKey = buildTempOrderByKey(temps, issues);
+        ValidationContext rootValidationContext = ValidationContext.root(tempOrderByKey);
+
         List<Map<String, Object>> argNodes = asMapList(ast.get("args"));
         Map<String, Map<String, Object>> argNodeByName = new LinkedHashMap<>();
         for (Map<String, Object> argNode : argNodes) {
@@ -1406,7 +1858,7 @@ public class ParamAssemblerService {
                 issues.add(error("arg.value.missing", "args[" + index + "].value", "Argument value node is required."));
                 continue;
             }
-            issues.addAll(validateValue(value, "args[" + index + "].value", meta));
+            issues.addAll(validateValue(value, "args[" + index + "].value", meta, rootValidationContext));
         }
 
         if (argNodes.size() > argsMeta.size()) {
@@ -1415,22 +1867,27 @@ public class ParamAssemblerService {
             }
         }
 
-        List<Map<String, Object>> temps = asMapList(ast.get("temps"));
         for (int index = 0; index < temps.size(); index += 1) {
             Map<String, Object> temp = temps.get(index);
             String key = text(temp.get("key"));
             if (!StringUtils.hasText(key)) {
                 issues.add(error("temp.key.required", "temps[" + index + "].key", "Temp key is required."));
             }
-            issues.addAll(validateValue(castMap(temp.get("value")), "temps[" + index + "].value", null));
+            issues.addAll(validateValue(
+                    castMap(temp.get("value")),
+                    "temps[" + index + "].value",
+                    null,
+                    ValidationContext.forTemp(tempOrderByKey, key, index)));
         }
+        issues.addAll(validateTempCycles(temps, tempOrderByKey));
 
         return issues;
     }
 
     private List<ParamAssemblerIssueResponse> validateValue(Map<String, Object> value,
                                                             String path,
-                                                            ParamAssemblerArgMeta argMeta) {
+                                                            ParamAssemblerArgMeta argMeta,
+                                                            ValidationContext validationContext) {
         List<ParamAssemblerIssueResponse> issues = new ArrayList<>();
         if (value == null || value.isEmpty()) {
             if (argMeta != null && Boolean.TRUE.equals(argMeta.getRequired())) {
@@ -1441,10 +1898,10 @@ public class ParamAssemblerService {
 
         String kind = text(value.get("kind")).toLowerCase(Locale.ROOT);
         switch (kind) {
-            case "source" -> issues.addAll(validateSource(value, path));
-            case "call" -> issues.addAll(validateCall(value, path));
-            case "object" -> issues.addAll(validateObject(value, path, argMeta));
-            case "list" -> issues.addAll(validateList(value, path, argMeta));
+            case "source" -> issues.addAll(validateSource(value, path, validationContext));
+            case "call" -> issues.addAll(validateCall(value, path, validationContext));
+            case "object" -> issues.addAll(validateObject(value, path, argMeta, validationContext));
+            case "list" -> issues.addAll(validateList(value, path, argMeta, validationContext));
             case "expr", "expression" -> {
                 String expr = firstNonBlank(text(value.get("expression")), text(value.get("value")));
                 if (!StringUtils.hasText(expr)) {
@@ -1457,7 +1914,7 @@ public class ParamAssemblerService {
                     issues.add(error("coalesce.candidates.required", path, "Coalesce node requires at least one candidate."));
                 }
                 for (int index = 0; index < candidates.size(); index += 1) {
-                    issues.addAll(validateValue(candidates.get(index), path + ".candidates[" + index + "]", null));
+                    issues.addAll(validateValue(candidates.get(index), path + ".candidates[" + index + "]", null, validationContext));
                 }
             }
             default -> issues.add(error("value.kind.unsupported", path, "Unsupported value kind: " + kind));
@@ -1465,7 +1922,9 @@ public class ParamAssemblerService {
         return issues;
     }
 
-    private List<ParamAssemblerIssueResponse> validateSource(Map<String, Object> source, String path) {
+    private List<ParamAssemblerIssueResponse> validateSource(Map<String, Object> source,
+                                                             String path,
+                                                             ValidationContext validationContext) {
         List<ParamAssemblerIssueResponse> issues = new ArrayList<>();
         String sourceType = text(source.get("sourceType"));
         if (!SOURCE_TYPES.contains(sourceType)) {
@@ -1481,11 +1940,30 @@ public class ParamAssemblerService {
 
         if (!StringUtils.hasText(text(source.get("path")))) {
             issues.add(error("source.path.required", path + ".path", "Source path is required."));
+        } else if ("temp".equals(sourceType)) {
+            String tempKey = extractTempKey(text(source.get("path")));
+            if (!StringUtils.hasText(tempKey)) {
+                issues.add(error("source.temp.key.required", path + ".path", "Temp source requires temp path."));
+                return issues;
+            }
+            if (!validationContext.hasTemp(tempKey)) {
+                issues.add(error("source.temp.missing", path + ".path", "Referenced temp does not exist: " + tempKey));
+                return issues;
+            }
+            if (validationContext.isTempScope()) {
+                if (tempKey.equals(validationContext.currentTempKey())) {
+                    issues.add(error("source.temp.self", path + ".path", "Temp cannot reference itself: " + tempKey));
+                } else if (validationContext.isForwardReference(tempKey)) {
+                    issues.add(error("source.temp.forward", path + ".path", "Temp can only reference an earlier temp: " + tempKey));
+                }
+            }
         }
         return issues;
     }
 
-    private List<ParamAssemblerIssueResponse> validateCall(Map<String, Object> call, String path) {
+    private List<ParamAssemblerIssueResponse> validateCall(Map<String, Object> call,
+                                                           String path,
+                                                           ValidationContext validationContext) {
         List<ParamAssemblerIssueResponse> issues = new ArrayList<>();
         String callType = text(call.get("callType")).toLowerCase(Locale.ROOT);
         if (!"service".equals(callType) && !"http".equals(callType)) {
@@ -1513,14 +1991,15 @@ public class ParamAssemblerService {
                 issues.add(error("call.arg.value.required", path + ".args[" + index + "].value", "Call argument value is required."));
                 continue;
             }
-            issues.addAll(validateValue(value, path + ".args[" + index + "].value", null));
+            issues.addAll(validateValue(value, path + ".args[" + index + "].value", null, validationContext));
         }
         return issues;
     }
 
     private List<ParamAssemblerIssueResponse> validateObject(Map<String, Object> object,
                                                              String path,
-                                                             ParamAssemblerArgMeta argMeta) {
+                                                             ParamAssemblerArgMeta argMeta,
+                                                             ValidationContext validationContext) {
         List<ParamAssemblerIssueResponse> issues = new ArrayList<>();
         List<Map<String, Object>> fields = asMapList(object.get("fields"));
         if (fields.isEmpty()) {
@@ -1549,7 +2028,7 @@ public class ParamAssemblerService {
             if (!schemaLeaves.isEmpty() && !schemaLeaves.contains(normalizedFieldPath)) {
                 issues.add(warning("object.field.unknown", path + ".fields[" + index + "].path", "Field is not present in current schema: " + fieldPath));
             }
-            issues.addAll(validateValue(castMap(field.get("value")), path + ".fields[" + index + "].value", null));
+            issues.addAll(validateValue(castMap(field.get("value")), path + ".fields[" + index + "].value", null, validationContext));
         }
 
         Map<String, Object> schema = castMap(argMeta != null ? argMeta.getSchema() : null);
@@ -1567,13 +2046,14 @@ public class ParamAssemblerService {
 
     private List<ParamAssemblerIssueResponse> validateList(Map<String, Object> list,
                                                            String path,
-                                                           ParamAssemblerArgMeta argMeta) {
+                                                           ParamAssemblerArgMeta argMeta,
+                                                           ValidationContext validationContext) {
         List<ParamAssemblerIssueResponse> issues = new ArrayList<>();
         Map<String, Object> source = castMap(list.get("source"));
         if (source.isEmpty()) {
             issues.add(error("list.source.required", path + ".source", "List node requires source."));
         } else {
-            issues.addAll(validateSource(source, path + ".source"));
+            issues.addAll(validateSource(source, path + ".source", validationContext));
         }
 
         List<Map<String, Object>> ops = asMapList(list.get("ops"));
@@ -1592,9 +2072,9 @@ public class ParamAssemblerService {
                 itemMeta.setName(firstNonBlank(text(argMeta != null ? argMeta.getName() : null), "item"));
                 itemMeta.setRequired(Boolean.FALSE);
                 itemMeta.setSchema(extractItemSchema(castMap(argMeta != null ? argMeta.getSchema() : null)));
-                issues.addAll(validateObject(item, path + ".item", itemMeta));
+                issues.addAll(validateObject(item, path + ".item", itemMeta, validationContext));
             } else {
-                issues.addAll(validateValue(item, path + ".item", null));
+                issues.addAll(validateValue(item, path + ".item", null, validationContext));
             }
         }
 
@@ -1605,6 +2085,196 @@ public class ParamAssemblerService {
             }
         }
         return issues;
+    }
+
+    private Map<String, Integer> buildTempOrderByKey(List<Map<String, Object>> temps,
+                                                     List<ParamAssemblerIssueResponse> issues) {
+        Map<String, Integer> tempOrderByKey = new LinkedHashMap<>();
+        for (int index = 0; index < temps.size(); index += 1) {
+            String key = text(temps.get(index).get("key"));
+            if (!StringUtils.hasText(key)) {
+                continue;
+            }
+            Integer previousIndex = tempOrderByKey.putIfAbsent(key, index);
+            if (previousIndex != null) {
+                issues.add(error("temp.key.duplicate", "temps[" + index + "].key", "Duplicated temp key: " + key));
+            }
+        }
+        return tempOrderByKey;
+    }
+
+    private List<ParamAssemblerIssueResponse> validateTempCycles(List<Map<String, Object>> temps,
+                                                                 Map<String, Integer> tempOrderByKey) {
+        if (tempOrderByKey.isEmpty()) {
+            return List.of();
+        }
+
+        Map<String, Set<String>> graph = new LinkedHashMap<>();
+        for (String key : tempOrderByKey.keySet()) {
+            graph.put(key, new LinkedHashSet<>());
+        }
+
+        for (int index = 0; index < temps.size(); index += 1) {
+            Map<String, Object> temp = temps.get(index);
+            String key = text(temp.get("key"));
+            if (!StringUtils.hasText(key) || !Objects.equals(tempOrderByKey.get(key), index)) {
+                continue;
+            }
+            List<TempReference> refs = new ArrayList<>();
+            collectTempReferences(castMap(temp.get("value")), "temps[" + index + "].value", refs);
+            for (TempReference ref : refs) {
+                if (tempOrderByKey.containsKey(ref.targetKey())) {
+                    graph.get(key).add(ref.targetKey());
+                }
+            }
+        }
+
+        List<ParamAssemblerIssueResponse> issues = new ArrayList<>();
+        for (List<String> cycle : findTempCycles(graph)) {
+            if (cycle.size() <= 2) {
+                continue;
+            }
+            String cyclePath = String.join(" -> ", cycle);
+            Set<String> seen = new HashSet<>();
+            for (String key : cycle) {
+                if (!seen.add(key)) {
+                    continue;
+                }
+                Integer index = tempOrderByKey.get(key);
+                if (index != null) {
+                    issues.add(error("temp.ref.cycle", "temps[" + index + "].value", "Temp cycle detected: " + cyclePath));
+                }
+            }
+        }
+        return issues;
+    }
+
+    private void collectTempReferences(Map<String, Object> value,
+                                       String path,
+                                       Collection<TempReference> refs) {
+        if (value == null || value.isEmpty()) {
+            return;
+        }
+
+        String kind = text(value.get("kind")).toLowerCase(Locale.ROOT);
+        switch (kind) {
+            case "source" -> {
+                if ("temp".equals(text(value.get("sourceType")))) {
+                    String tempKey = extractTempKey(text(value.get("path")));
+                    if (StringUtils.hasText(tempKey)) {
+                        refs.add(new TempReference(tempKey, path + ".path"));
+                    }
+                }
+            }
+            case "call" -> {
+                List<Map<String, Object>> args = asMapList(value.get("args"));
+                for (int index = 0; index < args.size(); index += 1) {
+                    collectTempReferences(castMap(args.get(index).get("value")), path + ".args[" + index + "].value", refs);
+                }
+            }
+            case "object" -> {
+                List<Map<String, Object>> fields = asMapList(value.get("fields"));
+                for (int index = 0; index < fields.size(); index += 1) {
+                    collectTempReferences(castMap(fields.get(index).get("value")), path + ".fields[" + index + "].value", refs);
+                }
+            }
+            case "list" -> {
+                collectTempReferences(castMap(value.get("source")), path + ".source", refs);
+                collectTempReferences(castMap(value.get("item")), path + ".item", refs);
+                List<Map<String, Object>> ops = asMapList(value.get("ops"));
+                for (int index = 0; index < ops.size(); index += 1) {
+                    Map<String, Object> op = ops.get(index);
+                    collectTempReferences(castMap(op.get("value")), path + ".ops[" + index + "].value", refs);
+                    List<Map<String, Object>> fields = asMapList(op.get("fields"));
+                    for (int fieldIndex = 0; fieldIndex < fields.size(); fieldIndex += 1) {
+                        collectTempReferences(
+                                castMap(fields.get(fieldIndex).get("source")),
+                                path + ".ops[" + index + "].fields[" + fieldIndex + "].source",
+                                refs);
+                    }
+                }
+            }
+            case "coalesce" -> {
+                List<Map<String, Object>> candidates = asMapList(value.get("candidates"));
+                for (int index = 0; index < candidates.size(); index += 1) {
+                    collectTempReferences(candidates.get(index), path + ".candidates[" + index + "]", refs);
+                }
+            }
+            default -> {
+            }
+        }
+    }
+
+    private List<List<String>> findTempCycles(Map<String, Set<String>> graph) {
+        List<List<String>> cycles = new ArrayList<>();
+        Map<String, Integer> state = new HashMap<>();
+        List<String> stack = new ArrayList<>();
+        Set<String> seenCycles = new LinkedHashSet<>();
+
+        for (String node : graph.keySet()) {
+            if (state.getOrDefault(node, 0) == 0) {
+                dfsTempCycle(node, graph, state, stack, seenCycles, cycles);
+            }
+        }
+        return cycles;
+    }
+
+    private void dfsTempCycle(String node,
+                              Map<String, Set<String>> graph,
+                              Map<String, Integer> state,
+                              List<String> stack,
+                              Set<String> seenCycles,
+                              List<List<String>> cycles) {
+        state.put(node, 1);
+        stack.add(node);
+
+        for (String next : graph.getOrDefault(node, Set.of())) {
+            if (!graph.containsKey(next)) {
+                continue;
+            }
+            int nextState = state.getOrDefault(next, 0);
+            if (nextState == 0) {
+                dfsTempCycle(next, graph, state, stack, seenCycles, cycles);
+                continue;
+            }
+            if (nextState == 1) {
+                int start = stack.indexOf(next);
+                if (start >= 0) {
+                    List<String> cycle = new ArrayList<>(stack.subList(start, stack.size()));
+                    cycle.add(next);
+                    String signature = canonicalCycleSignature(cycle);
+                    if (seenCycles.add(signature)) {
+                        cycles.add(cycle);
+                    }
+                }
+            }
+        }
+
+        stack.remove(stack.size() - 1);
+        state.put(node, 2);
+    }
+
+    private String canonicalCycleSignature(List<String> cycle) {
+        if (cycle.size() <= 1) {
+            return String.join("->", cycle);
+        }
+        List<String> nodes = new ArrayList<>(cycle.subList(0, cycle.size() - 1));
+        String best = null;
+        for (int index = 0; index < nodes.size(); index += 1) {
+            List<String> rotated = new ArrayList<>();
+            for (int offset = 0; offset < nodes.size(); offset += 1) {
+                rotated.add(nodes.get((index + offset) % nodes.size()));
+            }
+            String candidate = String.join("->", rotated);
+            if (best == null || candidate.compareTo(best) < 0) {
+                best = candidate;
+            }
+        }
+        return best == null ? "" : best;
+    }
+
+    private String extractTempKey(String path) {
+        return stripPrefix(path, "temp.");
     }
 
     private boolean isConfiguredValue(Map<String, Object> value) {
@@ -1942,6 +2612,20 @@ public class ParamAssemblerService {
                 .map(String::trim)
                 .filter(StringUtils::hasText)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private List<Map<String, Object>> jsonMapList(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return List.of();
+        }
+        return asMapList(OBJECT_MAPPER.convertValue(node, new TypeReference<List<Map<String, Object>>>() {}));
+    }
+
+    private Map<String, Object> jsonMap(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return Map.of();
+        }
+        return castMap(OBJECT_MAPPER.convertValue(node, new TypeReference<Map<String, Object>>() {}));
     }
 
     @SuppressWarnings("unchecked")

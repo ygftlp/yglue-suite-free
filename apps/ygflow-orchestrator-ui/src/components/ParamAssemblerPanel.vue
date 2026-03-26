@@ -84,6 +84,11 @@ type TempAstNode = {
   value: CallNode
 }
 
+type TempUsageInfo = {
+  label: string
+  path: string
+}
+
 type ServiceCallEditorModel = {
   fn?: string
   serviceRef?: Record<string, any> | null
@@ -93,6 +98,11 @@ type ServiceCallEditorModel = {
 type ParamPlansPayload = {
   tempPlans: Array<Record<string, any>>
   argPlans: Array<Record<string, any>>
+}
+
+type ParamAssemblerInsight = {
+  errors: string[]
+  warnings: string[]
 }
 
 const props = defineProps<{
@@ -107,6 +117,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "update:modelValue", value: ParamAssemblerAst | null): void
   (e: "update:paramPlans", value: ParamPlansPayload): void
+  (e: "insight-change", value: ParamAssemblerInsight): void
 }>()
 
 const AST_VERSION = "param-ast/v1"
@@ -133,6 +144,18 @@ function toText(value: unknown): string {
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value))
+}
+
+function uniqueTextList(items: string[]): string[] {
+  const result: string[] = []
+  const seen = new Set<string>()
+  items.forEach((item) => {
+    const text = toText(item)
+    if (!text || seen.has(text)) return
+    seen.add(text)
+    result.push(text)
+  })
+  return result
 }
 
 function isRecord(value: unknown): value is Record<string, any> {
@@ -952,6 +975,18 @@ function removeTempCall(index: number) {
   localAst.value.temps.splice(index, 1)
 }
 
+function moveTempCall(index: number, offset: number) {
+  const nextIndex = index + offset
+  if (index < 0 || nextIndex < 0 || nextIndex >= localAst.value.temps.length) return
+  const [current] = localAst.value.temps.splice(index, 1)
+  localAst.value.temps.splice(nextIndex, 0, current)
+}
+
+function canMoveTemp(index: number, offset: number): boolean {
+  const nextIndex = index + offset
+  return nextIndex >= 0 && nextIndex < localAst.value.temps.length
+}
+
 function getTempCallEditorModel(temp: TempAstNode): ServiceCallEditorModel {
   return callNodeToEditorModel(temp.value)
 }
@@ -971,6 +1006,153 @@ function getSourceOptionsForNode(sourceType: SourceNode["sourceType"], scope: "a
     return itemOptions.length > 0 ? itemOptions : ["item.id", "item.code", "$.id", "$.code"]
   }
   return contextSourcePaths.value
+}
+
+function collectTempRefsFromValue(value: ValueNode, output: Set<string>) {
+  if (!isRecord(value)) return
+  const kind = toText(value.kind).toLowerCase()
+  if (kind === "source") {
+    const source = value as SourceNode
+    if (source.sourceType === "temp") {
+      const path = toText(source.path)
+      const tempKey = path.replace(/^temp\./, "").split(".")[0].trim()
+      if (tempKey) output.add(tempKey)
+    }
+    return
+  }
+  if (kind === "object") {
+    const fields = Array.isArray((value as ObjectNode).fields) ? (value as ObjectNode).fields : []
+    fields.forEach((field) => collectTempRefsFromValue(field.value, output))
+    return
+  }
+  if (kind === "list") {
+    const listValue = value as ListNode
+    collectTempRefsFromValue(listValue.source, output)
+    if (listValue.item) collectTempRefsFromValue(listValue.item, output)
+    return
+  }
+  if (kind === "call") {
+    const callValue = value as CallNode
+    ;(Array.isArray(callValue.args) ? callValue.args : []).forEach((arg) => collectTempRefsFromValue(arg.value, output))
+  }
+}
+
+function collectTempConsumersFromValue(
+  value: ValueNode,
+  tempKey: string,
+  scopeLabel: string,
+  output: Map<string, TempUsageInfo>,
+) {
+  if (!tempKey || !isRecord(value)) return
+  const kind = toText(value.kind).toLowerCase()
+  if (kind === "source") {
+    const source = value as SourceNode
+    if (source.sourceType !== "temp") return
+    const rawPath = toText(source.path)
+    const normalized = rawPath.replace(/^temp\./, "")
+    const [refKey] = normalized.split(".")
+    if (toText(refKey) !== tempKey) return
+    const path = rawPath ? (rawPath.startsWith("temp.") ? rawPath : `temp.${rawPath}`) : `temp.${tempKey}`
+    output.set(`${scopeLabel}|${path}`, { label: scopeLabel, path })
+    return
+  }
+  if (kind === "object") {
+    const fields = Array.isArray((value as ObjectNode).fields) ? (value as ObjectNode).fields : []
+    fields.forEach((field) => {
+      const fieldLabel = toText(field.path) ? `${scopeLabel}.${toText(field.path)}` : `${scopeLabel}.(未命名字段)`
+      collectTempConsumersFromValue(field.value, tempKey, fieldLabel, output)
+    })
+    return
+  }
+  if (kind === "list") {
+    const listValue = value as ListNode
+    collectTempConsumersFromValue(listValue.source, tempKey, `${scopeLabel} 列表来源`, output)
+    if (listValue.item) collectTempConsumersFromValue(listValue.item, tempKey, `${scopeLabel} 元素映射`, output)
+    return
+  }
+  if (kind === "call") {
+    const callValue = value as CallNode
+    ;(Array.isArray(callValue.args) ? callValue.args : []).forEach((arg) => {
+      const argLabel = toText(arg.name) ? `${scopeLabel}.${toText(arg.name)}` : `${scopeLabel}.(未命名入参)`
+      collectTempConsumersFromValue(arg.value, tempKey, argLabel, output)
+    })
+  }
+}
+
+const tempDependencyInfo = computed(() => {
+  const temps = localAst.value.temps || []
+  const infos = temps.map((temp, index) => {
+    const refs = new Set<string>()
+    collectTempRefsFromValue(temp.value, refs)
+    const consumers = new Map<string, TempUsageInfo>()
+    const tempKey = toText(temp.key)
+    if (tempKey) {
+      temps.slice(index + 1).forEach((nextTemp, nextIndex) => {
+        const displayIndex = index + nextIndex + 2
+        const nextLabel = toText(nextTemp.key) ? `补数 ${displayIndex}(${toText(nextTemp.key)})` : `补数 ${displayIndex}`
+        collectTempConsumersFromValue(nextTemp.value, tempKey, `${nextLabel} 入参`, consumers)
+      })
+      localAst.value.args.forEach((arg) => {
+        collectTempConsumersFromValue(arg.value, tempKey, `参数 ${arg.name}`, consumers)
+      })
+    }
+    return {
+      index,
+      key: tempKey,
+      refs: Array.from(refs),
+      consumers: Array.from(consumers.values()),
+    }
+  })
+
+  const keyToIndex = new Map<string, number[]>()
+  infos.forEach((item) => {
+    if (!item.key) return
+    const hit = keyToIndex.get(item.key) || []
+    hit.push(item.index)
+    keyToIndex.set(item.key, hit)
+  })
+
+  return infos.map((item) => {
+    const warnings: string[] = []
+    if (!item.key) {
+      warnings.push("临时变量 key 不能为空。")
+    }
+    const duplicateIndexes = item.key ? (keyToIndex.get(item.key) || []) : []
+    if (item.key && duplicateIndexes.length > 1) {
+      warnings.push(`临时变量 key ${item.key} 重复，保存/发布会被拦截。`)
+    }
+    for (const ref of item.refs) {
+      if (ref === item.key && item.key) {
+        warnings.push(`当前补数步骤引用了自身 temp.${ref}，会形成循环依赖。`)
+        continue
+      }
+      const targetIndexes = keyToIndex.get(ref) || []
+      if (targetIndexes.length === 0) {
+        warnings.push(`当前补数步骤引用了 temp.${ref}，但未找到对应补数定义。`)
+        continue
+      }
+      if (targetIndexes.every((targetIndex) => targetIndex >= item.index)) {
+        warnings.push(`当前补数步骤引用了后置 temp.${ref}，建议调整顺序，确保依赖先生成。`)
+      }
+    }
+    return {
+      ...item,
+      warnings,
+    }
+  })
+})
+
+function getTempInfo(index: number) {
+  return tempDependencyInfo.value[index] || { refs: [], warnings: [], consumers: [] }
+}
+
+function getTempCardState(index: number) {
+  const info = getTempInfo(index)
+  const key = toText(localAst.value.temps[index]?.key)
+  const hits = issues.value.filter((item) => item.path.includes(`temps[${index}]`) || (key && item.message.includes(key)))
+  if (hits.some((item) => item.severity === "error") || info.warnings.length > 0) return "warning"
+  if (hits.some((item) => item.severity === "warning")) return "warning"
+  return "ok"
 }
 
 function fieldSourceOptions(scope: "arg" | "listItem") {
@@ -1054,6 +1236,31 @@ const validationSummary = computed(() => ({
   errors: issues.value.filter((item) => item.severity === "error").length,
   warnings: issues.value.filter((item) => item.severity === "warning").length,
 }))
+const assemblerInsight = computed<ParamAssemblerInsight>(() => {
+  const errors: string[] = []
+  const warnings: string[] = []
+
+  if (draftError.value) {
+    errors.push(draftError.value)
+  }
+  issues.value.forEach((item) => {
+    const message = [toText(item.path), toText(item.message)].filter(Boolean).join(" : ")
+    if (!message) return
+    if (item.severity === "error") errors.push(message)
+    else warnings.push(message)
+  })
+  if (hasPendingChanges.value && localAst.value.args.length > 0) {
+    warnings.push("参数装配存在未校验修改，请先执行校验。")
+  }
+  tempDependencyInfo.value.forEach((info, index) => {
+    info.warnings.forEach((msg) => warnings.push(`补数 ${index + 1}: ${msg}`))
+  })
+
+  return {
+    errors: uniqueTextList(errors),
+    warnings: uniqueTextList(warnings),
+  }
+})
 
 const stepStatus = computed(() => ({
   methodReady: Boolean(props.methodKey),
@@ -1072,6 +1279,7 @@ watch(localAst, () => {
   hasPendingChanges.value = true
   emitCurrentState()
 }, { deep: true })
+watch(assemblerInsight, (next) => emit("insight-change", clone(next)), { deep: true, immediate: true })
 
 watch(
   () => [props.projectKey, props.endpointId, props.methodKey, JSON.stringify(argMetas.value.map((item) => `${item.name}|${item.javaType}|${item.required}`))],
@@ -1164,11 +1372,23 @@ watch(
         <button type="button" class="btn mini" @click="addTempCall">+ 新增服务补数</button>
       </div>
       <div class="muted tiny">当对象或列表字段需要先查服务再拼装时，先在这里定义中间结果，再在字段来源里选择 `临时变量` 并填写 `temp.xxx`。</div>
+      <div class="muted tiny">数组/对象集合建议先让补数输出完整对象或单层列表，再在目标入参中分别配置“对象字段”或“元素映射”；嵌套数组、动态 Map key、groupBy / reduce / flatten 仍建议切到高级模式。</div>
       <div v-if="localAst.temps.length === 0" class="muted tiny">当前还没有补数步骤，简单场景可以直接用请求、上下文或上游节点输出。</div>
-      <div v-for="(temp, tempIndex) in localAst.temps" :key="`${temp.key}_${tempIndex}`" class="temp-card">
+      <div v-for="(temp, tempIndex) in localAst.temps" :key="`${temp.key}_${tempIndex}`" class="temp-card" :class="getTempCardState(tempIndex)">
         <div class="field-row-head">
           <div class="panel-title">补数 {{ tempIndex + 1 }}</div>
-          <button type="button" class="btn mini" @click="removeTempCall(tempIndex)">删</button>
+          <div class="row-actions">
+            <button type="button" class="btn mini" :disabled="!canMoveTemp(tempIndex, -1)" @click="moveTempCall(tempIndex, -1)">上移</button>
+            <button type="button" class="btn mini" :disabled="!canMoveTemp(tempIndex, 1)" @click="moveTempCall(tempIndex, 1)">下移</button>
+            <button type="button" class="btn mini" @click="removeTempCall(tempIndex)">删</button>
+          </div>
+        </div>
+        <div class="temp-meta-row">
+          <span class="summary-chip">输出 key {{ temp.key || "未命名" }}</span>
+          <span class="summary-chip" v-if="getTempInfo(tempIndex).refs.length > 0">依赖 {{ getTempInfo(tempIndex).refs.map((item) => `temp.${item}`).join(" , ") }}</span>
+          <span class="summary-chip" v-else>依赖 无</span>
+          <span class="summary-chip ready" v-if="getTempInfo(tempIndex).consumers.length > 0">下游使用 {{ getTempInfo(tempIndex).consumers.length }} 处</span>
+          <span class="summary-chip" v-else>下游使用 0 处</span>
         </div>
         <input class="input" v-model="temp.key" placeholder="临时变量 key，例如 profile / skuCatalog / priceProfile" />
         <input
@@ -1176,6 +1396,19 @@ watch(
           v-model="temp.value.resultPath"
           placeholder="结果提取路径（可选），例如 data / data.profile / $.data.items"
         />
+        <div v-if="getTempInfo(tempIndex).warnings.length > 0" class="plan-warnings">
+          <div v-for="msg in getTempInfo(tempIndex).warnings" :key="msg" class="plan-warning">{{ msg }}</div>
+        </div>
+        <div v-if="getTempInfo(tempIndex).consumers.length > 0" class="temp-usage-list">
+          <div v-for="consumer in getTempInfo(tempIndex).consumers.slice(0, 4)" :key="`${consumer.label}_${consumer.path}`" class="temp-usage-item">
+            <span class="temp-usage-label">{{ consumer.label }}</span>
+            <span class="temp-usage-path">{{ consumer.path }}</span>
+          </div>
+          <div v-if="getTempInfo(tempIndex).consumers.length > 4" class="muted tiny">
+            还有 {{ getTempInfo(tempIndex).consumers.length - 4 }} 处下游引用，避免重复 key 更容易排查依赖。
+          </div>
+        </div>
+        <div v-else class="muted tiny">当前补数还没有被后续补数或目标入参使用，适合先完成依赖顺序调整再继续映射。</div>
         <ServiceCallEditor
           :model-value="getTempCallEditorModel(temp)"
           :project-key="projectKey"
@@ -1440,6 +1673,56 @@ watch(
   border-radius: 10px;
   background: #fbfdff;
   padding: 10px;
+}
+
+.temp-card.warning {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(255, 251, 235, 0.82);
+}
+
+.temp-meta-row,
+.plan-warnings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.plan-warning {
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #92400e;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: rgba(255, 251, 235, 0.88);
+}
+
+.temp-usage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.temp-usage-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(37, 99, 235, 0.16);
+  background: rgba(239, 246, 255, 0.72);
+}
+
+.temp-usage-label {
+  font-size: 11px;
+  color: #1e3a8a;
+}
+
+.temp-usage-path {
+  font-size: 11px;
+  color: #475569;
+  word-break: break-all;
 }
 
 .unsupported-list {

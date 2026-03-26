@@ -10,6 +10,7 @@ import org.yglue.flow.runtime.core.definition.NodeDefinition;
 import org.yglue.flow.runtime.core.engine.FlowContext;
 import org.yglue.flow.runtime.core.engine.evaluator.BranchConditionEvaluator;
 import org.yglue.flow.runtime.core.engine.interceptors.JsonPathUtil;
+import org.yglue.flow.runtime.core.engine.support.DynamicValueResolver;
 import org.yglue.flow.runtime.core.expression.ExpressionEngines;
 import org.yglue.flow.runtime.core.expression.ExpressionEvaluationContext;
 
@@ -147,36 +148,82 @@ public class BranchNodeExecutor implements FlowExecutor {
     @SuppressWarnings("unchecked")
     private Map<String, Object> prepareTempVars(Map<String, Object> config, FlowContext context) {
         if (config == null || context == null) {
-            return new HashMap<>();
+            return new LinkedHashMap<>();
         }
         Object raw = config.get("tempVars");
         if (!(raw instanceof List<?> plans) || plans.isEmpty()) {
-            return new HashMap<>();
+            return new LinkedHashMap<>();
         }
 
-        Map<String, Object> resolved = new HashMap<>();
-        for (Object item : plans) {
+        Map<String, Integer> orderByKey = new LinkedHashMap<>();
+        for (int index = 0; index < plans.size(); index += 1) {
+            Object item = plans.get(index);
             if (!(item instanceof Map<?, ?> planRaw)) {
                 continue;
             }
             Map<String, Object> plan = (Map<String, Object>) planRaw;
-            String key = asString(plan.get("key"));
+            String key = normalizeKey(asString(plan.get("key")));
             if (key == null || key.isBlank()) {
                 continue;
             }
-            String kind = asString(plan.get("kind"));
-            Object value;
-            if ("const".equals(kind)) {
-                value = plan.get("constValue");
-            } else if ("expression".equals(kind)) {
-                value = evaluateExpression(plan, context, resolved);
-            } else {
-                value = JsonPathUtil.extract(context.getVariables(), asString(plan.get("path")));
+            orderByKey.putIfAbsent(key, index);
+        }
+
+        Map<String, Object> resolved = new LinkedHashMap<>();
+        for (int index = 0; index < plans.size(); index += 1) {
+            Object item = plans.get(index);
+            if (!(item instanceof Map<?, ?> planRaw)) {
+                continue;
             }
+            Map<String, Object> plan = (Map<String, Object>) planRaw;
+            String key = normalizeKey(asString(plan.get("key")));
+            if (key == null || key.isBlank()) {
+                continue;
+            }
+            Object value = resolveTempVarPlan(plan, context, resolved, orderByKey, index);
             resolved.put(key, value);
         }
 
         return resolved;
+    }
+
+    private Object resolveTempVarPlan(Map<String, Object> plan,
+            FlowContext context,
+            Map<String, Object> resolvedTempVars,
+            Map<String, Integer> orderByKey,
+            int currentIndex) {
+        String kind = asString(plan.get("kind"));
+        if (kind == null || kind.isBlank()) {
+            kind = "ctx";
+        }
+        if ("expression".equals(kind)) {
+            return evaluateExpression(plan, context, resolvedTempVars);
+        }
+        if ("tempVar".equals(kind)) {
+            String tempKey = normalizeTempVarPath(asString(plan.get("tempKey")));
+            String rootKey = firstSegment(tempKey);
+            if (rootKey == null || rootKey.isBlank()) {
+                log.warn("[BranchNodeExecutor] branch tempVar has empty tempKey, plan={}", plan);
+                return null;
+            }
+            if (!resolvedTempVars.containsKey(rootKey)) {
+                Integer targetIndex = orderByKey.get(rootKey);
+                if (targetIndex != null && targetIndex >= currentIndex) {
+                    log.warn("[BranchNodeExecutor] branch tempVar '{}' references a later tempVar '{}', ignoring",
+                            normalizeKey(asString(plan.get("key"))), tempKey);
+                } else {
+                    log.warn("[BranchNodeExecutor] branch tempVar '{}' references missing tempVar '{}', ignoring",
+                            normalizeKey(asString(plan.get("key"))), tempKey);
+                }
+                return null;
+            }
+            plan = new LinkedHashMap<>(plan);
+            plan.put("tempKey", tempKey);
+        }
+        if ("ctx".equals(kind) && !plan.containsKey("kind")) {
+            return JsonPathUtil.extract(context.getVariables(), asString(plan.get("path")));
+        }
+        return DynamicValueResolver.resolveSource(plan, context, resolvedTempVars, applicationContext);
     }
 
     private Object evaluateExpression(Map<String, Object> plan,
@@ -206,5 +253,32 @@ public class BranchNodeExecutor implements FlowExecutor {
             return null;
         }
         return String.valueOf(value);
+    }
+
+    private String normalizeKey(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isBlank() ? null : trimmed;
+    }
+
+    private String normalizeTempVarPath(String value) {
+        String normalized = normalizeKey(value);
+        if (normalized == null) {
+            return null;
+        }
+        return normalized.startsWith("temp.") ? normalized.substring("temp.".length()) : normalized;
+    }
+
+    private String firstSegment(String value) {
+        if (value == null || value.isBlank()) {
+            return value;
+        }
+        int dotIndex = value.indexOf('.');
+        if (dotIndex < 0) {
+            return value;
+        }
+        return value.substring(0, dotIndex);
     }
 }

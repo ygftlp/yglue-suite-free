@@ -4,6 +4,7 @@ import { api, type FlowServiceSignatureIssue, type FlowVersion } from "../../api
 import { createDefaultFlowSettings, type FlowEntrypoint, type FlowSettings } from "../../data/flowSettings"
 import { generateRulePreview } from "../../utils/ruleExporter"
 import type { CanvasEditorProps } from "./canvasTypes"
+import { collectFlowAuthoringPrecheck, summarizeFlowPrecheck, type FlowPrecheckIssue } from "./flowAuthoringPrecheck"
 import { generateUUID, generateContextKey, normalizeEntrypoint, serializeEntrypointPayload, safeParseContent } from "./flowUtils"
 import { useRulePreview } from "./useRulePreview"
 
@@ -30,6 +31,24 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
   const savedContentSnapshot = ref<string | null>(null)
 
   const rulePreview = useRulePreview(flowSettings, props)
+  const flowPrecheckIssues = computed(() => runLocalAuthoringPrecheck(flowState.nodes.value, flowState.edges.value))
+  const flowPrecheckSummary = computed(() => summarizeFlowPrecheck(flowPrecheckIssues.value))
+  const flowPrecheckBlocking = computed(() => flowPrecheckSummary.value.errors > 0)
+  const flowPrecheckHighlights = computed(() => flowPrecheckIssues.value.slice(0, 3).map((item) => item.message))
+  const flowPrecheckMessage = computed(() => buildPrecheckMessage(flowPrecheckIssues.value))
+
+  function buildPrecheckMessage(issues: FlowPrecheckIssue[], limit = 5): string {
+    if (issues.length === 0) return ""
+    const summary = summarizeFlowPrecheck(issues)
+    const head = `错误 ${summary.errors}，告警 ${summary.warnings}`
+    const lines = issues.slice(0, limit).map((item, index) => `${index + 1}. ${item.message}`)
+    const more = issues.length > limit ? `\n另有 ${issues.length - limit} 条，请先在右侧配置面板修正。` : ""
+    return `${head}\n${lines.join("\n")}${more}`
+  }
+
+  function runLocalAuthoringPrecheck(nodes: any[], edges: any[]) {
+    return collectFlowAuthoringPrecheck(nodes, edges)
+  }
 
   function applyEntrypointHintIfNeeded(force = false) {
     const hinted = normalizeEntrypoint(props.entrypointHint as Partial<FlowEntrypoint> | null)
@@ -232,17 +251,20 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
   const showPublishButton = computed(() => {
     console.log("[showPublishButton] 计算:", {
       isLatestPublished: isLatestPublished.value,
+      hasContentChanges: hasContentChanges.value,
       currentVersionNo: currentVersionNo.value,
       publishedVersionNo: publishedVersionNo.value,
       hasNodes: flowState.nodes.value.length > 0,
       hasEdges: flowState.edges.value.length > 0
     })
-    // 如果当前版本已发布，显示"已发布"
-    if (isLatestPublished.value) {
+    // 当前版本已发布且没有新的内容变化时，显示"已发布"
+    if (isLatestPublished.value && !hasContentChanges.value) {
       return false
     }
-    // 其他情况都显示"发布"按钮（包括没有保存过的情况）
-    return true
+    // 其余情况都显示"发布"按钮，包括：
+    // 1. 当前不是已发布版本
+    // 2. 已发布版本基础上又产生了新的未保存修改
+    return flowState.nodes.value.length > 0 || flowState.edges.value.length > 0
   })
   
   // 发布按钮是否可用：只要不是已发布状态就可以发布
@@ -251,13 +273,19 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
     if (saving.value || publishing.value) {
       return false
     }
-    // 如果当前版本已发布，不能发布
-    if (isLatestPublished.value) {
+    if (flowPrecheckBlocking.value) {
       return false
     }
-    // 只要有内容就可以发布（不需要检查是否有变化）
-    // 因为用户可能想要重新发布当前版本
-    return flowState.nodes.value.length > 0 || flowState.edges.value.length > 0
+    const hasGraphContent = flowState.nodes.value.length > 0 || flowState.edges.value.length > 0
+    if (!hasGraphContent) {
+      return false
+    }
+    // 已发布版本只有在产生新修改时才允许重新发布；
+    // 非已发布版本保持可发布。
+    if (isLatestPublished.value) {
+      return hasContentChanges.value
+    }
+    return true
   })
   const canSave = computed(() => !saving.value && !publishing.value)
 
@@ -445,6 +473,13 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
 
   async function publishFlow() {
     console.log("[publishFlow] 开始发布流程")
+
+    if (flowPrecheckBlocking.value) {
+      const message = buildPrecheckMessage(flowPrecheckIssues.value, 6) || "当前流程仍存在未修复的配置错误。"
+      publishError.value = message
+      window.alert(`❌ 发布前校验失败：\n${message}`)
+      return
+    }
     
     if (!props.projectKey) {
       const msg = "缺少项目标识，无法发布流程"
@@ -464,24 +499,22 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
     }
     
     let versionNo = currentVersionNo.value
-    console.log("[publishFlow] 当前版本号:", versionNo)
+    console.log("[publishFlow] 当前版本号:", versionNo, "hasContentChanges:", hasContentChanges.value)
     
-    // 如果没有版本号，先自动保存获取版本号（静默保存，不显示提示）
-    if (!versionNo) {
-      console.log("[publishFlow] 没有版本号，自动保存并发布")
+    // 没有版本号或存在未保存修改时，先自动保存为新版本再发布
+    if (!versionNo || hasContentChanges.value) {
+      console.log("[publishFlow] 需要先保存最新内容后再发布")
       try {
-        // 静默保存，不显示 alert
         await saveDraftSilently()
         versionNo = currentVersionNo.value
         console.log("[publishFlow] 自动保存后的版本号:", versionNo)
         if (!versionNo) {
-          const msg = "自动保存失败，无法发布流程"
+          const msg = "自动保存最新版本失败，无法发布流程"
           console.error("[publishFlow]", msg)
           window.alert(msg)
           return
         }
-        console.log("[publishFlow] 自动保存成功，继续发布")
-        // 保存成功后继续执行发布逻辑
+        console.log("[publishFlow] 最新内容已保存，继续发布")
       } catch (error) {
         const message = error instanceof Error ? error.message : "自动保存失败"
         console.error("[publishFlow] 自动保存出错:", error)
@@ -761,6 +794,11 @@ export function useFlowIO(props: CanvasEditorProps, flowState: FlowStateBridge) 
     showPublishButton,
     canPublish,
     canSave,
+    flowPrecheckIssues,
+    flowPrecheckSummary,
+    flowPrecheckBlocking,
+    flowPrecheckHighlights,
+    flowPrecheckMessage,
     loadFlowDefinition,
     saveDraft,
     publishFlow,

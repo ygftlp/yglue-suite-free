@@ -374,6 +374,57 @@ class GraphExecutorE2ETest {
     }
 
     @Test
+    void testBranchTempVarsCanResolveServiceCallAndReferencePreviousTempVar() {
+        GenericApplicationContext springContext = new GenericApplicationContext();
+        springContext.registerBean("lookupService", LookupService.class, LookupService::new);
+        springContext.refresh();
+
+        try {
+            NodeExecutorRegistry registry = new NodeExecutorRegistry()
+                    .register("branch", new BranchNodeExecutor(springContext))
+                    .register("set", new SetNodeExecutor());
+            GraphExecutor executor = new GraphExecutor(registry, List.of());
+
+            Map<String, Object> ageLookupCall = new LinkedHashMap<>();
+            ageLookupCall.put("serviceRef", Map.of(
+                    "serviceBean", "lookupService",
+                    "methodName", "ageByName",
+                    "methodSignature", "ageByName(java.lang.String)"));
+            ageLookupCall.put("argBindings", List.of(Map.of(
+                    "paramName", "name",
+                    "paramType", "java.lang.String",
+                    "source", Map.of("kind", "tempVar", "tempKey", "userName"))));
+
+            NodeDefinition branch = new NodeDefinition("branch_1", "branch", Map.of(
+                    "tempVars", List.of(
+                            Map.of("key", "userName", "kind", "ctx", "path", "request.username"),
+                            Map.of("key", "userAge", "kind", "serviceCall", "serviceCall", ageLookupCall),
+                            Map.of("key", "ageSnapshot", "kind", "tempVar", "tempKey", "userAge"))),
+                    List.of());
+            NodeDefinition matched = new NodeDefinition("matched_node", "set",
+                    Map.of("target", "route", "value", "matched"), List.of());
+
+            Map<String, Object> condition = Map.of(
+                    "op", "and",
+                    "rules", List.of(Map.of(
+                            "op", "eq",
+                            "left", Map.of("kind", "tempVar", "tempKey", "ageSnapshot"),
+                            "right", Map.of("kind", "const", "constValue", 21))));
+
+            FlowDefinition flow = new FlowDefinition("branch_temp_service_rule", Map.of(),
+                    List.of(branch, matched),
+                    List.of(Map.of("source", "branch_1", "target", "matched_node", "data",
+                            Map.of("priority", 1, "conditionV2", condition))));
+
+            FlowExecutionResult result = executor.execute(flow, Map.of("request", Map.of("username", "alice")));
+
+            assertEquals("matched", result.getContextSnapshot().get("route"));
+        } finally {
+            springContext.close();
+        }
+    }
+
+    @Test
     void testConcurrentExecutionsDoNotLeakResolvedArgsAcrossRequests() throws Exception {
         GenericApplicationContext springContext = new GenericApplicationContext();
         springContext.registerBean("testParamService", TestParamService.class, TestParamService::new);
