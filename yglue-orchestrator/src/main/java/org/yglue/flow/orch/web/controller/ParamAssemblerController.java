@@ -13,6 +13,7 @@ import org.yglue.flow.orch.web.dto.paramassembler.request.ParamAssemblerDraftReq
 import org.yglue.flow.orch.web.dto.paramassembler.request.ParamAssemblerSuggestRequest;
 import org.yglue.flow.orch.web.dto.paramassembler.request.ParamAssemblerValidateRequest;
 import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerContextResponse;
+import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerAnalysisResponse;
 import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerDraftResponse;
 import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerSuggestResponse;
 import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerValidateResponse;
@@ -49,5 +50,11 @@ public class ParamAssemblerController {
     public ParamAssemblerValidateResponse validate(@PathVariable("projectKey") String projectKey,
                                                    @RequestBody @Valid ParamAssemblerValidateRequest request) {
         return paramAssemblerService.validate(projectKey, request);
+    }
+
+    @PostMapping("/analyze")
+    public ParamAssemblerAnalysisResponse analyze(@PathVariable("projectKey") String projectKey,
+                                                  @RequestBody @Valid ParamAssemblerValidateRequest request) {
+        return paramAssemblerService.analyze(projectKey, request);
     }
 }

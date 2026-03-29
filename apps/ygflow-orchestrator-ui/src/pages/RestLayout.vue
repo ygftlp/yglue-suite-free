@@ -1,13 +1,21 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
-import { api, type Project, type ProjectEndpoint, type EndpointEntrypointConfig, type FlowEntrypointPayload } from "../api/client"
+import ProjectReadinessPanel from "../components/ProjectReadinessPanel.vue"
+import {
+  api,
+  type EndpointEntrypointConfig,
+  type FlowEntrypointPayload,
+  type Project,
+  type ProjectEndpoint,
+} from "../api/client"
 import { formatTimestamp, safeParseJson } from "../utils/formatters"
 
 const route = useRoute()
 const router = useRouter()
 
 const projectKey = computed(() => route.params.projectKey as string)
+const guide = computed(() => (typeof route.query.guide === "string" ? route.query.guide : ""))
 
 const project = ref<Project | null>(null)
 const projectLoading = ref(false)
@@ -39,53 +47,58 @@ const restCards = computed<RestCard[]>(() =>
   }))
 )
 
+const guideMessage = computed(() => {
+  switch (guide.value) {
+    case "metadata":
+      return "当前最优先的是同步 metadata。只有 metadata 进来后，服务目录、模型和 resolver 才会完整，后面的装配提示才不会失真。"
+    case "components":
+      return "当前缺的是服务组件目录。先让 IDE 或后端把服务组件同步上来，否则服务节点只能手工输入，复杂补数场景会很难用。"
+    case "create-rest":
+      return "建议先补一个 REST 入口。这样用户至少能从入口列表进入托管编排，后续再继续绑定 Flow。"
+    case "design-flow":
+      return "入口已经有了，下一步建议尽快沉淀第一条 Flow，把入口、流程和发布链路真正接起来。"
+    case "code-metadata":
+      return "当前缺的是代码元数据。复杂对象、对象数组、集合和多接口补数都需要辅助类或依赖元数据来降低配置成本。"
+    case "plugin":
+      return "发布链路已经具备基础条件，下一步建议连接在线插件实例，把 Flow 自动同步回业务工程。"
+    default:
+      return ""
+  }
+})
+
 const toggleBusy = ref<Record<number, boolean>>({})
 
-/**
- * 显示端点名称（主标签）
- * 优先显示有意义的名称，如果没有则从路径中提取合理的名称
- */
 function displayEndpointName(endpoint: ProjectEndpoint & Record<string, any>) {
-  // 优先使用显示名称、别名、标题或名称字段
   const raw =
     endpoint.displayName ??
     endpoint.alias ??
     endpoint.title ??
     endpoint.name ??
     ""
-  
+
   if (typeof raw === "string" && raw.trim()) {
-    // 处理包含 # 的情况（如 "com.example#methodName"）
     if (raw.includes("#")) {
       const parts = raw.split("#")
       return parts[parts.length - 1] || raw
     }
     return raw.trim()
   }
-  
-  // 如果没有名称，尝试从路径中提取有意义的名称
+
   const path = endpoint.path || ""
   if (path) {
-    // 提取路径的最后一段作为名称（去除参数）
     const segments = path.split("/").filter(Boolean)
     if (segments.length > 0) {
       const lastSegment = segments[segments.length - 1]
-      // 移除路径参数（如 {projectKey}）
       const name = lastSegment.replace(/\{[^}]+\}/g, "").replace(/[^a-zA-Z0-9]/g, "")
       if (name) {
-        // 转换为驼峰命名（首字母小写）
         return name.charAt(0).toLowerCase() + name.slice(1)
       }
     }
   }
-  
+
   return "未命名接口"
 }
 
-/**
- * 显示端点描述
- * 如果有描述则显示描述，否则显示 HTTP 方法和路径的组合（如 "GET /api/health"）
- */
 function displayEndpointDesc(endpoint: ProjectEndpoint & Record<string, any>) {
   const raw =
     endpoint.description ??
@@ -93,10 +106,11 @@ function displayEndpointDesc(endpoint: ProjectEndpoint & Record<string, any>) {
     endpoint.remark ??
     endpoint.comment ??
     ""
+
   if (typeof raw === "string" && raw.trim()) {
     return raw.trim()
   }
-  // 如果没有描述，显示 HTTP 方法和路径的组合
+
   const method = (endpoint.method || "GET").toUpperCase()
   const path = endpoint.path || ""
   if (path) {
@@ -104,7 +118,6 @@ function displayEndpointDesc(endpoint: ProjectEndpoint & Record<string, any>) {
   }
   return ""
 }
-
 
 async function loadProject() {
   if (!projectKey.value) return
@@ -140,7 +153,7 @@ async function handleCreate() {
   if (!projectKey.value) return
 
   if (!form.value.path.trim() || !form.value.name.trim()) {
-    window.alert("请填写接口路径和名称")
+    window.alert("请先填写接口路径和显示名称")
     return
   }
 
@@ -149,8 +162,8 @@ async function handleCreate() {
       endpointType: "REST",
       method: form.value.method,
       path: form.value.path.trim(),
-      name: form.value.name,
-      description: form.value.description,
+      name: form.value.name.trim(),
+      description: form.value.description.trim(),
     }
     const created = await api.createEndpoint(projectKey.value, payload)
     restEndpoints.value = [created, ...restEndpoints.value]
@@ -174,7 +187,18 @@ function refresh() {
   loadRestEndpoints()
 }
 
-watch(projectKey, refresh, { immediate: true })
+function clearGuide() {
+  const nextQuery = { ...route.query }
+  delete nextQuery.guide
+  router.replace({ query: nextQuery })
+}
+
+watch([projectKey, guide], () => {
+  refresh()
+  if (guide.value === "create-rest") {
+    showCreate.value = true
+  }
+}, { immediate: true })
 
 function extractEntrypointMeta(endpoint: ProjectEndpoint & Record<string, any>): EntrypointMeta {
   const config = safeParseConfig<Record<string, any>>(endpoint.configJson)
@@ -251,7 +275,7 @@ async function onToggleEntrypoint(card: RestCard, event: Event) {
 async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
   if (!projectKey.value || !card.meta.hasFlow) return
   if (!card.endpoint.entrypointId) {
-    window.alert("当前接口缺少 entrypointId，无法切换托管状态")
+    window.alert("当前接口缺少 entrypointId，暂时无法切换托管状态。")
     return
   }
 
@@ -268,7 +292,6 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
     toggleBusy.value[card.endpoint.id] = false
   }
 }
-
 </script>
 
 <template>
@@ -276,7 +299,7 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
     <header class="bar layout-header">
       <div class="header-info">
         <div class="title">
-          {{ project?.name ?? (projectLoading ? "加载中..." : "尚未加载项目") }}
+          {{ project?.name ?? (projectLoading ? "加载中..." : "未加载项目") }}
         </div>
         <div class="subtitle">
           标识：<span class="code">{{ projectKey }}</span>
@@ -284,17 +307,27 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
         </div>
       </div>
       <div class="header-actions">
-        <button class="btn" type="button" @click="loadRestEndpoints">刷新</button>
+        <button class="btn" type="button" @click="loadRestEndpoints">刷新列表</button>
         <button class="btn primary" type="button" @click="showCreate = !showCreate">
-          {{ showCreate ? "取消" : "新增 REST" }}
+          {{ showCreate ? "收起" : "新增 REST 入口" }}
         </button>
       </div>
     </header>
 
     <main class="layout-main">
       <p class="lead">
-        注册 REST 接口后即可在画布中编排流程，并保持与 IDE 插件的数据同步。
+        推荐顺序：先看项目就绪度，再创建或检查 REST 入口，然后进入 Studio 绑定 flow 并继续编排。
       </p>
+
+      <div v-if="guideMessage" class="guide-banner">
+        <div class="guide-copy">
+          <div class="guide-title">当前推荐动作</div>
+          <div class="guide-text">{{ guideMessage }}</div>
+        </div>
+        <button class="btn" type="button" @click="clearGuide">知道了</button>
+      </div>
+
+      <ProjectReadinessPanel :project-key="projectKey" compact />
 
       <div v-if="showCreate" class="create-card">
         <div class="field-row">
@@ -312,7 +345,7 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
           </label>
         </div>
         <label class="field">
-          <span>展示名称</span>
+          <span>显示名称</span>
           <input v-model="form.name" class="input" placeholder="给接口起一个易懂的名字" />
         </label>
         <label class="field">
@@ -321,7 +354,7 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
             v-model="form.description"
             class="input textarea"
             rows="2"
-            placeholder="补充调用说明、业务备注等"
+            placeholder="补充用途、调用说明或业务备注"
           ></textarea>
         </label>
         <div class="create-actions">
@@ -358,6 +391,7 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
                 {{ card.meta.enabled ? "托管中" : "已停用" }}
               </span>
             </header>
+
             <div class="endpoint-main">
               <div class="endpoint-info">
                 <div class="endpoint-name">
@@ -367,10 +401,11 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
                   {{ displayEndpointDesc(card.endpoint as ProjectEndpoint & Record<string, any>) }}
                 </p>
               </div>
+
               <div class="flow-inline">
                 <div class="flow-info">
-                  <span class="flow-label">关联流程</span>
-                  <span class="flow-value">{{ card.meta.flowCode || "未绑定" }}</span>
+                  <span class="flow-label">关联 Flow</span>
+                  <span class="flow-value">{{ card.meta.flowCode || "尚未绑定" }}</span>
                 </div>
                 <label v-if="card.meta.hasFlow" class="switch" @click.stop>
                   <input
@@ -381,9 +416,10 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
                   />
                   <span class="slider"></span>
                 </label>
-                <span v-else class="flow-note">尚未绑定流程</span>
+                <span v-else class="flow-note">还没有绑定 flow</span>
               </div>
             </div>
+
             <footer class="endpoint-meta">
               <div class="meta-item">
                 <span class="meta-label">最近更新</span>
@@ -401,8 +437,8 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
       </template>
 
       <div v-else class="placeholder">
-        <div class="placeholder-title">尚未配置 REST 接口</div>
-        <p class="placeholder-desc">点击右上角“新增 REST”即可录入新的接口入口。</p>
+        <div class="placeholder-title">还没有 REST 入口</div>
+        <p class="placeholder-desc">先创建一个入口，再把它绑定到具体 flow 上，就能继续进入 Studio。</p>
       </div>
     </main>
   </div>
@@ -428,7 +464,7 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
 
 .title {
   font-size: 18px;
-  font-weight: 600;
+  font-weight: 700;
   color: #1f2937;
 }
 
@@ -465,6 +501,37 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
   margin: 0;
 }
 
+.guide-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(99, 102, 241, 0.22);
+  background: linear-gradient(135deg, rgba(238, 242, 255, 0.92), rgba(255, 255, 255, 0.98));
+  padding: 16px;
+}
+
+.guide-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.guide-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #4f46e5;
+}
+
+.guide-text {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #334155;
+}
+
 .create-card {
   border: 1px solid rgba(148, 163, 184, 0.35);
   border-radius: 16px;
@@ -489,7 +556,7 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
 }
 
 .field span {
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .input {
@@ -519,8 +586,6 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
   gap: 8px;
   justify-content: flex-end;
 }
-
-
 
 .endpoint-grid {
   display: grid;
@@ -564,7 +629,7 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
 }
 
 .method-chip {
-  font-weight: 600;
+  font-weight: 700;
   color: #1d4ed8;
   background: rgba(37, 99, 235, 0.1);
   border-radius: 999px;
@@ -592,7 +657,7 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
 
 .endpoint-name {
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 700;
   color: #0f172a;
 }
 
@@ -600,18 +665,6 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
   font-size: 11px;
   color: #64748b;
   margin: 2px 0 0;
-}
-
-.flow-section {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 6px 10px;
-  border-radius: 9px;
-  border: 1px dashed rgba(99, 102, 241, 0.25);
-  background: rgba(248, 250, 252, 0.4);
 }
 
 .flow-info {
@@ -630,18 +683,11 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
 
 .flow-value {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   color: #0f172a;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.flow-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
 }
 
 .flow-inline {
@@ -668,7 +714,7 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
   padding: 2px 6px;
   border-radius: 999px;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -708,10 +754,7 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
 .slider {
   position: absolute;
   cursor: pointer;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   background-color: #cbd5e1;
   transition: 0.2s;
   border-radius: 999px;
@@ -765,7 +808,7 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
 }
 
 .meta-value {
-  font-weight: 600;
+  font-weight: 700;
   color: #0f172a;
 }
 
@@ -774,7 +817,7 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
   align-items: center;
   gap: 4px;
   color: #2563eb;
-  font-weight: 600;
+  font-weight: 700;
   font-size: 11px;
 }
 
@@ -782,7 +825,6 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
   font-size: 14px;
   color: #2563eb;
 }
-
 
 .placeholder {
   border: 1px dashed rgba(148, 163, 184, 0.5);
@@ -799,7 +841,7 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
 
 .placeholder-title {
   font-size: 18px;
-  font-weight: 600;
+  font-weight: 700;
   color: #1e1b4b;
   margin-bottom: 8px;
 }
@@ -815,16 +857,13 @@ async function setEntrypointEnabled(card: RestCard, enabled: boolean) {
     flex-direction: column;
   }
 
+  .guide-banner {
+    flex-direction: column;
+  }
+
   .endpoint-grid {
     grid-template-columns: 1fr;
     gap: 12px;
   }
 }
-
-@media (min-width: 769px) and (max-width: 1200px) {
-  .endpoint-grid {
-    grid-template-columns: repeat(auto-fill, minmax(300px, 380px));
-  }
-}
-
 </style>

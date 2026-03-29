@@ -9,10 +9,12 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.yglue.flow.orch.domain.Project;
+import org.yglue.flow.orch.service.ProjectReadinessService;
 import org.yglue.flow.orch.service.ProjectService;
 import org.yglue.flow.orch.web.dto.project.request.ProjectCreateRequest;
 import org.yglue.flow.orch.web.dto.project.request.ProjectEnsureRequest;
 import org.yglue.flow.orch.web.dto.project.response.ProjectEnsureResponse;
+import org.yglue.flow.orch.web.dto.project.response.ProjectReadinessResponse;
 
 import java.util.List;
 
@@ -21,9 +23,12 @@ import java.util.List;
 public class ProjectController {
 
     private final ProjectService projectService;
+    private final ProjectReadinessService projectReadinessService;
 
-    public ProjectController(ProjectService projectService) {
+    public ProjectController(ProjectService projectService,
+                             ProjectReadinessService projectReadinessService) {
         this.projectService = projectService;
+        this.projectReadinessService = projectReadinessService;
     }
 
     @PostMapping
@@ -49,5 +54,10 @@ public class ProjectController {
     public ResponseEntity<Project> get(@PathVariable("projectKey") String projectKey) {
         Project project = projectService.findByKey(projectKey);
         return project != null ? ResponseEntity.ok(project) : ResponseEntity.notFound().build();
+    }
+
+    @GetMapping("/{projectKey}/readiness")
+    public ProjectReadinessResponse readiness(@PathVariable("projectKey") String projectKey) {
+        return projectReadinessService.getReadiness(projectKey);
     }
 }

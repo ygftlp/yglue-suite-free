@@ -13,16 +13,14 @@ function resolveUrl(path: string): string {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const url = resolveUrl(path)
-  
+
   try {
     const response = await fetch(url, init)
 
     if (!response.ok) {
       const message = await safeReadText(response)
       const errorMessage = message || response.statusText || "未知错误"
-      throw new Error(
-        `请求失败 ${response.status} ${response.statusText}: ${errorMessage}`
-      )
+      throw new Error(`请求失败 ${response.status} ${response.statusText}: ${errorMessage}`)
     }
 
     if (response.status === 204) {
@@ -82,6 +80,58 @@ export interface Project {
   createBy?: string
   updateBy?: string
   delFlag?: number
+}
+
+export interface ProjectCreatePayload {
+  key: string
+  name: string
+}
+
+export interface ProjectReadinessIssue {
+  code: string
+  title: string
+  detail: string
+}
+
+export interface ProjectReadinessAction {
+  code: string
+  label: string
+  detail: string
+  route: string
+  level: string
+}
+
+export interface ProjectReadinessResponse {
+  projectKey: string
+  projectId?: number | null
+  projectName?: string | null
+  projectExists: boolean
+  metadataPresent: boolean
+  componentDirectoryReady: boolean
+  restEndpointsReady: boolean
+  flowsReady: boolean
+  pluginInstancesReady: boolean
+  helperClassesReady: boolean
+  selectedJarsReady: boolean
+  flowModelsReady: boolean
+  flowResolversReady: boolean
+  readyForOrchestration: boolean
+  readyForSmartAssembly: boolean
+  readyForPublishing: boolean
+  readyForSync: boolean
+  summary?: string | null
+  metadataCount: number
+  componentEndpointCount: number
+  restEndpointCount: number
+  flowCount: number
+  pluginInstanceCount: number
+  helperClassCount: number
+  selectedJarCount: number
+  flowModelCount: number
+  flowResolverCount: number
+  blockingItems: ProjectReadinessIssue[]
+  warningItems: ProjectReadinessIssue[]
+  nextActions: ProjectReadinessAction[]
 }
 
 export interface FlowSummary {
@@ -394,6 +444,58 @@ export interface ParamAssemblerValidateResponse {
   issues: ParamAssemblerIssue[]
 }
 
+export interface ParamAssemblerAnalysisServiceCall {
+  label: string
+  fn: string
+  argCount: number
+  resultPath?: string | null
+}
+
+export interface ParamAssemblerAnalysisTempItem {
+  index: number
+  key?: string | null
+  javaType?: string | null
+  sourceRefs: string[]
+  tempRefs: string[]
+  dependsOn: string[]
+  usedBy: string[]
+  serviceCalls: ParamAssemblerAnalysisServiceCall[]
+  issueCount: number
+  issueSamples: string[]
+}
+
+export interface ParamAssemblerAnalysisArgItem {
+  name: string
+  javaType?: string | null
+  summary?: string | null
+  sourceRefs: string[]
+  tempRefs: string[]
+  serviceCalls: ParamAssemblerAnalysisServiceCall[]
+  issueCount: number
+  issueSamples: string[]
+}
+
+export interface ParamAssemblerAnalysisSummary {
+  argCount: number
+  tempCount: number
+  serviceCallCount: number
+  tempReferenceCount: number
+  objectNodeCount: number
+  listNodeCount: number
+  errorCount: number
+  warningCount: number
+  complexityScore: number
+  complexityLevel: "low" | "medium" | "high" | string
+}
+
+export interface ParamAssemblerAnalysisResponse {
+  summary: ParamAssemblerAnalysisSummary
+  tempItems: ParamAssemblerAnalysisTempItem[]
+  argItems: ParamAssemblerAnalysisArgItem[]
+  riskItems: string[]
+  issues: ParamAssemblerIssue[]
+}
+
 export interface ParamAssemblerSuggestResponse {
   ast: Record<string, any>
   issues: ParamAssemblerIssue[]
@@ -429,8 +531,16 @@ export const api = {
     return request<Project[]>("/projects")
   },
 
+  createProject(payload: ProjectCreatePayload): Promise<Project> {
+    return jsonRequest<Project>("/projects", payload, { method: "POST" })
+  },
+
   getProject(projectKey: string): Promise<Project> {
     return request<Project>(`/projects/${encodeURIComponent(projectKey)}`)
+  },
+
+  getProjectReadiness(projectKey: string): Promise<ProjectReadinessResponse> {
+    return request<ProjectReadinessResponse>(`/projects/${encodeURIComponent(projectKey)}/readiness`)
   },
 
   listEndpointComponents(projectKey: string): Promise<EndpointComponentGroup[]> {
@@ -630,6 +740,17 @@ export const api = {
   ): Promise<ParamAssemblerValidateResponse> {
     return jsonRequest<ParamAssemblerValidateResponse>(
       `/projects/${encodeURIComponent(projectKey)}/param-assembler/validate`,
+      payload,
+      { method: "POST" }
+    )
+  },
+
+  analyzeParamAssemblerAst(
+    projectKey: string,
+    payload: { ast: Record<string, any>; args?: ParamAssemblerArgMeta[] }
+  ): Promise<ParamAssemblerAnalysisResponse> {
+    return jsonRequest<ParamAssemblerAnalysisResponse>(
+      `/projects/${encodeURIComponent(projectKey)}/param-assembler/analyze`,
       payload,
       { method: "POST" }
     )

@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -64,6 +65,72 @@ class ParamAssemblerServiceListValidationTest {
         assertTrue(response.getIssues().stream().noneMatch(item -> "error".equalsIgnoreCase(item.getSeverity())));
     }
 
+    @Test
+    void validateRejectsBlankFilterExpression() {
+        ParamAssemblerValidateRequest request = new ParamAssemblerValidateRequest();
+        request.setArgs(List.of(listArgMeta("skuCodes", "java.util.List<java.lang.String>")));
+
+        Map<String, Object> listValue = new LinkedHashMap<>();
+        listValue.put("kind", "list");
+        listValue.put("source", sourceNode("request", "request.body.skuCodes"));
+        listValue.put("item", sourceNode("item", "item.code"));
+        listValue.put("ops", List.of(Map.of(
+                "id", "filter_blank",
+                "op", "filter",
+                "expression", "")));
+
+        request.setAst(astWithArg("skuCodes", "java.util.List<java.lang.String>", listValue));
+
+        ParamAssemblerValidateResponse response = service.validate("demo", request);
+
+        assertFalse(response.isValid());
+        assertTrue(response.getIssues().stream().anyMatch(item -> "list.op.expression.required".equals(item.getCode())));
+    }
+
+    @Test
+    void validateRejectsInvalidFilterExpressionSyntax() {
+        ParamAssemblerValidateRequest request = new ParamAssemblerValidateRequest();
+        request.setArgs(List.of(listArgMeta("skuCodes", "java.util.List<java.lang.String>")));
+
+        Map<String, Object> listValue = new LinkedHashMap<>();
+        listValue.put("kind", "list");
+        listValue.put("source", sourceNode("request", "request.body.skuCodes"));
+        listValue.put("item", sourceNode("item", "item.code"));
+        listValue.put("ops", List.of(Map.of(
+                "id", "filter_invalid",
+                "op", "filter",
+                "expression", "item.enabled ==")));
+
+        request.setAst(astWithArg("skuCodes", "java.util.List<java.lang.String>", listValue));
+
+        ParamAssemblerValidateResponse response = service.validate("demo", request);
+
+        assertFalse(response.isValid());
+        assertTrue(response.getIssues().stream().anyMatch(item -> "list.op.expression.invalid".equals(item.getCode())));
+    }
+
+    @Test
+    void validateAcceptsItemAndContextAwareFilterExpression() {
+        ParamAssemblerValidateRequest request = new ParamAssemblerValidateRequest();
+        request.setArgs(List.of(listArgMeta("skuCodes", "java.util.List<java.lang.String>")));
+
+        Map<String, Object> listValue = new LinkedHashMap<>();
+        listValue.put("kind", "list");
+        listValue.put("source", sourceNode("request", "request.body.skuCodes"));
+        listValue.put("item", sourceNode("item", "item.code"));
+        listValue.put("ops", List.of(Map.of(
+                "id", "filter_context",
+                "op", "filter",
+                "expression", "request.enabledOnly ? item.enabled : true")));
+
+        request.setAst(astWithArg("skuCodes", "java.util.List<java.lang.String>", listValue));
+
+        ParamAssemblerValidateResponse response = service.validate("demo", request);
+
+        assertTrue(response.getIssues().stream().noneMatch(item -> "list.op.expression.invalid".equals(item.getCode())));
+        assertTrue(response.getIssues().stream().noneMatch(item -> "list.op.expression.required".equals(item.getCode())));
+    }
+
     private static ParamAssemblerArgMeta listArgMeta(String name, String javaType) {
         ParamAssemblerArgMeta meta = new ParamAssemblerArgMeta();
         meta.setName(name);
@@ -78,6 +145,20 @@ class ParamAssemblerServiceListValidationTest {
         source.put("sourceType", sourceType);
         source.put("path", path);
         return source;
+    }
+
+    private static Map<String, Object> astWithArg(String name, String javaType, Map<String, Object> value) {
+        Map<String, Object> arg = new LinkedHashMap<>();
+        arg.put("name", name);
+        arg.put("javaType", javaType);
+        arg.put("required", true);
+        arg.put("value", value);
+
+        Map<String, Object> ast = new LinkedHashMap<>();
+        ast.put("version", "param-ast/v1");
+        ast.put("temps", List.of());
+        ast.put("args", List.of(arg));
+        return ast;
     }
 
     private static Map<String, Object> serviceCallNode(String serviceBean,

@@ -1778,7 +1778,21 @@ function getIssueAction(issue: ParamAssemblerIssue): IssueAction {
       actionKind: "focus",
     }
   }
-  if (["list.nested.unsupported", "list.op.unsupported", "expr.required"].includes(code)) {
+  if (["call.service.bean.unknown", "call.service.method.unknown", "call.service.signature.mismatch", "call.service.signature.ambiguous", "call.service.returnType.changed"].includes(code)) {
+    return {
+      detail: "当前服务元数据已经发生变化，建议重新选择服务方法，并确认返回结果路径与补数链路仍然正确。",
+      actionLabel: "定位问题",
+      actionKind: "focus",
+    }
+  }
+  if (["call.arg.count.mismatch", "call.arg.name.required", "call.arg.name.unknown", "call.arg.name.duplicate", "call.arg.missing"].includes(code)) {
+    return {
+      detail: "当前服务方法的入参与元数据不一致，建议对照方法签名重新整理参数名、数量和对象装配来源。",
+      actionLabel: "定位问题",
+      actionKind: "focus",
+    }
+  }
+  if (["list.nested.unsupported", "list.op.unsupported", "list.op.expression.required", "list.op.expression.invalid", "list.op.compose.required", "expr.required"].includes(code)) {
     return {
       detail: "当前属于复杂集合或表达式场景，建议先拆成 Temp 补数 + 单层列表装配；更复杂逻辑切到高级模式。",
       actionLabel: "定位问题",

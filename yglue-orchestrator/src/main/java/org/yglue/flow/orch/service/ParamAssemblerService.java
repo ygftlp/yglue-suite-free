@@ -7,6 +7,8 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.expression.ExpressionParser;
+import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
@@ -29,6 +31,7 @@ import org.yglue.flow.orch.web.dto.paramassembler.request.ParamAssemblerDraftReq
 import org.yglue.flow.orch.web.dto.paramassembler.request.ParamAssemblerSuggestRequest;
 import org.yglue.flow.orch.web.dto.paramassembler.request.ParamAssemblerValidateRequest;
 import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerContextResponse;
+import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerAnalysisResponse;
 import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerDraftResponse;
 import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerIssueResponse;
 import org.yglue.flow.orch.web.dto.paramassembler.response.ParamAssemblerSuggestResponse;
@@ -53,6 +56,7 @@ import java.util.stream.Collectors;
 public class ParamAssemblerService {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final ExpressionParser SPEL_PARSER = new SpelExpressionParser();
     private static final String AST_VERSION = "param-ast/v1";
     private static final int DEFAULT_HELPER_LIMIT = 800;
     private static final int MAX_HELPER_LIMIT = 2000;
@@ -136,17 +140,24 @@ public class ParamAssemblerService {
         ast.put("args", args);
 
         response.setAst(ast);
-        response.setIssues(validateAst(ast, safeArgs(request.getArgs())));
+        response.setIssues(validateAst(projectKey, ast, safeArgs(request.getArgs())));
         return response;
     }
 
     public ParamAssemblerValidateResponse validate(String projectKey, ParamAssemblerValidateRequest request) {
         projectService.requireProject(projectKey);
         ParamAssemblerValidateResponse response = new ParamAssemblerValidateResponse();
-        List<ParamAssemblerIssueResponse> issues = validateAst(request.getAst(), safeArgs(request.getArgs()));
+        List<ParamAssemblerIssueResponse> issues = validateAst(projectKey, request.getAst(), safeArgs(request.getArgs()));
         response.setIssues(issues);
         response.setValid(issues.stream().noneMatch(item -> "error".equalsIgnoreCase(item.getSeverity())));
         return response;
+    }
+
+    public ParamAssemblerAnalysisResponse analyze(String projectKey, ParamAssemblerValidateRequest request) {
+        projectService.requireProject(projectKey);
+        List<ParamAssemblerArgMeta> argsMeta = safeArgs(request.getArgs());
+        List<ParamAssemblerIssueResponse> issues = validateAst(projectKey, request.getAst(), argsMeta);
+        return buildAnalysisResponse(request.getAst(), argsMeta, issues);
     }
 
     public ParamAssemblerSuggestResponse suggest(String projectKey, ParamAssemblerSuggestRequest request) {
@@ -161,18 +172,18 @@ public class ParamAssemblerService {
         response.setUpdatedCount(stats.updatedCount());
         response.setTouchedArgs(stats.touchedArgs());
         response.setSummary(buildSuggestSummary(stats, request.getMode()));
-        response.setIssues(validateAst(ast, args));
+        response.setIssues(validateAst(projectKey, ast, args));
         return response;
     }
 
     public String prepareFlowContentForSave(String projectKey, String contentJson) {
         projectService.requireProject(projectKey);
-        return prepareFlowContent(contentJson, false);
+        return prepareFlowContent(projectKey, contentJson, false);
     }
 
     public String prepareFlowContentForPublish(String projectKey, String contentJson) {
         projectService.requireProject(projectKey);
-        return prepareFlowContent(contentJson, true);
+        return prepareFlowContent(projectKey, contentJson, true);
     }
 
     public Map<String, Object> compileAstToParamPlans(Map<String, Object> ast,
@@ -183,7 +194,7 @@ public class ParamAssemblerService {
         return compiled;
     }
 
-    private String prepareFlowContent(String contentJson, boolean strict) {
+    private String prepareFlowContent(String projectKey, String contentJson, boolean strict) {
         if (!StringUtils.hasText(contentJson)) {
             return contentJson;
         }
@@ -203,9 +214,10 @@ public class ParamAssemblerService {
 
             List<String> errors = new ArrayList<>();
             boolean changed = false;
+            ServiceMethodCatalog serviceMethodCatalog = loadServiceMethodCatalog(projectKey);
             for (JsonNode node : nodes) {
                 if (node instanceof ObjectNode nodeObject) {
-                    changed = prepareNodeContent(nodeObject, strict, errors) || changed;
+                    changed = prepareNodeContent(nodeObject, strict, errors, serviceMethodCatalog) || changed;
                 }
             }
             if (strict) {
@@ -228,7 +240,10 @@ public class ParamAssemblerService {
         }
     }
 
-    private boolean prepareNodeContent(ObjectNode node, boolean strict, List<String> errors) {
+    private boolean prepareNodeContent(ObjectNode node,
+                                       boolean strict,
+                                       List<String> errors,
+                                       ServiceMethodCatalog serviceMethodCatalog) {
         ObjectNode data = objectNode(node.get("data"));
         if (data == null) {
             return false;
@@ -241,7 +256,7 @@ public class ParamAssemblerService {
         JsonNode astNode = findParamAstNode(data);
         if (astNode != null && !astNode.isNull()) {
             Map<String, Object> ast = castMap(OBJECT_MAPPER.convertValue(astNode, new TypeReference<Map<String, Object>>() {}));
-            List<ParamAssemblerIssueResponse> astIssues = validateAst(ast, argsMeta);
+            List<ParamAssemblerIssueResponse> astIssues = validateAst(ast, argsMeta, serviceMethodCatalog);
             boolean hasErrors = astIssues.stream().anyMatch(item -> "error".equalsIgnoreCase(item.getSeverity()));
             if (strict && hasErrors) {
                 astIssues.stream()
@@ -1427,23 +1442,28 @@ public class ParamAssemblerService {
         private final Map<String, Integer> tempOrderByKey;
         private final String currentTempKey;
         private final Integer currentTempIndex;
+        private final ServiceMethodCatalog serviceMethodCatalog;
 
         private ValidationContext(Map<String, Integer> tempOrderByKey,
                                   String currentTempKey,
-                                  Integer currentTempIndex) {
+                                  Integer currentTempIndex,
+                                  ServiceMethodCatalog serviceMethodCatalog) {
             this.tempOrderByKey = tempOrderByKey;
             this.currentTempKey = currentTempKey;
             this.currentTempIndex = currentTempIndex;
+            this.serviceMethodCatalog = serviceMethodCatalog;
         }
 
-        private static ValidationContext root(Map<String, Integer> tempOrderByKey) {
-            return new ValidationContext(tempOrderByKey, null, null);
+        private static ValidationContext root(Map<String, Integer> tempOrderByKey,
+                                              ServiceMethodCatalog serviceMethodCatalog) {
+            return new ValidationContext(tempOrderByKey, null, null, serviceMethodCatalog);
         }
 
         private static ValidationContext forTemp(Map<String, Integer> tempOrderByKey,
                                                  String currentTempKey,
-                                                 Integer currentTempIndex) {
-            return new ValidationContext(tempOrderByKey, currentTempKey, currentTempIndex);
+                                                 Integer currentTempIndex,
+                                                 ServiceMethodCatalog serviceMethodCatalog) {
+            return new ValidationContext(tempOrderByKey, currentTempKey, currentTempIndex, serviceMethodCatalog);
         }
 
         private boolean hasTemp(String key) {
@@ -1461,6 +1481,10 @@ public class ParamAssemblerService {
 
         private String currentTempKey() {
             return currentTempKey;
+        }
+
+        private ServiceMethodCatalog serviceMethodCatalog() {
+            return serviceMethodCatalog;
         }
     }
 
@@ -1998,7 +2022,15 @@ public class ParamAssemblerService {
         return "request";
     }
 
-    private List<ParamAssemblerIssueResponse> validateAst(Map<String, Object> ast, List<ParamAssemblerArgMeta> argsMeta) {
+    private List<ParamAssemblerIssueResponse> validateAst(String projectKey,
+                                                          Map<String, Object> ast,
+                                                          List<ParamAssemblerArgMeta> argsMeta) {
+        return validateAst(ast, argsMeta, loadServiceMethodCatalog(projectKey));
+    }
+
+    private List<ParamAssemblerIssueResponse> validateAst(Map<String, Object> ast,
+                                                          List<ParamAssemblerArgMeta> argsMeta,
+                                                          ServiceMethodCatalog serviceMethodCatalog) {
         List<ParamAssemblerIssueResponse> issues = new ArrayList<>();
         if (ast == null || ast.isEmpty()) {
             issues.add(error("ast.required", "ast", "Param assembler AST is required."));
@@ -2012,7 +2044,7 @@ public class ParamAssemblerService {
 
         List<Map<String, Object>> temps = asMapList(ast.get("temps"));
         Map<String, Integer> tempOrderByKey = buildTempOrderByKey(temps, issues);
-        ValidationContext rootValidationContext = ValidationContext.root(tempOrderByKey);
+        ValidationContext rootValidationContext = ValidationContext.root(tempOrderByKey, serviceMethodCatalog);
 
         List<Map<String, Object>> argNodes = asMapList(ast.get("args"));
         Map<String, Map<String, Object>> argNodeByName = new LinkedHashMap<>();
@@ -2059,7 +2091,7 @@ public class ParamAssemblerService {
                     castMap(temp.get("value")),
                     "temps[" + index + "].value",
                     null,
-                    ValidationContext.forTemp(tempOrderByKey, key, index)));
+                    ValidationContext.forTemp(tempOrderByKey, key, index, serviceMethodCatalog)));
         }
         issues.addAll(validateTempCycles(temps, tempOrderByKey));
 
@@ -2161,6 +2193,9 @@ public class ParamAssemblerService {
             if (!StringUtils.hasText(text(ref.get("methodName")))) {
                 issues.add(error("call.service.method.required", path + ".ref.methodName", "Service call requires methodName."));
             }
+            if (issues.stream().noneMatch(item -> "error".equalsIgnoreCase(item.getSeverity()))) {
+                issues.addAll(validateServiceCallRef(ref, asMapList(call.get("args")), path, validationContext.serviceMethodCatalog()));
+            }
         } else if (!StringUtils.hasText(text(ref.get("url")))) {
             issues.add(error("call.http.url.required", path + ".ref.url", "HTTP call requires url."));
         }
@@ -2174,6 +2209,149 @@ public class ParamAssemblerService {
                 continue;
             }
             issues.addAll(validateValue(value, path + ".args[" + index + "].value", null, validationContext));
+        }
+        return issues;
+    }
+
+    private List<ParamAssemblerIssueResponse> validateServiceCallRef(Map<String, Object> ref,
+                                                                     List<Map<String, Object>> args,
+                                                                     String path,
+                                                                     ServiceMethodCatalog serviceMethodCatalog) {
+        if (serviceMethodCatalog == null || serviceMethodCatalog.isEmpty()) {
+            return List.of();
+        }
+
+        List<ParamAssemblerIssueResponse> issues = new ArrayList<>();
+        String serviceBean = text(ref.get("serviceBean"));
+        String methodName = text(ref.get("methodName"));
+        String methodSignature = text(ref.get("methodSignature"));
+        String methodSignatureHash = text(ref.get("methodSignatureHash"));
+
+        if (!serviceMethodCatalog.hasBean(serviceBean)) {
+            issues.add(error(
+                    "call.service.bean.unknown",
+                    path + ".ref.serviceBean",
+                    "Configured serviceBean is not present in current metadata: " + serviceBean));
+            return issues;
+        }
+
+        List<ServiceMethodMeta> candidates = serviceMethodCatalog.find(serviceBean, methodName);
+        if (candidates.isEmpty()) {
+            issues.add(error(
+                    "call.service.method.unknown",
+                    path + ".ref.methodName",
+                    "Configured service method is not present in current metadata: " + serviceBean + "." + methodName));
+            return issues;
+        }
+
+        ServiceMethodMeta matched = null;
+        if (StringUtils.hasText(methodSignatureHash)) {
+            matched = candidates.stream()
+                    .filter(item -> methodSignatureHash.equals(item.methodSignatureHash()))
+                    .findFirst()
+                    .orElse(null);
+            if (matched == null) {
+                issues.add(error(
+                        "call.service.signature.mismatch",
+                        path + ".ref.methodSignatureHash",
+                        "Configured service method signature is stale. Please reselect " + serviceBean + "." + methodName + "."));
+                return issues;
+            }
+        } else if (StringUtils.hasText(methodSignature)) {
+            matched = candidates.stream()
+                    .filter(item -> methodSignature.equals(item.methodSignature()))
+                    .findFirst()
+                    .orElse(null);
+            if (matched == null) {
+                issues.add(error(
+                        "call.service.signature.mismatch",
+                        path + ".ref.methodSignature",
+                        "Configured service method signature is stale. Please reselect " + serviceBean + "." + methodName + "."));
+                return issues;
+            }
+        } else if (candidates.size() == 1) {
+            matched = candidates.get(0);
+        } else {
+            List<ServiceMethodMeta> countMatches = candidates.stream()
+                    .filter(item -> item.paramNames().size() == args.size())
+                    .collect(Collectors.toList());
+            if (countMatches.size() == 1) {
+                matched = countMatches.get(0);
+            } else {
+                issues.add(error(
+                        "call.service.signature.ambiguous",
+                        path + ".ref.methodName",
+                        "Configured service method is overloaded in metadata. Please reselect " + serviceBean + "." + methodName + "."));
+                return issues;
+            }
+        }
+
+        issues.addAll(validateServiceCallArgsAgainstMetadata(matched, args, path));
+
+        String configuredReturnType = text(ref.get("returnType"));
+        if (StringUtils.hasText(configuredReturnType)
+                && StringUtils.hasText(matched.returnType())
+                && !configuredReturnType.equals(matched.returnType())) {
+            issues.add(warning(
+                    "call.service.returnType.changed",
+                    path + ".ref.returnType",
+                    "Configured service returnType differs from current metadata: " + configuredReturnType + " -> " + matched.returnType()));
+        }
+        return issues;
+    }
+
+    private List<ParamAssemblerIssueResponse> validateServiceCallArgsAgainstMetadata(ServiceMethodMeta methodMeta,
+                                                                                     List<Map<String, Object>> args,
+                                                                                     String path) {
+        if (methodMeta == null || methodMeta.paramNames().isEmpty()) {
+            return List.of();
+        }
+
+        List<ParamAssemblerIssueResponse> issues = new ArrayList<>();
+        Set<String> expectedNames = new LinkedHashSet<>(methodMeta.paramNames());
+        Set<String> configuredNames = new LinkedHashSet<>();
+        Set<String> duplicateNames = new LinkedHashSet<>();
+
+        if (args.size() != methodMeta.paramNames().size()) {
+            issues.add(error(
+                    "call.arg.count.mismatch",
+                    path + ".args",
+                    "Configured call args count does not match current metadata. Expected "
+                            + methodMeta.paramNames().size() + " but got " + args.size() + "."));
+        }
+
+        for (int index = 0; index < args.size(); index += 1) {
+            String argName = text(args.get(index).get("name"));
+            if (!StringUtils.hasText(argName)) {
+                issues.add(error("call.arg.name.required", path + ".args[" + index + "].name", "Call argument name is required."));
+                continue;
+            }
+            if (!configuredNames.add(argName)) {
+                duplicateNames.add(argName);
+            }
+            if (!expectedNames.contains(argName)) {
+                issues.add(error(
+                        "call.arg.name.unknown",
+                        path + ".args[" + index + "].name",
+                        "Call argument is not present in current metadata: " + argName));
+            }
+        }
+
+        for (String duplicateName : duplicateNames) {
+            int duplicateIndex = indexOfArgByName(args, duplicateName);
+            issues.add(error(
+                    "call.arg.name.duplicate",
+                    path + ".args[" + Math.max(duplicateIndex, 0) + "].name",
+                    "Duplicated call argument name: " + duplicateName));
+        }
+
+        for (String expectedName : expectedNames) {
+            if (!configuredNames.contains(expectedName)) {
+                issues.add(error(
+                        "call.arg.missing",
+                        path + ".args",
+                        "Missing call argument required by current metadata: " + expectedName));
+            }
         }
         return issues;
     }
@@ -2247,10 +2425,7 @@ public class ParamAssemblerService {
 
         List<Map<String, Object>> ops = asMapList(list.get("ops"));
         for (int index = 0; index < ops.size(); index += 1) {
-            String op = text(ops.get(index).get("op"));
-            if (!LIST_OPS.contains(op)) {
-                issues.add(error("list.op.unsupported", path + ".ops[" + index + "].op", "Phase 1 only supports filter/map/compose."));
-            }
+            issues.addAll(validateListOp(ops.get(index), path + ".ops[" + index + "]", validationContext));
         }
 
         Map<String, Object> item = castMap(list.get("item"));
@@ -2276,6 +2451,43 @@ public class ParamAssemblerService {
         return issues;
     }
 
+    private List<ParamAssemblerIssueResponse> validateListOp(Map<String, Object> op,
+                                                             String path,
+                                                             ValidationContext validationContext) {
+        List<ParamAssemblerIssueResponse> issues = new ArrayList<>();
+        String opName = text(op.get("op"));
+        if (!LIST_OPS.contains(opName)) {
+            issues.add(error("list.op.unsupported", path + ".op", "Phase 1 only supports filter/map/compose."));
+            return issues;
+        }
+
+        if ("compose".equals(opName)) {
+            if (asMapList(op.get("fields")).isEmpty() && castMap(op.get("value")).isEmpty()) {
+                issues.add(error("list.op.compose.required", path, "Compose op requires fields or object mapping."));
+            }
+            return issues;
+        }
+
+        Map<String, Object> mappedValue = castMap(op.get("value"));
+        if ("map".equals(opName) && !mappedValue.isEmpty()) {
+            issues.addAll(validateValue(mappedValue, path + ".value", null, validationContext));
+            return issues;
+        }
+
+        String expression = extractListOpExpression(op);
+        if (!StringUtils.hasText(expression)) {
+            issues.add(error("list.op.expression.required", path + ".expression", "List op requires expression."));
+            return issues;
+        }
+
+        try {
+            SPEL_PARSER.parseExpression(prepareListOpExpression(expression));
+        } catch (Exception ex) {
+            issues.add(error("list.op.expression.invalid", path + ".expression", "List op expression is invalid."));
+        }
+        return issues;
+    }
+
     private Map<String, Integer> buildTempOrderByKey(List<Map<String, Object>> temps,
                                                      List<ParamAssemblerIssueResponse> issues) {
         Map<String, Integer> tempOrderByKey = new LinkedHashMap<>();
@@ -2293,7 +2505,7 @@ public class ParamAssemblerService {
     }
 
     private List<ParamAssemblerIssueResponse> validateTempCycles(List<Map<String, Object>> temps,
-                                                                 Map<String, Integer> tempOrderByKey) {
+                                                                  Map<String, Integer> tempOrderByKey) {
         if (tempOrderByKey.isEmpty()) {
             return List.of();
         }
@@ -2874,6 +3086,450 @@ public class ParamAssemblerService {
         return raw;
     }
 
+    private String extractListOpExpression(Map<String, Object> op) {
+        Object rawValue = op.get("value");
+        if (rawValue instanceof Map<?, ?> rawMap && !rawMap.isEmpty()) {
+            return "";
+        }
+        return firstNonBlank(
+                text(op.get("expr")),
+                text(op.get("expression")),
+                text(op.get("exprText")),
+                text(op.get("mappingText")),
+                text(rawValue));
+    }
+
+    private String prepareListOpExpression(String expression) {
+        if (!StringUtils.hasText(expression)) {
+            return "";
+        }
+        String prepared = expression.trim();
+        prepared = prepared.replace("$.", "");
+        prepared = prepared.replaceAll("(?<![#\\\\w])item\\.", "#item.");
+        prepared = prepared.replaceAll("(?<![#\\\\w])item\\[", "#item[");
+        prepared = prepared.replaceAll("(?<![#\\\\w])item(?![\\\\w])", "#item");
+        prepared = prepared.replaceAll("(?<![#\\\\w])temp\\.", "#temp.");
+        prepared = prepared.replaceAll("(?<![#\\\\w])request\\.", "#request.");
+        prepared = prepared.replaceAll("(?<![#\\\\w])context\\.", "#context.");
+        prepared = prepared.replaceAll("(?<![#\\\\w])ctx\\.", "#ctx.");
+        prepared = prepared.replaceAll("(?<![#\\\\w])nodeOutput\\.", "#nodeOutput.");
+        return prepared;
+    }
+
+    private ServiceMethodCatalog loadServiceMethodCatalog(String projectKey) {
+        if (!StringUtils.hasText(projectKey) || projectEndpointService == null) {
+            return ServiceMethodCatalog.empty();
+        }
+        List<ProjectEndpoint> endpoints = projectEndpointService.list(projectKey);
+        if (endpoints == null || endpoints.isEmpty()) {
+            return ServiceMethodCatalog.empty();
+        }
+
+        Map<String, List<ServiceMethodMeta>> methodsByBeanAndName = new LinkedHashMap<>();
+        Set<String> beans = new LinkedHashSet<>();
+        for (ProjectEndpoint endpoint : endpoints) {
+            if (endpoint == null || !StringUtils.hasText(endpoint.getConfigJson())) {
+                continue;
+            }
+            String endpointType = text(endpoint.getEndpointType()).toUpperCase(Locale.ROOT);
+            if (!"SERVICE".equals(endpointType) && !"FLOW_OPERATION".equals(endpointType)) {
+                continue;
+            }
+            try {
+                JsonNode config = OBJECT_MAPPER.readTree(endpoint.getConfigJson());
+                if ("SERVICE".equals(endpointType)) {
+                    String serviceBean = text(config.path("bean").asText(null));
+                    appendServiceMethods(methodsByBeanAndName, beans, serviceBean, config.path("operations"));
+                } else {
+                    String serviceBean = text(config.path("serviceBean").asText(null));
+                    appendServiceMethod(methodsByBeanAndName, beans, serviceBean, config);
+                }
+            } catch (Exception ex) {
+                log.debug("Skip invalid service metadata while building param assembler catalog. endpointId={}, error={}",
+                        endpoint.getId(), ex.getMessage());
+            }
+        }
+        return new ServiceMethodCatalog(methodsByBeanAndName, beans);
+    }
+
+    private void appendServiceMethods(Map<String, List<ServiceMethodMeta>> methodsByBeanAndName,
+                                      Set<String> beans,
+                                      String serviceBean,
+                                      JsonNode operationsNode) {
+        if (operationsNode == null || !operationsNode.isArray()) {
+            return;
+        }
+        for (JsonNode operationNode : operationsNode) {
+            appendServiceMethod(methodsByBeanAndName, beans, serviceBean, operationNode);
+        }
+    }
+
+    private void appendServiceMethod(Map<String, List<ServiceMethodMeta>> methodsByBeanAndName,
+                                     Set<String> beans,
+                                     String serviceBean,
+                                     JsonNode operationNode) {
+        String normalizedBean = text(serviceBean);
+        String methodName = firstNonBlank(text(operationNode.path("method").asText(null)), text(operationNode.path("name").asText(null)));
+        String methodSignature = text(operationNode.path("methodSignature").asText(null));
+        if (!StringUtils.hasText(methodSignature) && StringUtils.hasText(methodName)) {
+            methodSignature = buildMethodSignature(operationNode);
+        }
+        if (!StringUtils.hasText(normalizedBean) || !StringUtils.hasText(methodName)) {
+            return;
+        }
+
+        List<String> paramNames = new ArrayList<>();
+        JsonNode paramsNode = operationNode.path("params");
+        if (paramsNode.isArray()) {
+            for (JsonNode paramNode : paramsNode) {
+                String paramName = text(paramNode.path("name").asText(null));
+                if (StringUtils.hasText(paramName)) {
+                    paramNames.add(paramName);
+                }
+            }
+        }
+
+        beans.add(normalizedBean);
+        String key = normalizedBean + "|" + methodName;
+        methodsByBeanAndName.computeIfAbsent(key, unused -> new ArrayList<>())
+                .add(new ServiceMethodMeta(
+                        normalizedBean,
+                        methodName,
+                        methodSignature,
+                        text(operationNode.path("methodSignatureHash").asText(null)),
+                        text(operationNode.path("returnType").asText(null)),
+                        List.copyOf(paramNames)));
+    }
+
+    private String buildMethodSignature(JsonNode operationNode) {
+        if (operationNode == null || operationNode.isNull()) {
+            return "";
+        }
+        String methodName = firstNonBlank(text(operationNode.path("method").asText(null)), text(operationNode.path("name").asText(null)));
+        if (!StringUtils.hasText(methodName)) {
+            return "";
+        }
+        List<String> paramTypes = new ArrayList<>();
+        JsonNode paramsNode = operationNode.path("params");
+        if (paramsNode.isArray()) {
+            for (JsonNode paramNode : paramsNode) {
+                paramTypes.add(firstNonBlank(text(paramNode.path("type").asText(null)), "java.lang.Object"));
+            }
+        }
+        return methodName + "(" + String.join(",", paramTypes) + ")";
+    }
+
+    private ParamAssemblerAnalysisResponse buildAnalysisResponse(Map<String, Object> ast,
+                                                                List<ParamAssemblerArgMeta> argsMeta,
+                                                                List<ParamAssemblerIssueResponse> issues) {
+        ParamAssemblerAnalysisResponse response = new ParamAssemblerAnalysisResponse();
+        response.setIssues(issues == null ? List.of() : issues);
+
+        List<Map<String, Object>> tempNodes = ast == null ? List.of() : asMapList(ast.get("temps"));
+        List<Map<String, Object>> argNodes = ast == null ? List.of() : asMapList(ast.get("args"));
+
+        List<AstAnalysisAccumulator> tempAccumulators = new ArrayList<>();
+        for (int index = 0; index < tempNodes.size(); index += 1) {
+            Map<String, Object> temp = tempNodes.get(index);
+            AstAnalysisAccumulator accumulator = new AstAnalysisAccumulator();
+            collectAnalysisFromValue(castMap(temp.get("value")), "temp:" + displayTempName(temp, index), accumulator);
+            tempAccumulators.add(accumulator);
+
+            ParamAssemblerAnalysisResponse.TempItem item = new ParamAssemblerAnalysisResponse.TempItem();
+            item.setIndex(index + 1);
+            item.setKey(text(temp.get("key")));
+            item.setJavaType(text(temp.get("javaType")));
+            item.setSourceRefs(new ArrayList<>(accumulator.sourceRefs()));
+            item.setTempRefs(new ArrayList<>(accumulator.tempRefs()));
+            item.setDependsOn(new ArrayList<>(accumulator.tempRootRefs()));
+            item.setServiceCalls(new ArrayList<>(accumulator.serviceCalls()));
+            attachIssues(item, issuesForPrefix(issues, "temps[" + index + "]"));
+            response.getTempItems().add(item);
+        }
+
+        for (int index = 0; index < argNodes.size(); index += 1) {
+            Map<String, Object> arg = argNodes.get(index);
+            AstAnalysisAccumulator accumulator = new AstAnalysisAccumulator();
+            String argName = firstNonBlank(text(arg.get("name")), index < argsMeta.size() ? text(argsMeta.get(index).getName()) : "");
+            collectAnalysisFromValue(castMap(arg.get("value")), "arg:" + firstNonBlank(argName, "arg" + (index + 1)), accumulator);
+
+            ParamAssemblerArgMeta meta = findArgMetaForAnalysis(argName, argsMeta, index);
+            ParamAssemblerAnalysisResponse.ArgItem item = new ParamAssemblerAnalysisResponse.ArgItem();
+            item.setName(firstNonBlank(argName, "arg" + (index + 1)));
+            item.setJavaType(firstNonBlank(text(arg.get("javaType")), meta == null ? "" : meta.getJavaType()));
+            item.setSummary(buildArgAnalysisSummary(meta, accumulator));
+            item.setSourceRefs(new ArrayList<>(accumulator.sourceRefs()));
+            item.setTempRefs(new ArrayList<>(accumulator.tempRefs()));
+            item.setServiceCalls(new ArrayList<>(accumulator.serviceCalls()));
+            attachIssues(item, issuesForPrefix(issues, "args[" + index + "]"));
+            response.getArgItems().add(item);
+        }
+
+        fillTempConsumers(response.getTempItems(), tempAccumulators, response.getArgItems());
+        fillSummary(response);
+        fillRiskItems(response);
+        return response;
+    }
+
+    private void fillTempConsumers(List<ParamAssemblerAnalysisResponse.TempItem> tempItems,
+                                   List<AstAnalysisAccumulator> tempAccumulators,
+                                   List<ParamAssemblerAnalysisResponse.ArgItem> argItems) {
+        for (int index = 0; index < tempItems.size(); index += 1) {
+            ParamAssemblerAnalysisResponse.TempItem tempItem = tempItems.get(index);
+            String key = text(tempItem.getKey());
+            if (!StringUtils.hasText(key)) {
+                continue;
+            }
+            for (int nextIndex = index + 1; nextIndex < tempAccumulators.size(); nextIndex += 1) {
+                if (tempAccumulators.get(nextIndex).tempRootRefs().contains(key)) {
+                    tempItem.getUsedBy().add("temp:" + displayTempName(tempItems.get(nextIndex).getKey(), nextIndex));
+                }
+            }
+            for (ParamAssemblerAnalysisResponse.ArgItem argItem : argItems) {
+                if (argItem.getTempRefs().stream().map(this::extractTempRoot).anyMatch(key::equals)) {
+                    tempItem.getUsedBy().add("arg:" + argItem.getName());
+                }
+            }
+        }
+    }
+
+    private void fillSummary(ParamAssemblerAnalysisResponse response) {
+        ParamAssemblerAnalysisResponse.Summary summary = response.getSummary();
+        summary.setArgCount(response.getArgItems().size());
+        summary.setTempCount(response.getTempItems().size());
+        summary.setServiceCallCount(
+                response.getTempItems().stream().mapToInt(item -> item.getServiceCalls().size()).sum()
+                        + response.getArgItems().stream().mapToInt(item -> item.getServiceCalls().size()).sum());
+        summary.setTempReferenceCount(
+                response.getTempItems().stream().mapToInt(item -> item.getTempRefs().size()).sum()
+                        + response.getArgItems().stream().mapToInt(item -> item.getTempRefs().size()).sum());
+        summary.setObjectNodeCount(
+                response.getTempItems().stream().mapToInt(item -> Math.max(item.getSourceRefs().size() - item.getServiceCalls().size(), 0)).sum()
+                        + response.getArgItems().stream().mapToInt(item -> Math.max(item.getSourceRefs().size() - item.getServiceCalls().size(), 0)).sum());
+        summary.setListNodeCount(
+                (int) response.getArgItems().stream().filter(item -> item.getSummary().contains("list")).count()
+                        + (int) response.getTempItems().stream().filter(item -> item.getSourceRefs().stream().anyMatch(ref -> ref.contains("[]"))).count());
+        summary.setErrorCount((int) response.getIssues().stream().filter(item -> "error".equalsIgnoreCase(item.getSeverity())).count());
+        summary.setWarningCount((int) response.getIssues().stream().filter(item -> "warning".equalsIgnoreCase(item.getSeverity())).count());
+
+        int score = summary.getTempCount() * 3
+                + summary.getServiceCallCount() * 4
+                + summary.getTempReferenceCount() * 2
+                + summary.getListNodeCount() * 2
+                + summary.getErrorCount() * 5
+                + summary.getWarningCount() * 2;
+        summary.setComplexityScore(score);
+        if (score >= 20) {
+            summary.setComplexityLevel("high");
+        } else if (score >= 8) {
+            summary.setComplexityLevel("medium");
+        } else {
+            summary.setComplexityLevel("low");
+        }
+    }
+
+    private void fillRiskItems(ParamAssemblerAnalysisResponse response) {
+        ParamAssemblerAnalysisResponse.Summary summary = response.getSummary();
+        if (summary.getTempCount() >= 3) {
+            response.getRiskItems().add("当前装配包含多个补数步骤，建议前端以依赖链方式展示顺序，而不是只按字段平铺。");
+        }
+        if (summary.getServiceCallCount() >= 2) {
+            response.getRiskItems().add("当前装配包含多次服务调用，最好提供样例输入与结果预览，避免用户反复切换确认。");
+        }
+        if (summary.getTempReferenceCount() >= 3) {
+            response.getRiskItems().add("当前装配对临时变量依赖较多，建议关注 temp 顺序、命名清晰度和结果路径稳定性。");
+        }
+        if (response.getArgItems().stream().anyMatch(item -> item.getTempRefs().size() >= 2)) {
+            response.getRiskItems().add("至少有一个目标参数依赖多个补数结果，用户在维护时容易丢失全局视角。");
+        }
+        if (summary.getErrorCount() > 0) {
+            response.getRiskItems().add("当前 AST 仍存在错误，正式发布前必须先完成修复和重新校验。");
+        }
+    }
+
+    private void collectAnalysisFromValue(Map<String, Object> value,
+                                          String label,
+                                          AstAnalysisAccumulator accumulator) {
+        if (value == null || value.isEmpty()) {
+            return;
+        }
+        String kind = text(value.get("kind")).toLowerCase(Locale.ROOT);
+        if ("source".equals(kind)) {
+            String sourceType = text(value.get("sourceType"));
+            if ("temp".equalsIgnoreCase(sourceType)) {
+                String tempPath = normalizeTempPath(text(value.get("path")));
+                if (StringUtils.hasText(tempPath)) {
+                    accumulator.tempRefs().add(tempPath);
+                    String root = extractTempRoot(tempPath);
+                    if (StringUtils.hasText(root)) {
+                        accumulator.tempRootRefs().add(root);
+                    }
+                }
+            } else {
+                String sourceRef = describeSourceRef(value);
+                if (StringUtils.hasText(sourceRef)) {
+                    accumulator.sourceRefs().add(sourceRef);
+                }
+            }
+            return;
+        }
+        if ("object".equals(kind)) {
+            List<Map<String, Object>> fields = asMapList(value.get("fields"));
+            for (Map<String, Object> field : fields) {
+                String fieldLabel = firstNonBlank(text(field.get("path")), label);
+                collectAnalysisFromValue(castMap(field.get("value")), label + "." + fieldLabel, accumulator);
+            }
+            return;
+        }
+        if ("list".equals(kind)) {
+            collectAnalysisFromValue(castMap(value.get("source")), label + ".listSource", accumulator);
+            collectAnalysisFromValue(castMap(value.get("item")), label + ".item", accumulator);
+            return;
+        }
+        if ("call".equals(kind)) {
+            ParamAssemblerAnalysisResponse.ServiceCallItem serviceCallItem = new ParamAssemblerAnalysisResponse.ServiceCallItem();
+            serviceCallItem.setLabel(label);
+            serviceCallItem.setFn(describeCallRef(value));
+            serviceCallItem.setArgCount(asMapList(value.get("args")).size());
+            serviceCallItem.setResultPath(text(value.get("resultPath")));
+            accumulator.serviceCalls().add(serviceCallItem);
+            for (Map<String, Object> arg : asMapList(value.get("args"))) {
+                String argLabel = firstNonBlank(text(arg.get("name")), "arg");
+                collectAnalysisFromValue(castMap(arg.get("value")), label + "." + argLabel, accumulator);
+            }
+        }
+    }
+
+    private void attachIssues(ParamAssemblerAnalysisResponse.TempItem item, List<ParamAssemblerIssueResponse> issues) {
+        item.setIssueCount(issues.size());
+        item.setIssueSamples(issues.stream()
+                .limit(3)
+                .map(this::issueSample)
+                .collect(Collectors.toList()));
+    }
+
+    private void attachIssues(ParamAssemblerAnalysisResponse.ArgItem item, List<ParamAssemblerIssueResponse> issues) {
+        item.setIssueCount(issues.size());
+        item.setIssueSamples(issues.stream()
+                .limit(3)
+                .map(this::issueSample)
+                .collect(Collectors.toList()));
+    }
+
+    private List<ParamAssemblerIssueResponse> issuesForPrefix(List<ParamAssemblerIssueResponse> issues, String prefix) {
+        if (issues == null || issues.isEmpty()) {
+            return List.of();
+        }
+        return issues.stream()
+                .filter(item -> text(item.getPath()).startsWith(prefix))
+                .collect(Collectors.toList());
+    }
+
+    private String issueSample(ParamAssemblerIssueResponse issue) {
+        return firstNonBlank(text(issue.getCode()), "issue") + ": " + text(issue.getMessage());
+    }
+
+    private ParamAssemblerArgMeta findArgMetaForAnalysis(String argName,
+                                                         List<ParamAssemblerArgMeta> argsMeta,
+                                                         int index) {
+        if (index >= 0 && index < argsMeta.size()) {
+            ParamAssemblerArgMeta meta = argsMeta.get(index);
+            if (Objects.equals(text(meta.getName()), text(argName))) {
+                return meta;
+            }
+        }
+        return argsMeta.stream()
+                .filter(item -> Objects.equals(text(item.getName()), text(argName)))
+                .findFirst()
+                .orElse(index >= 0 && index < argsMeta.size() ? argsMeta.get(index) : null);
+    }
+
+    private String buildArgAnalysisSummary(ParamAssemblerArgMeta meta, AstAnalysisAccumulator accumulator) {
+        String javaType = meta == null ? "" : text(meta.getJavaType());
+        String base = StringUtils.hasText(javaType) ? javaType : "unknown";
+        if (javaType.contains("List<") || javaType.endsWith("[]") || javaType.startsWith("java.util.List")) {
+            return "list / " + base;
+        }
+        if (accumulator.serviceCalls().isEmpty() && accumulator.tempRefs().isEmpty() && accumulator.sourceRefs().size() <= 1) {
+            return "simple / " + base;
+        }
+        return "composed / " + base;
+    }
+
+    private String describeCallRef(Map<String, Object> call) {
+        String fn = text(call.get("fn"));
+        if (StringUtils.hasText(fn)) {
+            return fn;
+        }
+        Map<String, Object> ref = castMap(call.get("ref"));
+        String bean = text(ref.get("serviceBean"));
+        String methodName = text(ref.get("methodName"));
+        if (StringUtils.hasText(bean) || StringUtils.hasText(methodName)) {
+            return firstNonBlank(bean, "service") + "." + firstNonBlank(methodName, "method");
+        }
+        return "service.call";
+    }
+
+    private String describeSourceRef(Map<String, Object> source) {
+        String sourceType = text(source.get("sourceType")).toLowerCase(Locale.ROOT);
+        if ("const".equals(sourceType)) {
+            return "const:" + truncateText(text(source.get("constValue")), 48);
+        }
+        String path = text(source.get("path"));
+        if ("context".equals(sourceType) && !path.startsWith("context.")) {
+            return "context." + path;
+        }
+        if ("request".equals(sourceType) && !path.startsWith("request.")) {
+            return "request." + path;
+        }
+        if ("item".equals(sourceType) && !path.startsWith("item.")) {
+            return "item." + path;
+        }
+        return firstNonBlank(path, sourceType);
+    }
+
+    private String normalizeTempPath(String rawPath) {
+        String path = text(rawPath);
+        if (!StringUtils.hasText(path)) {
+            return "";
+        }
+        return path.startsWith("temp.") ? path : "temp." + path;
+    }
+
+    private String extractTempRoot(String tempPath) {
+        String normalized = text(tempPath).replaceFirst("^temp\\.", "");
+        if (!StringUtils.hasText(normalized)) {
+            return "";
+        }
+        int dotIndex = normalized.indexOf('.');
+        return dotIndex >= 0 ? normalized.substring(0, dotIndex) : normalized;
+    }
+
+    private String displayTempName(Map<String, Object> temp, int index) {
+        return displayTempName(text(temp.get("key")), index);
+    }
+
+    private String displayTempName(String key, int index) {
+        return StringUtils.hasText(key) ? key : "temp" + (index + 1);
+    }
+
+    private String truncateText(String value, int maxLength) {
+        String text = text(value);
+        if (text.length() <= maxLength) {
+            return text;
+        }
+        return text.substring(0, Math.max(maxLength - 3, 0)) + "...";
+    }
+
+    private int indexOfArgByName(List<Map<String, Object>> args, String argName) {
+        for (int index = 0; index < args.size(); index += 1) {
+            if (argName.equals(text(args.get(index).get("name")))) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
     private String text(Object value) {
         return value == null ? "" : String.valueOf(value).trim();
     }
@@ -2896,5 +3552,44 @@ public class ParamAssemblerService {
     }
 
     private record SuggestStats(int updatedCount, List<String> touchedArgs) {
+    }
+
+    private record ServiceMethodMeta(String serviceBean,
+                                     String methodName,
+                                     String methodSignature,
+                                     String methodSignatureHash,
+                                     String returnType,
+                                     List<String> paramNames) {
+    }
+
+    private record ServiceMethodCatalog(Map<String, List<ServiceMethodMeta>> methodsByBeanAndName,
+                                        Set<String> beans) {
+        private static ServiceMethodCatalog empty() {
+            return new ServiceMethodCatalog(Map.of(), Set.of());
+        }
+
+        private boolean isEmpty() {
+            return methodsByBeanAndName.isEmpty();
+        }
+
+        private boolean hasBean(String bean) {
+            return StringUtils.hasText(bean) && beans.contains(bean.trim());
+        }
+
+        private List<ServiceMethodMeta> find(String bean, String methodName) {
+            if (!StringUtils.hasText(bean) || !StringUtils.hasText(methodName)) {
+                return List.of();
+            }
+            return methodsByBeanAndName.getOrDefault(bean.trim() + "|" + methodName.trim(), List.of());
+        }
+    }
+
+    private record AstAnalysisAccumulator(LinkedHashSet<String> sourceRefs,
+                                          LinkedHashSet<String> tempRefs,
+                                          LinkedHashSet<String> tempRootRefs,
+                                          List<ParamAssemblerAnalysisResponse.ServiceCallItem> serviceCalls) {
+        private AstAnalysisAccumulator() {
+            this(new LinkedHashSet<>(), new LinkedHashSet<>(), new LinkedHashSet<>(), new ArrayList<>());
+        }
     }
 }

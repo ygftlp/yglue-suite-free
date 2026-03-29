@@ -3,6 +3,7 @@ package org.yglue.flow.runtime.core.engine.evaluator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.expression.MapAccessor;
 import org.springframework.expression.ExpressionParser;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.expression.spel.support.StandardEvaluationContext;
@@ -141,15 +142,33 @@ public class ListPipelineEvaluator {
             return null;
         // 把前端常见的 JSONPath 根节点引用转为 SpEL 当前对象的属性访问
         // 如 $.age -> age (因为将 item 当做 Root Object 计算)
-        return expr.replace("$.", "");
+        String normalized = expr.trim();
+        normalized = normalized.replace("$.", "");
+        normalized = normalized.replaceAll("(?<![#\\\\w])item\\.", "#item.");
+        normalized = normalized.replaceAll("(?<![#\\\\w])item\\[", "#item[");
+        normalized = normalized.replaceAll("(?<![#\\\\w])item(?![\\\\w])", "#item");
+        normalized = normalized.replaceAll("(?<![#\\\\w])temp\\.", "#temp.");
+        normalized = normalized.replaceAll("(?<![#\\\\w])request\\.", "#request.");
+        normalized = normalized.replaceAll("(?<![#\\\\w])context\\.", "#context.");
+        normalized = normalized.replaceAll("(?<![#\\\\w])ctx\\.", "#ctx.");
+        normalized = normalized.replaceAll("(?<![#\\\\w])nodeOutput\\.", "#nodeOutput.");
+        return normalized;
     }
 
     private static Object evaluateItemExpr(String expr, Object item, FlowContext context,
             Map<String, Object> tempVars) {
         try {
             StandardEvaluationContext spelCtx = new StandardEvaluationContext(item);
-            spelCtx.setVariables(context.getVariables());
+            spelCtx.addPropertyAccessor(new MapAccessor());
+            Map<String, Object> variables = context == null ? Map.of() : context.getVariables();
+            spelCtx.setVariables(variables);
             spelCtx.setVariable("item", item);
+            spelCtx.setVariable("temp", tempVars);
+            spelCtx.setVariable("context", variables);
+            spelCtx.setVariable("ctx", variables);
+            Object request = variables.get("request");
+            spelCtx.setVariable("request", request != null ? request : variables);
+            spelCtx.setVariable("nodeOutput", variables.get("nodeOutput"));
             return spelParser.parseExpression(expr).getValue(spelCtx);
         } catch (Exception e) {
             log.warn("[ListPipelineEvaluator] Item SpEL evaluation failed: {}", expr, e);

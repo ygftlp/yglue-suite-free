@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
-import { Network, ArrowLeft } from "lucide-vue-next"
+import { ArrowLeft, Network } from "lucide-vue-next"
 import CanvasEditor from "../components/CanvasEditor.vue"
 import {
   api,
@@ -9,7 +9,6 @@ import {
   type EndpointSchemaField,
   type FlowModel,
   type FlowResolver,
-  type FlowServiceSignatureIssue,
   type ProjectEndpoint,
   type ProjectMetadata,
 } from "../api/client"
@@ -25,11 +24,6 @@ const endpointLoading = ref(false)
 const endpointError = ref<string | null>(null)
 const flowModels = ref<FlowModel[]>([])
 const flowResolvers = ref<FlowResolver[]>([])
-const signatureIssues = ref<FlowServiceSignatureIssue[]>([])
-const signatureIssuesLoading = ref(false)
-const signatureIssuesError = ref<string | null>(null)
-const signatureIssueScope = ref<"current" | "all">("current")
-const issueFocusRequest = ref<{ path: string; nonce: number } | null>(null)
 const inboundInterceptorCatalog = ref<
   Array<{
     code: string
@@ -41,27 +35,6 @@ const inboundInterceptorCatalog = ref<
     source: "project"
   }>
 >([])
-
-const hasAnySignatureIssue = computed(() => signatureIssues.value.length > 0)
-const currentFlowSignatureIssue = computed(() => {
-  const code = flowCode.value
-  if (!code) return null
-  return signatureIssues.value.find((item) => item.flowCode === code) || null
-})
-const otherFlowIssueCount = computed(() => {
-  const code = flowCode.value
-  if (!code) return signatureIssues.value.length
-  return signatureIssues.value.filter((item) => item.flowCode !== code).length
-})
-const sortedAllFlowIssues = computed(() =>
-  [...signatureIssues.value].sort((a, b) => (b.issueCount || 0) - (a.issueCount || 0))
-)
-const visibleIssueItems = computed(() => {
-  if (signatureIssueScope.value === "current") {
-    return currentFlowSignatureIssue.value ? [currentFlowSignatureIssue.value] : []
-  }
-  return sortedAllFlowIssues.value.slice(0, 6)
-})
 
 const entrypointHint = computed(() => {
   if (!endpoint.value) return null
@@ -88,21 +61,23 @@ function goBack() {
   router.push(`/projects/${encodeURIComponent(projectKey.value)}/rests`)
 }
 
-watch([projectKey, endpointId], loadEndpoint, { immediate: true })
-watch(projectKey, loadModels, { immediate: true })
-watch(projectKey, loadResolvers, { immediate: true })
-watch(projectKey, loadInboundInterceptorCatalog, { immediate: true })
-watch(projectKey, loadServiceSignatureIssues, { immediate: true })
+watch([projectKey, flowCode], () => {
+  loadEndpointByFlow()
+  loadModels()
+  loadResolvers()
+  loadInboundInterceptorCatalog()
+}, { immediate: true })
 
-async function loadEndpoint() {
-  if (!projectKey.value || !endpointId.value) return
+async function loadEndpointByFlow() {
+  if (!projectKey.value || !flowCode.value) return
   endpointLoading.value = true
   endpointError.value = null
   try {
-    endpoint.value = await api.getEndpoint(projectKey.value, endpointId.value)
+    const endpoints = await api.listEndpointRests(projectKey.value)
+    endpoint.value = endpoints.find((item) => item.flowCode === flowCode.value) || null
   } catch (err) {
     endpoint.value = null
-    endpointError.value = err instanceof Error ? err.message : "Failed to load endpoint."
+    endpointError.value = err instanceof Error ? err.message : "加载入口信息失败"
   } finally {
     endpointLoading.value = false
   }
@@ -143,24 +118,6 @@ async function loadInboundInterceptorCatalog() {
   } catch (err) {
     console.warn("Failed to load inbound interceptor catalog from metadata", err)
     inboundInterceptorCatalog.value = []
-  }
-}
-
-async function loadServiceSignatureIssues() {
-  if (!projectKey.value) {
-    signatureIssues.value = []
-    signatureIssuesError.value = null
-    return
-  }
-  signatureIssuesLoading.value = true
-  signatureIssuesError.value = null
-  try {
-    signatureIssues.value = await api.listFlowServiceSignatureIssues(projectKey.value)
-  } catch (err) {
-    signatureIssuesError.value = err instanceof Error ? err.message : "加载服务签名问题失败。"
-    signatureIssues.value = []
-  } finally {
-    signatureIssuesLoading.value = false
   }
 }
 
@@ -205,15 +162,7 @@ function extractInboundInterceptors(root: any) {
   return result
 }
 
-function normalizeInboundInterceptorItem(item: any): {
-  code: string
-  label: string
-  description: string
-  defaultOrder: number
-  defaultConfig: Record<string, any>
-  configSchema?: Record<string, any> | null
-  source: "project"
-} | null {
+function normalizeInboundInterceptorItem(item: any) {
   if (!item || typeof item !== "object") return null
   const code = readText(item.code ?? item.id ?? item.name)
   if (!code) return null
@@ -231,7 +180,7 @@ function normalizeInboundInterceptorItem(item: any): {
     defaultOrder,
     defaultConfig: asPlainObject(defaultConfigRaw),
     configSchema: asNullablePlainObject(configSchemaRaw),
-    source: "project",
+    source: "project" as const,
   }
 }
 
@@ -403,52 +352,6 @@ function safeParseConfig(configJson?: string | null): any {
     return null
   }
 }
-
-async function copyIssueSamplePath(item: FlowServiceSignatureIssue) {
-  const sample = Array.isArray(item.issueSamples) ? item.issueSamples[0] : ""
-  const text = String(sample || "").trim()
-  if (!text) {
-    window.alert("当前没有可复制的路径样例。")
-    return
-  }
-  try {
-    await navigator.clipboard.writeText(text)
-    window.alert("已复制路径样例。")
-  } catch {
-    window.alert(`复制失败，请手动复制：${text}`)
-  }
-}
-
-function canLocateIssuePath(item: FlowServiceSignatureIssue): boolean {
-  if (!item || !Array.isArray(item.issueSamples) || item.issueSamples.length === 0) return false
-  if (item.flowCode !== flowCode.value) return false
-  return item.issueSamples.some((sample) => parseNodeIndexFromIssuePath(sample) != null)
-}
-
-function locateIssueNode(item: FlowServiceSignatureIssue) {
-  if (item.flowCode !== flowCode.value) {
-    window.alert("仅支持定位当前流程的问题路径。")
-    return
-  }
-  const sample = (item.issueSamples || []).find((value) => parseNodeIndexFromIssuePath(value) != null)
-  if (!sample) {
-    window.alert("样例中没有可定位的节点路径（需满足 $.nodes[0] 格式）。")
-    return
-  }
-  issueFocusRequest.value = {
-    path: String(sample),
-    nonce: Date.now(),
-  }
-}
-
-function parseNodeIndexFromIssuePath(path: unknown): number | null {
-  const text = String(path ?? "").trim()
-  if (!text) return null
-  const match = text.match(/^\$\.nodes\[(\d+)\]/)
-  if (!match) return null
-  const index = Number.parseInt(match[1], 10)
-  return Number.isFinite(index) && index >= 0 ? index : null
-}
 </script>
 
 <template>
@@ -464,76 +367,14 @@ function parseNodeIndexFromIssuePath(path: unknown): number | null {
       </div>
       <div class="muted" style="display: flex; flex-direction: column; align-items: flex-end">
         <span>项目 {{ projectKey }}</span>
-        <span v-if="endpointLoading">正在加载接口...</span>
+        <span v-if="endpointLoading">正在加载入口...</span>
         <span v-else-if="endpointError" class="error">{{ endpointError }}</span>
         <span v-else-if="endpoint">{{ endpoint.method }} {{ endpoint.path }}</span>
+        <span v-else>Flow {{ flowCode }}</span>
       </div>
     </header>
 
     <main style="flex: 1; min-height: 0">
-      <section
-        v-if="signatureIssuesLoading || signatureIssuesError || hasAnySignatureIssue"
-        class="signature-banner"
-        :class="{ warn: signatureIssuesError || hasAnySignatureIssue }"
-      >
-        <div class="signature-main">
-          <div v-if="signatureIssuesLoading" class="muted">正在加载签名问题...</div>
-          <div v-else-if="signatureIssuesError" class="error">加载签名问题失败：{{ signatureIssuesError }}</div>
-          <template v-else>
-            <div class="signature-tabs">
-              <button
-                type="button"
-                class="tab-btn"
-                :class="{ active: signatureIssueScope === 'current' }"
-                @click="signatureIssueScope = 'current'"
-              >
-                当前流程
-              </button>
-              <button
-                type="button"
-                class="tab-btn"
-                :class="{ active: signatureIssueScope === 'all' }"
-                @click="signatureIssueScope = 'all'"
-              >
-                全部流程
-              </button>
-            </div>
-            <div v-if="currentFlowSignatureIssue" class="error">
-              当前流程存在 {{ currentFlowSignatureIssue.issueCount }} 个问题。
-            </div>
-            <div v-else class="muted">
-              当前流程无问题，其他流程有 {{ otherFlowIssueCount }} 个问题。
-            </div>
-            <div v-if="visibleIssueItems.length > 0" class="issue-list">
-              <div v-for="item in visibleIssueItems" :key="`${item.flowCode}_${item.versionNo ?? 0}`" class="issue-item">
-                <span class="issue-flow">{{ item.flowCode }} <span v-if="item.versionNo">v{{ item.versionNo }}</span></span>
-                <span class="issue-count">{{ item.issueCount }} 个问题</span>
-                <span class="issue-sample">{{ (item.issueSamples || []).slice(0, 2).join(" | ") }}</span>
-                <button
-                  v-if="canLocateIssuePath(item)"
-                  type="button"
-                  class="issue-locate-btn"
-                  @click="locateIssueNode(item)"
-                >
-                  定位节点
-                </button>
-                <button
-                  v-if="item.issueSamples?.length"
-                  type="button"
-                  class="issue-copy-btn"
-                  @click="copyIssueSamplePath(item)"
-                >
-                  复制路径
-                </button>
-              </div>
-            </div>
-          </template>
-        </div>
-        <button type="button" class="btn" style="padding: 4px 10px" @click="loadServiceSignatureIssues">
-          刷新
-        </button>
-      </section>
-
       <CanvasEditor
         :project-key="projectKey"
         :flow-code="flowCode"
@@ -542,8 +383,7 @@ function parseNodeIndexFromIssuePath(path: unknown): number | null {
         :flow-models="flowModels"
         :flow-resolvers="flowResolvers"
         :inbound-interceptor-catalog="inboundInterceptorCatalog"
-        :endpoint-id="endpointId"
-        :issue-focus-request="issueFocusRequest"
+        :endpoint-id="endpoint?.id"
       />
     </main>
   </div>
@@ -553,133 +393,4 @@ function parseNodeIndexFromIssuePath(path: unknown): number | null {
 .error {
   color: #dc2626;
 }
-
-.signature-banner {
-  margin: 8px 12px 0;
-  border: 1px solid #dbe2ea;
-  background: #f8fafc;
-  border-radius: 10px;
-  padding: 8px 10px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.signature-banner.warn {
-  border-color: #f59e0b;
-  background: #fff7ed;
-}
-
-.signature-main {
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.signature-tabs {
-  display: inline-flex;
-  gap: 6px;
-  margin-bottom: 4px;
-}
-
-.tab-btn {
-  border: 1px solid #cbd5e1;
-  background: #ffffff;
-  color: #334155;
-  border-radius: 999px;
-  padding: 2px 10px;
-  font-size: 11px;
-  line-height: 1.5;
-  cursor: pointer;
-}
-
-.tab-btn.active {
-  border-color: #1d4ed8;
-  color: #1d4ed8;
-  background: #eff6ff;
-}
-
-.issue-list {
-  margin-top: 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.issue-item {
-  font-size: 11px;
-  line-height: 1.5;
-  color: #475569;
-  display: flex;
-  gap: 8px;
-  min-width: 0;
-}
-
-.issue-flow {
-  color: #0f172a;
-  white-space: nowrap;
-}
-
-.issue-count {
-  color: #b45309;
-  white-space: nowrap;
-}
-
-.issue-sample {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.issue-copy-btn {
-  border: 1px solid #cbd5e1;
-  background: #ffffff;
-  color: #334155;
-  border-radius: 6px;
-  padding: 0 8px;
-  font-size: 10px;
-  line-height: 20px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.issue-copy-btn:hover {
-  border-color: #94a3b8;
-  background: #f8fafc;
-}
-
-.issue-locate-btn {
-  border: 1px solid rgba(13, 148, 136, 0.45);
-  background: rgba(20, 184, 166, 0.08);
-  color: #0f766e;
-  border-radius: 6px;
-  padding: 0 8px;
-  font-size: 10px;
-  line-height: 20px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.issue-locate-btn:hover {
-  border-color: rgba(13, 148, 136, 0.75);
-  background: rgba(20, 184, 166, 0.14);
-}
-
-@media (max-width: 900px) {
-  .signature-banner {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .issue-item {
-    flex-wrap: wrap;
-  }
-
-  .issue-sample {
-    flex: 1 0 100%;
-    white-space: normal;
-    word-break: break-word;
-  }
-}
 </style>
-
